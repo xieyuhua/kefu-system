@@ -1,0 +1,28 @@
+# Go
+server/kefu-server
+server/kefu-server.exe
+server/server.log
+server/data/
+server/web/
+*.exe
+
+# Node
+node_modules/
+dist/
+dist-ssr/
+.vite/
+*.local
+
+# Logs / 调试产物
+*.log
+*.json.tmp
+login.json
+npm-debug.log*
+pnpm-debug.log*
+
+# Editors / OS
+.vscode/*
+!.vscode/extensions.json
+.idea/
+.DS_Store
+Thumbs.db

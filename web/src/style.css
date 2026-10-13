@@ -1,0 +1,149 @@
+/* 全局样式 —— 参考企业微信客服视觉规范 */
+
+:root {
+  /* 主色 */
+  --kf-primary: #07c160;
+  --kf-primary-dark: #06ad56;
+  --kf-primary-light: rgba(7, 193, 96, 0.1);
+
+  /* 文字 */
+  --kf-text: #191919;
+  --kf-text-sub: #7f7f7f;
+  --kf-text-weak: #b2b2b2;
+
+  /* 背景 */
+  --kf-bg: #f5f5f5;
+  --kf-bg-panel: #ededed;
+  --kf-bg-white: #ffffff;
+  --kf-bg-hover: #f7f7f7;
+  --kf-bg-active: #e9eaec;
+
+  /* 分割线 */
+  --kf-border: #e5e5e5;
+  --kf-border-light: #f0f0f0;
+
+  /* 语义色 */
+  --kf-red: #fa5151;
+  --kf-orange: #ff8f1f;
+  --kf-blue: #2c7be5;
+
+  /* 布局尺寸 */
+  --kf-nav-width: 60px;
+  --kf-list-width: 300px;
+  --kf-panel-width: 280px;
+  --kf-header-height: 56px;
+
+  /* 圆角 */
+  --kf-radius: 8px;
+  --kf-radius-sm: 4px;
+
+  --kf-font: -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei', 'Helvetica Neue',
+    Helvetica, Arial, sans-serif;
+
+  font-family: var(--kf-font);
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--kf-text);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  background: var(--kf-bg);
+  color: var(--kf-text);
+  font-family: var(--kf-font);
+  font-size: 14px;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+/* 滚动条（企微风格细滚动条） */
+.kf-scroll::-webkit-scrollbar,
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.15);
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 0, 0, 0.25);
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* 通用滚动容器 */
+.kf-scroll {
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+/* 文本省略 */
+.kf-ellipsis {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.kf-clamp-2 {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* Element Plus 细节微调，贴近企微风格 */
+.el-button--small {
+  font-size: 13px;
+}
+
+.el-message {
+  min-width: 240px;
+}
+
+/* 卡片通用 */
+.kf-card {
+  background: var(--kf-bg-white);
+  border: 1px solid var(--kf-border);
+  border-radius: var(--kf-radius);
+}
+
+/* 区块标题 */
+.kf-section-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--kf-text);
+  margin: 0 0 8px;
+}
+
+.kf-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  height: 100%;
+  color: var(--kf-text-weak);
+  font-size: 13px;
+}

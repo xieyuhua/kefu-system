@@ -1,0 +1,300 @@
+/**
+ * 与 docs/API.md 字段一一对应的类型定义。
+ * 所有后端响应均包在 { code, message, data } 中，data 部分在此描述。
+ */
+
+/** 渠道类型 */
+export type ChannelType = 'wechat' | 'wecom' | 'web' | 'app' | 'weibo' | 'douyin' | 'robot'
+
+/** 会话状态 */
+export type ConversationStatus = 'pending' | 'open' | 'closed'
+
+/** 消息类型 */
+export type MessageType = 'text' | 'image' | 'order' | 'product' | 'system'
+
+/** 消息方向 */
+export type MessageDirection = 'in' | 'out' | 'system'
+
+/** 角色 */
+export type Role = 'admin' | 'agent'
+
+/** 统一响应外壳 */
+export interface ApiResponse<T> {
+  code: number
+  message: string
+  data: T
+}
+
+/** 租户信息 */
+export interface Tenant {
+  id: number
+  name: string
+  logo: string
+}
+
+/** 当前登录用户 */
+export interface User {
+  id: number
+  tenant_id: number
+  role: Role
+  name: string
+  account: string
+  avatar: string
+  online: boolean
+  channels: number[]
+  tenant?: Tenant
+}
+
+/** 登录响应 */
+export interface LoginResult {
+  token: string
+  user: User
+}
+
+/** 登录请求 */
+export interface LoginPayload {
+  account: string
+  password: string
+}
+
+/** 渠道 */
+export interface Channel {
+  id: number
+  type: ChannelType
+  name: string
+  app_id: string
+  enabled: boolean
+  robot_enabled: boolean
+  created_at: string
+  agent_count: number
+  pending_count: number
+}
+
+export interface ChannelPayload {
+  /**
+   * 渠道类型：租户可自定义任意类型（见 GET /api/channel-types），
+   * 因此这里放宽为 string，不再限制在 ChannelType 枚举内。
+   */
+  type: string
+  name: string
+  app_id: string
+  enabled: boolean
+  robot_enabled: boolean
+}
+
+/** 会话中的客户简要信息 */
+export interface ConversationUser {
+  id: number
+  external_id: string
+  nickname: string
+  avatar: string
+  phone: string
+  order_count?: number
+}
+
+/** 会话中的客服简要信息 */
+export interface ConversationAgent {
+  id: number
+  name: string
+}
+
+/** 会话 */
+export interface Conversation {
+  id: number
+  channel_id: number
+  channel: ChannelBasic
+  user: ConversationUser
+  status: ConversationStatus
+  agent: ConversationAgent | null
+  unread: number
+  last_message: string
+  last_message_at: string
+  created_at: string
+  order_count: number
+  closed_at?: string
+}
+
+/** 嵌套在会话/用户中的渠道精简对象 */
+export interface ChannelBasic {
+  id: number
+  type: ChannelType
+  name: string
+}
+
+/** 会话列表查询参数 */
+export interface ConversationQuery {
+  channel_id?: number
+  status?: ConversationStatus | 'all'
+  scope?: 'mine' | 'all'
+  keyword?: string
+  page?: number
+  page_size?: number
+}
+
+/** 会话列表响应 */
+export interface ConversationListResult {
+  list: Conversation[]
+  total: number
+  page: number
+  page_size: number
+}
+
+/** 会话统计 */
+export interface ConversationStats {
+  pending: number
+  open: number
+  closed: number
+  unread: number
+}
+
+/** 消息发送者 */
+export interface MessageSender {
+  id: number
+  name: string
+  avatar: string
+  role: string
+}
+
+/** 消息 */
+export interface Message {
+  id: number
+  conversation_id: number
+  type: MessageType
+  direction: MessageDirection
+  content: string
+  sender: MessageSender | null
+  created_at: string
+  /** 乐观更新临时标记 */
+  pending?: boolean
+  failed?: boolean
+  /**
+   * 前端本地生成的消息（乐观气泡、转人工提示等），服务端无对应 id。
+   * 用户端用它排除在 since_id 游标之外，避免把本地临时 id 当作轮询起点。
+   */
+  local?: boolean
+}
+
+/** 发送消息请求 */
+export interface SendMessagePayload {
+  type: MessageType
+  content: string
+}
+
+/** 订单卡片 JSON（message.content 解析结果） */
+export interface OrderCardPayload {
+  order_no: string
+  title: string
+  status: string
+  amount: number
+  quantity: number
+  created_at: string
+  image: string
+  sku: string
+}
+
+/** 商品卡片 JSON（message.content 解析结果） */
+export interface ProductCardPayload {
+  id: string
+  title: string
+  price: number
+  image: string
+  stock: number
+  sku: string
+  url: string
+}
+
+/** 历史订单 / 订单列表项 */
+export interface Order {
+  id: number
+  order_no: string
+  title: string
+  status: string
+  amount: number
+  quantity: number
+  image: string
+  sku: string
+  created_at: string
+  paid_at?: string
+}
+
+/** 商品 */
+export interface Product {
+  id: string
+  title: string
+  price: number
+  image: string
+  stock: number
+  sku: string
+  url: string
+}
+
+/** 客户列表项 */
+export interface Customer {
+  id: number
+  external_id: string
+  nickname: string
+  avatar: string
+  phone: string
+  channel: ChannelBasic
+  order_count: number
+  conversation_count: number
+  last_seen_at: string
+  created_at: string
+  tags?: string[]
+}
+
+/** 客户详情（历史档案） */
+export interface CustomerDetailResult {
+  user: Customer
+  orders: Order[]
+  conversations: CustomerConversation[]
+}
+
+/** 历史会话 */
+export interface CustomerConversation {
+  id: number
+  channel: ChannelBasic
+  status: ConversationStatus
+  agent: ConversationAgent | null
+  message_count: number
+  summary: string
+  created_at: string
+  closed_at?: string
+}
+
+/** 分页列表通用结构 */
+export interface Paged<T> {
+  list: T[]
+  total: number
+  page: number
+  page_size: number
+}
+
+/** 发起模拟咨询请求 */
+export interface DemoIncomingPayload {
+  channel_id: number
+  nickname: string
+  content: string
+  type: MessageType
+}
+
+/** WebSocket 下行事件 */
+export type SocketEvent =
+  | 'message.new'
+  | 'conversation.new'
+  | 'conversation.updated'
+  | 'notification.new'
+
+/** WebSocket 下行报文 */
+export interface SocketFrame {
+  event: SocketEvent
+  data: unknown
+}
+
+/** 通知事件数据 */
+export interface NotificationPayload {
+  id: number
+  title: string
+  body: string
+  conversation_id: number
+}

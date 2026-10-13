@@ -1,0 +1,48 @@
+package main
+
+import (
+	"log"
+	"os"
+
+	"kefu-server/internal/api"
+	"kefu-server/internal/cache"
+	"kefu-server/internal/config"
+	"kefu-server/internal/db"
+	"kefu-server/internal/router"
+	"kefu-server/internal/seed"
+)
+
+func main() {
+	cfgPath := "config.yaml"
+	if len(os.Args) > 1 {
+		cfgPath = os.Args[1]
+	}
+	if err := config.Load(cfgPath); err != nil {
+		log.Fatalf("加载配置失败: %v", err)
+	}
+
+	if err := db.Init(); err != nil {
+		log.Fatalf("数据库初始化失败: %v", err)
+	}
+	// 把连接注入 api 层
+	api.SetDB(db.DB)
+	log.Printf("数据库就绪: driver=%s", config.C.Database.Driver)
+
+	// Redis（可选，未启用时自动降级为内存实现，单机无需依赖）
+	if err := cache.Init(); err != nil {
+		log.Printf("缓存初始化警告: %v", err)
+	}
+	_ = os.MkdirAll(config.C.Upload.Dir, 0755)
+
+	// 演示数据（首次启动自动写入）
+	if err := seed.Run(); err != nil {
+		log.Printf("初始化演示数据失败: %v", err)
+	}
+
+	r := router.Setup()
+	addr := ":" + config.C.Server.Port
+	log.Printf("客服系统后端启动: http://127.0.0.1%s  (mode=%s, redis=%v)", addr, config.C.Server.Mode, cache.Get().Enabled())
+	if err := r.Run(addr); err != nil {
+		log.Fatalf("启动失败: %v", err)
+	}
+}

@@ -1,0 +1,39 @@
+# 客服系统后端配置
+# 所有项都可用环境变量覆盖：KEFU_PORT / KEFU_DB_DRIVER / KEFU_REDIS_ADDR 等
+
+server:
+  port: 8080
+  mode: debug          # debug | release
+
+  # 对外访问的前端根地址：用于生成渠道「接入地址」与「二维码」内容。
+  # 生产请改成你的域名，例如 https://kefu.your-domain.com
+  public_base: http://127.0.0.1:5173
+
+database:
+  # sqlite：零依赖，开箱即用（默认）
+  driver: sqlite
+  dsn: data/kefu.db
+
+  # 生产切换 MySQL：把 driver 改成 mysql 并填下面的连接信息
+  # driver: mysql
+  # host: 127.0.0.1
+  # port: 3306
+  # user: root
+  # password: root
+  # name: kefu
+
+jwt:
+  secret: kefu-saas-secret-change-me
+  expire: 24           # 小时
+
+upload:
+  dir: data/uploads
+
+# Redis：分布式部署时开启（多实例共享 Pub/Sub 广播与 Token 缓存）
+# 不开启时自动降级为进程内内存实现，单机部署完全无影响
+redis:
+  enabled: false
+  addr: 127.0.0.1:6379
+  password: ""
+  db: 0
+  prefix: "kefu:"
