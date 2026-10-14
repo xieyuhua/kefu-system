@@ -110,8 +110,7 @@ func SendMessage(c *gin.Context) {
 		response.Param(c, err.Error())
 		return
 	}
-	service.HubInstance().Publish(tenantID(c), nil, service.Event{Event: "message.new", Data: mvo})
-	service.HubInstance().Publish(tenantID(c), nil, service.Event{Event: "conversation.updated", Data: cvo})
+	service.PublishMessage(tenantID(c), uintParam(c, "id"), mvo, cvo)
 	response.OK(c, mvo)
 }
 

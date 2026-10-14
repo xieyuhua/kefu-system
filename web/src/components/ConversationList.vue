@@ -57,6 +57,16 @@
                 c.channel?.name || channelLabel(c.channel?.type)
               }}</span>
             </span>
+            <!-- 客户归属地：IP + 城市 -->
+            <span
+              v-if="c.user?.city || c.user?.ip"
+              class="conv-geo"
+              :title="geoTitle(c.user)"
+            >
+              <span class="conv-geo__icon">📍</span>
+              <span v-if="c.user?.city" class="conv-geo__city">{{ c.user.city }}</span>
+              <span v-if="c.user?.ip" class="conv-geo__ip">{{ c.user.ip }}</span>
+            </span>
             <span v-if="c.status === 'pending'" class="conv-state conv-state--pending">未接待</span>
             <span v-else-if="c.status === 'open'" class="conv-state conv-state--open">进行中</span>
             <span v-else class="conv-state">已结束</span>
@@ -134,6 +144,14 @@ function onSearch(): void {
 function preview(c: Conversation): string {
   return c.last_message || '[暂无消息]'
 }
+
+/** IP + 城市 的完整提示文本 */
+function geoTitle(u: Conversation['user']): string {
+  const parts: string[] = []
+  if (u?.city) parts.push(`归属地：${u.city}`)
+  if (u?.ip) parts.push(`IP：${u.ip}`)
+  return parts.join('\n')
+}
 </script>
 
 <style scoped lang="scss">
@@ -144,6 +162,28 @@ function preview(c: Conversation): string {
   min-width: 260px;
   background: #fff;
   border-right: 1px solid var(--kf-border);
+}
+
+/* ---------------- 移动端：占满整屏 ---------------- */
+@media (max-width: 768px) {
+  .conv-list {
+    width: 100%;
+    min-width: 0;
+    border-right: none;
+  }
+
+  .list-header {
+    padding: 8px 10px;
+  }
+
+  .conv-item {
+    padding: 10px;
+  }
+
+  /* 移动端触摸友好：加大点击区域 */
+  .tab {
+    padding: 8px 0;
+  }
 }
 
 .list-header {
@@ -311,6 +351,40 @@ function preview(c: Conversation): string {
     overflow: hidden;
     white-space: nowrap;
     text-overflow: ellipsis;
+  }
+}
+
+/* ---------- 客户归属地（IP + 城市） ---------- */
+.conv-geo {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  min-width: 0;
+  max-width: 52%;
+  padding: 0 5px;
+  border-radius: 3px;
+  background: #f2f6ff;
+  color: #4a6fa5;
+  font-size: 11px;
+  line-height: 18px;
+  cursor: default;
+
+  &__icon {
+    font-size: 10px;
+  }
+
+  &__city {
+    flex-shrink: 0;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+
+  &__ip {
+    flex-shrink: 0;
+    color: #8aa0c4;
+    font-family: Consolas, Monaco, monospace;
+    font-size: 10px;
   }
 }
 

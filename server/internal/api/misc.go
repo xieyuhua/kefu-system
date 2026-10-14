@@ -170,6 +170,26 @@ func DeleteChannelType(c *gin.Context) {
 	response.OK(c, true)
 }
 
+// ---------------- 设备推送自检 ----------------
+
+// TestDevicePush 手动触发一次推送，用于验证厂商通道是否接对。
+// 只会推给「当前登录账号」已注册的设备，便于 APP 端自查。
+func TestDevicePush(c *gin.Context) {
+	var body struct {
+		Title string `json:"title"`
+		Body  string `json:"body"`
+	}
+	_ = c.ShouldBindJSON(&body)
+	if body.Title == "" {
+		body.Title = "推送自检"
+	}
+	if body.Body == "" {
+		body.Body = "这是一条测试推送，收到说明厂商通道已接通"
+	}
+	service.Notify(tenantID(c), userID(c), "test", body.Title, body.Body, 0)
+	response.OK(c, map[string]interface{}{"sent": true, "title": body.Title})
+}
+
 // ---------------- 数据统计 ----------------
 
 func StatsOverview(c *gin.Context) {

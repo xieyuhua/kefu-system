@@ -13,6 +13,40 @@ type Config struct {
 	JWT      JWTConfig      `yaml:"jwt"`
 	Upload   UploadConfig   `yaml:"upload"`
 	Redis    RedisConfig    `yaml:"redis"`
+	IPLookup IPLookupConfig `yaml:"ip_lookup"`
+	Push     PushConfig     `yaml:"push"`
+}
+
+// PushConfig 厂商推送配置（对接文档见 docs/推送对接.md）。
+// 全部留空时推送网关只记录日志，不实际下发。
+type PushConfig struct {
+	Enabled bool        `yaml:"enabled"`
+	APNs    APNsConfig  `yaml:"apns"`
+	JPush   JPushConfig `yaml:"jpush"`
+}
+
+type APNsConfig struct {
+	Enabled    bool   `yaml:"enabled"`
+	KeyID      string `yaml:"key_id"`
+	TeamID     string `yaml:"team_id"`
+	BundleID   string `yaml:"bundle_id"`
+	KeyFile    string `yaml:"key_file"`   // .p8 密钥文件路径
+	Production bool   `yaml:"production"` // true=生产 APNs，false=沙盒
+}
+
+type JPushConfig struct {
+	Enabled      bool   `yaml:"enabled"`
+	AppKey       string `yaml:"app_key"`
+	MasterSecret string `yaml:"master_secret"`
+}
+
+// IPLookupConfig IP 归属地查询配置。
+// URL 支持 {ip} 占位符；留空则不解析城市（会话列表只显示 IP）。
+// 例（自建/第三方服务，需返回含 city/region/country 的 JSON）：
+//
+//	url: http://ip-api.com/json/{ip}?lang=zh-CN
+type IPLookupConfig struct {
+	URL string `yaml:"url"`
 }
 
 type RedisConfig struct {
@@ -88,6 +122,9 @@ func Load(path string) error {
 	}
 	if v := os.Getenv("KEFU_PUBLIC_BASE"); v != "" {
 		C.Server.PublicBase = v
+	}
+	if v := os.Getenv("KEFU_IP_LOOKUP_URL"); v != "" {
+		C.IPLookup.URL = v
 	}
 	if v := os.Getenv("KEFU_DB_DRIVER"); v != "" {
 		C.Database.Driver = v
@@ -182,7 +219,7 @@ func parseSimpleYAML(s string, c *Config) {
 		}
 		if val == "" {
 			switch key {
-			case "server", "database", "jwt", "upload", "redis":
+			case "server", "database", "jwt", "upload", "redis", "ip_lookup", "push", "apns", "jpush":
 				section = key
 			}
 			continue
@@ -253,6 +290,38 @@ func applyKV(section, key, val string, c *Config) {
 	case "upload":
 		if key == "dir" {
 			c.Upload.Dir = val
+		}
+	case "ip_lookup":
+		if key == "url" {
+			c.IPLookup.URL = val
+		}
+	case "push":
+		if key == "enabled" {
+			c.Push.Enabled = val == "true" || val == "1"
+		}
+	case "apns":
+		switch key {
+		case "enabled":
+			c.Push.APNs.Enabled = val == "true" || val == "1"
+		case "key_id":
+			c.Push.APNs.KeyID = val
+		case "team_id":
+			c.Push.APNs.TeamID = val
+		case "bundle_id":
+			c.Push.APNs.BundleID = val
+		case "key_file":
+			c.Push.APNs.KeyFile = val
+		case "production":
+			c.Push.APNs.Production = val == "true" || val == "1"
+		}
+	case "jpush":
+		switch key {
+		case "enabled":
+			c.Push.JPush.Enabled = val == "true" || val == "1"
+		case "app_key":
+			c.Push.JPush.AppKey = val
+		case "master_secret":
+			c.Push.JPush.MasterSecret = val
 		}
 	case "redis":
 		switch key {

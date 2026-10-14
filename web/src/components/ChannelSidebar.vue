@@ -95,7 +95,7 @@ function togglePending(): void {
 }
 
 function onProfile(): void {
-  void router.push('/chat/history')
+  void router.push('/history')
 }
 
 async function onLogout(): Promise<void> {

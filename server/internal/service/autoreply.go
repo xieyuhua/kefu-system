@@ -184,6 +184,10 @@ func ReplyNow(tenantID, convID, customerID, channelID uint, question string) *Re
 			Updates(map[string]interface{}{"status": "pending", "agent_id": 0})
 		notifyChannelAgents(tenantID, channelID, convID, "待接待提醒", "有客户请求人工客服，请尽快接入")
 		broadcastConversation(tenantID, convID)
+		HubInstance().PublishToGuest(tenantID, convID, Event{
+			Event: "conversation.updated",
+			Data:  map[string]interface{}{"id": convID, "status": "pending", "transferred": true},
+		})
 		return &ReplyResult{Transferred: true}
 	}
 
@@ -211,6 +215,7 @@ func ReplyNow(tenantID, convID, customerID, channelID uint, question string) *Re
 		Updates(map[string]interface{}{"last_message": reply, "last_message_at": time.Now()})
 	vo := buildMessageVO(m)
 	HubInstance().Publish(tenantID, nil, Event{Event: "message.new", Data: vo})
+	HubInstance().PublishToGuest(tenantID, convID, Event{Event: "message.new", Data: vo})
 	return &ReplyResult{Transferred: false, Message: vo}
 }
 

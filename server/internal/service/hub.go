@@ -18,28 +18,38 @@ type Event struct {
 	Data  interface{} `json:"data"`
 }
 
-// Client 一个 WebSocket 连接（Web 工作台 / PC 桌面端 / APP）
+// Client 一个 WebSocket 连接
+//   - 客服端：Web 工作台 / PC 桌面端 / APP，UserID > 0
+//   - 访客端：用户端聊天页，UserID == 0，ConvID 指向其会话
 type Client struct {
 	hub      *Hub
 	conn     *websocket.Conn
 	send     chan []byte
 	UserID   uint
 	TenantID uint
+	ConvID   uint   // 访客端所属会话
 	Device   string // web | desktop | app
+	closed   chan struct{}
 	mu       sync.Mutex
 }
 
-// Hub 连接中心。分布式部署时通过 Redis Pub/Sub 把事件广播到所有实例。
+// Hub 连接中心。分两类连接：
+//   - 客服端 clients：按租户/用户广播
+//   - 访客端 guests：按会话（conversation_id）定向投递
+//
+// 分布式部署时通过 Redis Pub/Sub 把事件广播到所有实例。
 type Hub struct {
 	mu      sync.RWMutex
 	clients map[*Client]bool
+	guests  map[uint]map[*Client]bool // convID -> 连接集合
 
 	broadcast chan broadcastMsg
 }
 
 type broadcastMsg struct {
 	TenantID uint
-	UserIDs  []uint // 为空表示广播给该租户所有在线连接
+	UserIDs  []uint // 客服端定向；为空表示广播给该租户所有客服连接
+	ConvID   uint   // 访客端定向；>0 时只投递给该会话的访客连接
 	Event    Event
 }
 
@@ -50,13 +60,37 @@ func HubInstance() *Hub {
 	hubOnce.Do(func() {
 		h := &Hub{
 			clients:   map[*Client]bool{},
+			guests:    map[uint]map[*Client]bool{},
 			broadcast: make(chan broadcastMsg, 1024),
 		}
 		defaultHub = h
 		go h.run()
 		h.subscribeRedis()
+		h.subscribeGuestRedis()
 	})
 	return defaultHub
+}
+
+// subscribeGuestRedis 订阅跨实例的用户端（访客）事件
+func (h *Hub) subscribeGuestRedis() {
+	cache.Get().Subscribe(context.Background(), "guest-events", func(env cache.Envelope) {
+		if env.SenderID == cache.InstanceID {
+			return
+		}
+		var ev Event
+		b, err := json.Marshal(env.Data)
+		if err != nil {
+			return
+		}
+		if err := json.Unmarshal(b, &ev); err != nil {
+			ev = Event{Event: env.Event}
+			_ = json.Unmarshal(b, &ev.Data)
+		}
+		if ev.Event == "" {
+			ev.Event = env.Event
+		}
+		h.localDispatch(env.TenantID, nil, env.ConvID, ev)
+	})
 }
 
 func (h *Hub) subscribeRedis() {
@@ -78,18 +112,19 @@ func (h *Hub) subscribeRedis() {
 		if ev.Event == "" {
 			ev.Event = env.Event
 		}
-		h.localDispatch(env.TenantID, nil, ev)
+		h.localDispatch(env.TenantID, nil, 0, ev)
 	})
 }
 
 func (h *Hub) run() {
 	for msg := range h.broadcast {
-		h.localDispatch(msg.TenantID, msg.UserIDs, msg.Event)
+		h.localDispatch(msg.TenantID, msg.UserIDs, msg.ConvID, msg.Event)
 	}
 }
 
 // localDispatch 只推给本实例的连接；同时把事件转发到 Redis 让其他实例也推。
-func (h *Hub) localDispatch(tenantID uint, userIDs []uint, ev Event) {
+// convID > 0 时投递给该会话的访客连接；否则按租户/用户投递客服端连接。
+func (h *Hub) localDispatch(tenantID uint, userIDs []uint, convID uint, ev Event) {
 	b, err := json.Marshal(ev)
 	if err != nil {
 		return
@@ -99,6 +134,7 @@ func (h *Hub) localDispatch(tenantID uint, userIDs []uint, ev Event) {
 		target[u] = true
 	}
 	h.mu.RLock()
+	// 客服端连接
 	for c := range h.clients {
 		if tenantID != 0 && c.TenantID != tenantID {
 			continue
@@ -106,24 +142,36 @@ func (h *Hub) localDispatch(tenantID uint, userIDs []uint, ev Event) {
 		if len(target) > 0 && !target[c.UserID] {
 			continue
 		}
-		select {
-		case c.send <- b:
-		default:
-			// 客户端处理慢，丢弃最旧的一条避免阻塞
-			select {
-			case <-c.send:
-			default:
-			}
-			select {
-			case c.send <- b:
-			default:
-			}
+		push(c, b)
+	}
+	// 访客端连接（按会话定向）
+	if convID > 0 {
+		for c := range h.guests[convID] {
+			push(c, b)
 		}
 	}
 	h.mu.RUnlock()
 }
 
+// push 投递一条消息；发送队列满时丢弃最旧的一条，保证慢客户端不阻塞全局。
+func push(c *Client, b []byte) {
+	select {
+	case c.send <- b:
+		return
+	default:
+	}
+	select {
+	case <-c.send:
+	default:
+	}
+	select {
+	case c.send <- b:
+	default:
+	}
+}
+
 // Publish 对外入口：本地推送 + Redis 广播到其他实例。
+// convID > 0 表示投递给用户端（访客），否则投递给客服端。
 func (h *Hub) Publish(tenantID uint, userIDs []uint, ev Event) {
 	h.broadcast <- broadcastMsg{TenantID: tenantID, UserIDs: userIDs, Event: ev}
 
@@ -141,30 +189,82 @@ func (h *Hub) Publish(tenantID uint, userIDs []uint, ev Event) {
 	}
 }
 
-// Add 注册连接
+// Add 注册客服端连接
 func (h *Hub) Add(c *Client) {
 	h.mu.Lock()
 	h.clients[c] = true
 	h.mu.Unlock()
 }
 
-// Remove 注销连接
+// AddGuest 注册访客（用户端）连接，按会话归类
+func (h *Hub) AddGuest(c *Client) {
+	h.mu.Lock()
+	if h.guests[c.ConvID] == nil {
+		h.guests[c.ConvID] = map[*Client]bool{}
+	}
+	h.guests[c.ConvID][c] = true
+	h.mu.Unlock()
+}
+
+// Remove 注销连接（客服端或访客端通用）
 func (h *Hub) Remove(c *Client) {
 	h.mu.Lock()
+	if c.ConvID > 0 {
+		if set, ok := h.guests[c.ConvID]; ok {
+			delete(set, c)
+			if len(set) == 0 {
+				delete(h.guests, c.ConvID)
+			}
+		}
+	}
 	if _, ok := h.clients[c]; ok {
 		delete(h.clients, c)
+	}
+	// 只关闭一次
+	select {
+	case <-c.closed:
+	default:
+		close(c.closed)
 		close(c.send)
 	}
 	h.mu.Unlock()
 }
 
+// GuestCount 返回某会话当前在线的访客连接数（用于判断是否在线）
+func (h *Hub) GuestCount(convID uint) int {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	return len(h.guests[convID])
+}
+
+// PublishToGuest 投递给指定会话的用户端连接（可跨实例）。
+// 访客不在线时消息仍会入库，用户端重连后按 since_id 补拉，因此「不在线也不丢」。
+func (h *Hub) PublishToGuest(tenantID, convID uint, ev Event) {
+	h.broadcast <- broadcastMsg{TenantID: tenantID, ConvID: convID, Event: ev}
+
+	if cache.Get().Enabled() {
+		env := cache.Envelope{
+			TenantID:  tenantID,
+			ConvID:    convID,
+			Event:     ev.Event,
+			Data:      ev,
+			SenderID:  cache.InstanceID,
+			Timestamp: time.Now().UnixMilli(),
+		}
+		if err := cache.Get().Publish(context.Background(), "guest-events", env); err != nil {
+			log.Printf("[hub] guest publish error: %v", err)
+		}
+	}
+}
+
 // ---- 连接读写循环 ----
 
-// NewClient 创建一个连接（由 api 层调用，避免跨包访问未导出字段）
+// NewClient 创建一个客服端连接（由 api 层调用，避免跨包访问未导出字段）
 func NewClient(conn *websocket.Conn, userID, tenantID uint, device string) *Client {
 	return &Client{
 		conn:     conn,
 		send:     make(chan []byte, 256),
+		closed:   make(chan struct{}),
 		UserID:   userID,
 		TenantID: tenantID,
 		Device:   device,
@@ -172,8 +272,33 @@ func NewClient(conn *websocket.Conn, userID, tenantID uint, device string) *Clie
 	}
 }
 
+// NewGuestClient 创建一个访客（用户端）连接
+func NewGuestClient(conn *websocket.Conn, tenantID, convID uint, device string) *Client {
+	return &Client{
+		conn:     conn,
+		send:     make(chan []byte, 256),
+		closed:   make(chan struct{}),
+		TenantID: tenantID,
+		ConvID:   convID,
+		Device:   device,
+		hub:      HubInstance(),
+	}
+}
+
 // SetHub 绑定所属 Hub（Client 由 api 层创建，避免包循环依赖）
 func (c *Client) SetHub(h *Hub) { c.hub = h }
+
+// SendEvent 向该连接推送一条事件（用于连接确认、离线消息回放）
+func (c *Client) SendEvent(name string, data interface{}) {
+	b, err := json.Marshal(Event{Event: name, Data: data})
+	if err != nil {
+		return
+	}
+	select {
+	case c.send <- b:
+	default:
+	}
+}
 
 // WritePump 下发消息循环（含心跳）
 func (c *Client) WritePump() { c.writePump() }

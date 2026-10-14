@@ -10,6 +10,7 @@ import {
   type UserQuery,
 } from '../../api/admin'
 import type { Channel, Customer, CustomerDetailResult } from '../../types'
+import ThumbImage from '@/components/ThumbImage.vue'
 
 const loading = ref(false)
 const detailLoading = ref(false)
@@ -141,9 +142,16 @@ onMounted(() => {
         <el-table-column label="客户" min-width="200">
           <template #default="{ row }">
             <div class="customer">
-              <img class="customer__avatar" :src="row.avatar" :alt="row.nickname" />
+              <ThumbImage
+                :src="row.avatar"
+                :size="36"
+                round
+                kind="avatar"
+                :fallback="(row.nickname || '?').slice(0, 1)"
+                :alt="row.nickname"
+              />
               <div class="customer__meta">
-                <span class="customer__name">{{ row.nickname }}</span>
+                <span class="customer__name kf-ellipsis">{{ row.nickname }}</span>
                 <span class="customer__id">{{ row.external_id }}</span>
               </div>
             </div>
@@ -194,7 +202,14 @@ onMounted(() => {
       <div v-loading="detailLoading">
         <template v-if="detail">
           <div class="profile">
-            <img class="profile__avatar" :src="detail.user.avatar" :alt="detail.user.nickname" />
+            <ThumbImage
+              :src="detail.user.avatar"
+              :size="56"
+              round
+              kind="avatar"
+              :fallback="(detail.user.nickname || '?').slice(0, 1)"
+              :alt="detail.user.nickname"
+            />
             <div class="profile__meta">
               <div class="profile__name">
                 {{ detail.user.nickname }}
@@ -220,11 +235,11 @@ onMounted(() => {
             border
           >
             <el-table-column prop="order_no" label="订单号" min-width="150" />
-            <el-table-column label="商品" min-width="180" show-overflow-tooltip>
+            <el-table-column label="商品" min-width="200">
               <template #default="{ row }">
                 <div class="order-cell">
-                  <img v-if="row.image" class="order-cell__img" :src="row.image" :alt="row.title" />
-                  <span>{{ row.title }}</span>
+                  <ThumbImage :src="row.image" :size="32" :fallback="'图'" :alt="row.title" />
+                  <span class="kf-ellipsis">{{ row.title }}</span>
                 </div>
               </template>
             </el-table-column>
@@ -331,14 +346,6 @@ onMounted(() => {
   align-items: center;
   gap: 8px;
 
-  &__avatar {
-    width: 32px;
-    height: 32px;
-    border-radius: 50%;
-    object-fit: cover;
-    background: #f5f5f5;
-  }
-
   &__meta {
     display: flex;
     flex-direction: column;
@@ -365,14 +372,6 @@ onMounted(() => {
   gap: 12px;
   padding-bottom: 12px;
   border-bottom: 1px solid #e5e5e5;
-
-  &__avatar {
-    width: 48px;
-    height: 48px;
-    border-radius: 50%;
-    object-fit: cover;
-    background: #f5f5f5;
-  }
 
   &__name {
     display: flex;
@@ -401,13 +400,6 @@ onMounted(() => {
   display: flex;
   align-items: center;
   gap: 8px;
-
-  &__img {
-    width: 32px;
-    height: 32px;
-    border-radius: 4px;
-    object-fit: cover;
-    background: #f5f5f5;
-  }
+  min-width: 0;
 }
 </style>

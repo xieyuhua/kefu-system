@@ -42,7 +42,8 @@ func ListCustomers(tenantID uint, keyword string, channelID uint, page, pageSize
 		item := dto.CustomerListItem{
 			ID: c.ID, ExternalID: c.ExternalID, Nickname: c.Nickname,
 			Avatar: c.Avatar, Phone: c.Phone, Remark: c.Remark,
-			Tags:       GetCustomerTags(tenantID, c.ID),
+			Tags: GetCustomerTags(tenantID, c.ID),
+			IP:   c.IP, City: cityOrLookup(c),
 			OrderCount: oc, ConversationCount: cc,
 			LastSeenAt: fmtTimePtr(c.LastSeenAt), CreatedAt: fmtTime(c.CreatedAt),
 		}
@@ -64,7 +65,8 @@ func GetCustomerDetail(tenantID, id uint) (*dto.CustomerDetail, error) {
 		User: dto.CustomerDetailUser{
 			ID: c.ID, ExternalID: c.ExternalID, Nickname: c.Nickname,
 			Avatar: c.Avatar, Phone: c.Phone, Remark: c.Remark,
-			Tags:      GetCustomerTags(tenantID, c.ID),
+			Tags: GetCustomerTags(tenantID, c.ID),
+			IP:   c.IP, City: cityOrLookup(c),
 			CreatedAt: fmtTime(c.CreatedAt),
 		},
 		Orders:        []dto.OrderVO{},

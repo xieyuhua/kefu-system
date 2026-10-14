@@ -117,7 +117,9 @@ export const useChatStore = defineStore('chat', () => {
     messageLoading.value = true
     try {
       const list = await msgApi.listMessages(conversationId, { limit: 50 })
-      messages.value = Array.isArray(list) ? list : []
+      const arr = Array.isArray(list) ? list : []
+      // 与 WebSocket 可能已推入的消息去重后按 id 升序合并，避免重复气泡
+      messages.value = dedupeMessages(arr)
       messagesTotal.value = messages.value.length
     } catch {
       messages.value = []
@@ -159,6 +161,32 @@ export const useChatStore = defineStore('chat', () => {
     upsertConversation(updated)
   }
 
+  /**
+   * 按 id 插入或更新消息；同 id 已存在则原地替换（不追加）。
+   * 这是避免「一条消息显示两次」的唯一入口。
+   */
+  function upsertMessage(message: Message): void {
+    const idx = messages.value.findIndex((m) => m.id === message.id)
+    if (idx >= 0) {
+      messages.value[idx] = message
+      return
+    }
+    messages.value.push(message)
+    messages.value.sort((a, b) => a.id - b.id)
+  }
+
+  /**
+   * 乐观消息回填：用服务端返回的真实消息替换临时气泡；
+   * 若 WebSocket 已把真实消息推入，则先移除对应临时气泡再替换，避免重复。
+   */
+  function replaceOptimistic(tempId: number, created: Message): void {
+    // 1) 移除临时气泡
+    const tempIdx = messages.value.findIndex((m) => m.id === tempId)
+    if (tempIdx >= 0) messages.value.splice(tempIdx, 1)
+    // 2) 真实消息若已在（WS 推来的），替换之；否则插入
+    upsertMessage(created)
+  }
+
   /** 乐观上屏：先插入本地临时消息，失败则回滚 */
   async function send(payload: SendMessagePayload): Promise<Message | null> {
     const conversationId = currentId.value
@@ -178,11 +206,11 @@ export const useChatStore = defineStore('chat', () => {
     sending.value = true
     try {
       const created = await msgApi.sendMessage(conversationId, payload)
-      const idx = messages.value.findIndex((m) => m.id === tempId)
       if (created && typeof created.id === 'number') {
-        if (idx >= 0) messages.value[idx] = created
-      } else if (idx >= 0) {
-        messages.value[idx] = { ...optimistic, pending: false }
+        replaceOptimistic(tempId, created)
+      } else {
+        const idx = messages.value.findIndex((m) => m.id === tempId)
+        if (idx >= 0) messages.value[idx] = { ...optimistic, pending: false }
       }
       patchConversation(conversationId, {
         last_message: previewOf(payload),
@@ -198,11 +226,23 @@ export const useChatStore = defineStore('chat', () => {
     }
   }
 
+  /**
+   * 按 id 去重并按 id 升序排序。
+   * 场景：乐观上屏用临时负 ID，HTTP 返回与 WebSocket 回推会先后到达同一消息，
+   * 必须保证最终只渲染一条。
+   */
+  function dedupeMessages(list: Message[]): Message[] {
+    const byId = new Map<number, Message>()
+    for (const m of list) {
+      if (!byId.has(m.id)) byId.set(m.id, m)
+    }
+    return Array.from(byId.values()).sort((a, b) => a.id - b.id)
+  }
+
   /** WebSocket 收到新消息 */
   function onMessage(message: Message): void {
     if (message.conversation_id === currentId.value) {
-      const exists = messages.value.some((m) => m.id === message.id)
-      if (!exists) messages.value.push(message)
+      upsertMessage(message)
       void markRead(message.conversation_id)
       return
     }

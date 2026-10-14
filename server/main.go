@@ -10,6 +10,7 @@ import (
 	"kefu-server/internal/db"
 	"kefu-server/internal/router"
 	"kefu-server/internal/seed"
+	"kefu-server/internal/service"
 )
 
 func main() {
@@ -33,6 +34,9 @@ func main() {
 		log.Printf("缓存初始化警告: %v", err)
 	}
 	_ = os.MkdirAll(config.C.Upload.Dir, 0755)
+
+	// 厂商推送网关（未在 config.yaml 启用厂商时只记录日志）
+	service.InitPush()
 
 	// 演示数据（首次启动自动写入）
 	if err := seed.Run(); err != nil {

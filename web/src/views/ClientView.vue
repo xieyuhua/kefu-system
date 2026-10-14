@@ -280,6 +280,7 @@ import type {
   ProductCardPayload,
 } from '@/types'
 import { channelIcon, channelLabel, formatMessageTime, parseCardContent } from '@/utils/format'
+import { useSocket } from '@/composables/useSocket'
 import OrderCard from '@/components/OrderCard.vue'
 import ProductCard from '@/components/ProductCard.vue'
 
@@ -343,6 +344,9 @@ const moreOpen = ref(false)
 
 const scroller = ref<HTMLElement | null>(null)
 let timer: number | undefined
+/** 用户端实时连接（WebSocket；失败自动降级轮询） */
+let socket: ReturnType<typeof useSocket> | null = null
+let unsubscribers: (() => void)[] = []
 
 /** 从 route.query 读取单个字符串参数（重复参数取第一个） */
 function readParam(value: unknown): string {
@@ -477,13 +481,16 @@ function appendMany(list: Message[] | null | undefined): void {
   updateSince()
 }
 
-/** 降级轮询：无 WebSocket 时 3s 拉取增量消息 */
-async function pull(): Promise<void> {
+/**
+ * 拉取增量消息（WebSocket 不可用时由 useSocket 降级调用）
+ */
+async function pull(sinceOverride?: number): Promise<void> {
   if (!ready.value) return
+  const sid = typeof sinceOverride === 'number' ? sinceOverride : sinceId.value
   try {
     const list = await guestMessages(
       { channel: params.value.channel, uid: params.value.uid, tenant: params.value.tenant },
-      sinceId.value,
+      sid,
     )
     const before = messages.value.length
     appendMany(list)
@@ -493,12 +500,55 @@ async function pull(): Promise<void> {
   }
 }
 
-function startPolling(): void {
-  stopPolling()
-  timer = window.setInterval(() => void pull(), 3000)
+/**
+ * 建立用户端 WebSocket：
+ *  - 客服回复通过 message.new 实时到达（不必等轮询）
+ *  - 重连时带 since_id，服务端回放离线期间累积的消息
+ *  - 连接失败自动降级为轮询兜底（useSocket 内部实现）
+ */
+function connectSocket(): void {
+  const key = `guest_${params.value.channel || 'x'}_${params.value.uid || 'anon'}`
+  socket = useSocket(key)
+  unsubscribers.forEach((fn) => fn())
+  unsubscribers = []
+
+  // 降级轮询的数据源：直接复用 pull（内部已做去重 + 滚动）
+  socket.setFallbackFetch(async (sid: number) => {
+    await pull(sid)
+    return []
+  })
+
+  unsubscribers.push(
+    socket.on<Message>('message.new', (m) => {
+      removeLocal(m.id)
+      upsertById(m)
+      void scrollToBottom()
+    }),
+    socket.on('conversation.updated', (payload) => {
+      const p = payload as { status?: string; transferred?: boolean }
+      if (p?.status) convStatus.value = p.status
+      if (p?.transferred) appendNotice('正在为您转接人工客服')
+    }),
+  )
+
+  socket.setSinceId(sinceId.value)
+  socket.connect({
+    guest: {
+      channel: params.value.channel || '',
+      uid: params.value.uid || '',
+      tenant: params.value.tenant || '',
+    },
+  })
 }
 
+/** 关闭用户端实时连接（含降级轮询） */
 function stopPolling(): void {
+  if (socket) {
+    unsubscribers.forEach((fn) => fn())
+    unsubscribers = []
+    socket.close()
+    socket = null
+  }
   if (timer !== undefined) {
     window.clearInterval(timer)
     timer = undefined
@@ -532,8 +582,8 @@ async function init(): Promise<void> {
     updateSince()
     ready.value = true
     await scrollToBottom()
-    void pull()
-    startPolling()
+    // 建立 WebSocket 实时连接（自带离线补拉与自动重连；失败会降级轮询）
+    connectSocket()
   } catch (err) {
     ready.value = false
     errorText.value = err instanceof Error ? err.message : '接入失败，请检查链接参数'
@@ -568,9 +618,9 @@ async function send(): Promise<void> {
       { channel: params.value.channel, uid: params.value.uid, tenant: params.value.tenant },
       { type: 'text', content },
     )
-    // 乐观气泡替换成服务端返回的真实消息
-    const idx = messages.value.findIndex((m) => m.id === tempId)
-    if (idx >= 0) messages.value[idx] = { ...res.message }
+    // 移除乐观气泡，再按 id upsert —— 避免与轮询/WebSocket 推来的同一条消息重复
+    removeLocal(tempId)
+    upsertById({ ...res.message })
     if (res.reply) appendMany([res.reply])
     if (res.transferred) {
       appendNotice('正在为您转接人工客服')
@@ -586,6 +636,23 @@ async function send(): Promise<void> {
   } finally {
     sending.value = false
   }
+}
+
+/** 移除一条本地临时消息（乐观气泡 / 本地提示） */
+function removeLocal(id: number): void {
+  const idx = messages.value.findIndex((m) => m.id === id)
+  if (idx >= 0) messages.value.splice(idx, 1)
+}
+
+/** 按 id 插入或替换消息：已存在则原地替换，杜绝重复气泡 */
+function upsertById(m: Message): void {
+  const idx = messages.value.findIndex((x) => x.id === m.id)
+  if (idx >= 0) {
+    messages.value[idx] = m
+    return
+  }
+  messages.value.push(m)
+  messages.value = sortMessages(messages.value)
 }
 
 /** 插入一条本地系统提示（居中灰色 pill），不参与轮询游标 */

@@ -1,5 +1,5 @@
 <template>
-  <aside class="customer-panel">
+  <aside class="customer-panel" :class="{ 'customer-panel--embedded': embedded }">
     <header class="panel-header">
       <span>客户资料</span>
       <el-button text size="small" :icon="Close" @click="emit('close')" />
@@ -31,6 +31,8 @@
 
           <ul class="profile-meta">
             <li v-if="customer.phone"><span>手机</span>{{ customer.phone }}</li>
+            <li v-if="customer.city"><span>归属地</span>{{ customer.city }}</li>
+            <li v-if="customer.ip"><span>IP</span>{{ customer.ip }}</li>
             <li v-if="customer.external_id"><span>ID</span>{{ customer.external_id }}</li>
             <li><span>订单</span>{{ customer.order_count ?? 0 }} 笔</li>
             <li><span>会话</span>{{ customer.conversation_count ?? 0 }} 次</li>
@@ -80,6 +82,8 @@ const props = defineProps<{
   orders: Order[]
   loading?: boolean
   canSend?: boolean
+  /** 嵌入抽屉时：去掉固定栏样式，自适应容器高度 */
+  embedded?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -105,6 +109,38 @@ function sendOrder(order: Order): void {
   min-width: var(--kf-panel-width);
   background: #fff;
   border-left: 1px solid var(--kf-border);
+}
+
+/* 嵌入抽屉（移动端）：去掉固定宽度与边框，自适应容器 */
+.customer-panel--embedded {
+  width: 100%;
+  min-width: 0;
+  height: 100%;
+  border-left: none;
+}
+
+/* ---------------- 平板及以下：客户资料不再占用固定栏 ---------------- */
+@media (max-width: 1200px) {
+  .customer-panel {
+    display: none;
+  }
+
+  /* 抽屉内的实例不受此规则影响 */
+  .customer-panel--embedded {
+    display: flex;
+  }
+}
+
+/* ---------------- 移动端 ---------------- */
+@media (max-width: 768px) {
+  .panel-header {
+    height: 44px;
+  }
+
+  .profile-avatar {
+    width: 52px;
+    height: 52px;
+  }
 }
 
 .panel-header {

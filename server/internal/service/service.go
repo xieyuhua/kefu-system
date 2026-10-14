@@ -52,7 +52,10 @@ func ListChannels(tenantID uint, agentID uint, isAdmin bool) ([]dto.ChannelVO, e
 			ID: c.ID, Type: c.Type, Name: c.Name, AppID: c.AppID,
 			Enabled: c.Enabled, RobotEnabled: c.RobotEnabled,
 			CreatedAt: fmtTime(c.CreatedAt), AgentCount: agentCount, PendingCount: pending,
+			// 始终用后端配置的 public_base 拼完整 URL，
+			// 不要让前端用 window.location.origin，避免内网/反代场景下复制到错地址
 			AccessPath: AccessPath(c),
+			AccessURL:  AccessURL(c, ""),
 		})
 	}
 	return out, nil
@@ -365,6 +368,8 @@ func buildConversationVO(c model.Conversation) dto.ConversationVO {
 			Avatar: cu.Avatar, Phone: cu.Phone, OrderCount: oc, ChannelID: cu.ChannelID,
 			Tags:   GetCustomerTags(c.TenantID, cu.ID),
 			Remark: cu.Remark,
+			IP:     cu.IP,
+			City:   cityOrLookup(cu),
 		}
 		vo.OrderCount = oc
 	}
@@ -397,7 +402,23 @@ func ClaimConversation(tenantID, id, agentID uint) (*dto.ConversationVO, error) 
 	}
 	addSystemMessage(tenantID, c.ID, agentName(agentID)+" 已接入会话")
 	vo := buildConversationVO(c)
+	// 通知用户端：已有人工客服接入
+	if m := lastSystemMessage(tenantID, c.ID); m != nil {
+		HubInstance().PublishToGuest(tenantID, c.ID, Event{Event: "message.new", Data: *m})
+	}
+	HubInstance().PublishToGuest(tenantID, c.ID, Event{Event: "conversation.updated", Data: vo})
 	return &vo, nil
+}
+
+// lastSystemMessage 取会话最后一条 system 消息（VO）
+func lastSystemMessage(tenantID, convID uint) *dto.MessageVO {
+	var m model.Message
+	if err := gormDB().Where("tenant_id = ? AND conversation_id = ? AND type = 'system'",
+		tenantID, convID).Order("id desc").First(&m).Error; err != nil {
+		return nil
+	}
+	vo := buildMessageVO(m)
+	return &vo
 }
 
 func TransferConversation(tenantID, id, fromAgentID, toAgentID uint) (*dto.ConversationVO, error) {
@@ -420,6 +441,9 @@ func TransferConversation(tenantID, id, fromAgentID, toAgentID uint) (*dto.Conve
 	addSystemMessage(tenantID, c.ID, fmt.Sprintf("会话已转接给 %s", target.Name))
 	Notify(tenantID, toAgentID, "conversation.transferred", "会话转接", "有一条会话被转接给你", c.ID)
 	vo := buildConversationVO(c)
+	if m := lastSystemMessage(tenantID, c.ID); m != nil {
+		HubInstance().PublishToGuest(tenantID, c.ID, Event{Event: "message.new", Data: *m})
+	}
 	return &vo, nil
 }
 
@@ -436,6 +460,10 @@ func CloseConversation(tenantID, id, agentID uint) (*dto.ConversationVO, error) 
 	}
 	addSystemMessage(tenantID, c.ID, "会话已结束，感谢您的咨询")
 	vo := buildConversationVO(c)
+	if m := lastSystemMessage(tenantID, c.ID); m != nil {
+		HubInstance().PublishToGuest(tenantID, c.ID, Event{Event: "message.new", Data: *m})
+	}
+	HubInstance().PublishToGuest(tenantID, c.ID, Event{Event: "conversation.updated", Data: vo})
 	return &vo, nil
 }
 
@@ -470,6 +498,25 @@ func ConversationStats(tenantID, userID uint, isAdmin bool) (*dto.StatsVO, error
 
 // ---------------- Message ----------------
 
+// ListMessagesSince 正向增量拉取：返回 id > afterID 的消息（按 id 升序）。
+// 供用户端 / APP 离线同步使用 —— 与 ListMessages 的「向前翻页」语义相反，勿混用。
+func ListMessagesSince(tenantID, convID uint, afterID uint, limit int) ([]dto.MessageVO, error) {
+	if limit <= 0 || limit > 500 {
+		limit = 200
+	}
+	q := gormDB().Where("tenant_id = ? AND conversation_id = ? AND id > ?", tenantID, convID, afterID)
+	var list []model.Message
+	if err := q.Order("id asc").Limit(limit).Find(&list).Error; err != nil {
+		return nil, err
+	}
+	out := make([]dto.MessageVO, 0, len(list))
+	for _, m := range list {
+		out = append(out, buildMessageVO(m))
+	}
+	return out, nil
+}
+
+// ListMessages 分页向前翻页：返回 id < beforeID 的消息（按 id 升序）
 func ListMessages(tenantID, convID uint, beforeID uint, limit int) ([]dto.MessageVO, error) {
 	if limit <= 0 {
 		limit = 50

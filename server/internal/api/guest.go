@@ -62,9 +62,11 @@ func GuestInit(c *gin.Context) {
 		cu = model.Customer{
 			TenantID: tenantID, ChannelID: ch.ID, ExternalID: uid,
 			Nickname: nickname, Avatar: c.Query("avatar"), Phone: c.Query("phone"),
+			IP:         service.ClientIP(c.Request.RemoteAddr, c.Request.Header),
 			LastSeenAt: &now,
 		}
 		gormDB().Create(&cu)
+		service.RecordCustomerIP(cu.ID, cu.IP)
 	}
 
 	// 最近未结束的会话优先复用，否则新建
@@ -96,6 +98,9 @@ func GuestInit(c *gin.Context) {
 	}
 
 	history, _ := service.ListMessages(tenantID, conv.ID, 0, 20)
+
+	// 每次访问都刷新 IP 与归属城市（展示在客服工作台的会话列表）
+	service.RecordCustomerIP(cu.ID, service.ClientIP(c.Request.RemoteAddr, c.Request.Header))
 
 	response.OK(c, gin.H{
 		"channel":      gin.H{"id": ch.ID, "type": ch.Type, "name": ch.Name},
@@ -151,8 +156,8 @@ func GuestSend(c *gin.Context) {
 		response.Server(c, err.Error())
 		return
 	}
-	service.HubInstance().Publish(tenantID, nil, service.Event{Event: "message.new", Data: mvo})
-	service.HubInstance().Publish(tenantID, nil, service.Event{Event: "conversation.updated", Data: cvo})
+	service.RecordCustomerIP(cu.ID, service.ClientIP(c.Request.RemoteAddr, c.Request.Header))
+	service.PublishMessage(tenantID, conv.ID, mvo, cvo)
 
 	// 同步判定自动回复 / 转人工（供接口直接返回）
 	transferred := false
@@ -187,7 +192,8 @@ func GuestMessages(c *gin.Context) {
 		response.OK(c, []interface{}{})
 		return
 	}
-	list, err := service.ListMessages(tenantID, conv.ID, queryUint(c, "since_id"), 50)
+	// since_id 为正向游标：返回 id > since_id 的新消息（增量拉取）
+	list, err := service.ListMessagesSince(tenantID, conv.ID, queryUint(c, "since_id"), 50)
 	if err != nil {
 		response.Server(c, err.Error())
 		return

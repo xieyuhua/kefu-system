@@ -58,6 +58,19 @@ body,
   padding: 0;
 }
 
+/* ---------------- 移动端适配 ---------------- */
+
+/* 动态视口高度：解决 iOS Safari 地址栏伸缩导致 100vh 不准的问题 */
+:root {
+  --kf-viewport-h: 100vh;
+}
+
+@supports (height: 100dvh) {
+  :root {
+    --kf-viewport-h: 100dvh;
+  }
+}
+
 body {
   background: var(--kf-bg);
   color: var(--kf-text);
@@ -65,6 +78,27 @@ body {
   font-size: 14px;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  overflow: hidden;
+}
+
+@media (max-width: 768px) {
+  body {
+    /* 移动端禁止橡皮筋下拉，露出灰底影响观感 */
+    overscroll-behavior: none;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  /* 移除 iOS 点击输入框时的缩放 */
+  input,
+  textarea,
+  select {
+    font-size: 16px;
+  }
+}
+
+/* 移动端底部安全区（iPhone 刘海屏手势条） */
+.kf-safe-bottom {
+  padding-bottom: env(safe-area-inset-bottom, 0);
 }
 
 a {

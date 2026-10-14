@@ -42,3 +42,18 @@ func Notify(tenantID, userID uint, typ, title, body string, convID uint) {
 	// 实际接入 APNs/极光/个推时在 pushGateway 里实现即可。
 	pushGateway.Send(tenantID, userID, n)
 }
+
+// PublishMessage 把一条新消息同时推给客服端与用户端（访客）。
+// 这是「消息产生」的统一出口：只要调用它，两端在线即时收到；
+// 任一端离线都不影响 —— 消息已入库，对方重连后按 since_id 补拉。
+func PublishMessage(tenantID, convID uint, msg interface{}, conv interface{}) {
+	HubInstance().Publish(tenantID, nil, Event{Event: "message.new", Data: msg})
+	if conv != nil {
+		HubInstance().Publish(tenantID, nil, Event{Event: "conversation.updated", Data: conv})
+	}
+	// 用户端定向推送
+	HubInstance().PublishToGuest(tenantID, convID, Event{Event: "message.new", Data: msg})
+	if conv != nil {
+		HubInstance().PublishToGuest(tenantID, convID, Event{Event: "conversation.updated", Data: conv})
+	}
+}

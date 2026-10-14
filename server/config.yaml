@@ -2,7 +2,7 @@
 # 所有项都可用环境变量覆盖：KEFU_PORT / KEFU_DB_DRIVER / KEFU_REDIS_ADDR 等
 
 server:
-  port: 8080
+  port: 8480
   mode: debug          # debug | release
 
   # 对外访问的前端根地址：用于生成渠道「接入地址」与「二维码」内容。
@@ -29,11 +29,43 @@ jwt:
 upload:
   dir: data/uploads
 
+# IP 归属地查询（会话列表展示客户所在城市）
+# url 支持 {ip} 占位符，需返回含 city/region/country 的 JSON。
+# 留空则不解析城市（工作台只显示 IP 地址），内网 IP 始终不解析。
+# 可选服务示例：
+#   url: http://ip-api.com/json/{ip}?lang=zh-CN
+#   url: https://ipwho.is/{ip}
+#   url: https://v2.ip-api.com/json/{ip}?lang=zh-CN&fields=status,country,regionName,city
+ip_lookup:
+  url: ""
+
 # Redis：分布式部署时开启（多实例共享 Pub/Sub 广播与 Token 缓存）
 # 不开启时自动降级为进程内内存实现，单机部署完全无影响
 redis:
-  enabled: false
-  addr: 127.0.0.1:6379
+  enabled: true
+  addr: 192.168.9.22:6379
   password: ""
   db: 0
   prefix: "kefu:"
+
+# 厂商推送（APP / PC 桌面端离线提醒）
+# 完整对接说明见 docs/推送对接.md
+# enabled=false 时网关只记录日志；离线提醒仍会落库，端侧重连后可通过
+# GET /api/offline/notifications 增量拉取，所以不会丢消息。
+push:
+  enabled: false
+
+  # iOS：APNs（需先 go get github.com/sideshow/apns2 并在 service/push.go 注册）
+  apns:
+    enabled: false
+    key_id: ""          # APNs Key ID
+    team_id: ""         # Apple Developer Team ID
+    bundle_id: ""       # com.yourcompany.kefu
+    key_file: ""        # AuthKey_XXX.p8 的路径
+    production: false   # true=生产环境，false=沙盒
+
+  # 极光 JPush（国内 Android/iOS，需 go get github.com/jpush/jpush-api-go-client）
+  jpush:
+    enabled: false
+    app_key: ""
+    master_secret: ""

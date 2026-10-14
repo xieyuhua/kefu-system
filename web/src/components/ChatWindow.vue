@@ -28,7 +28,7 @@
           size="small"
           @click="emit('claim', conversation)"
         >
-          接入会话
+          {{ compactHeader ? '接入' : '接入会话' }}
         </el-button>
         <el-button
           size="small"
@@ -42,10 +42,15 @@
           :disabled="conversation.status === 'closed'"
           @click="emit('close', conversation)"
         >
-          结束会话
+          {{ compactHeader ? '结束' : '结束会话' }}
         </el-button>
-        <el-button size="small" @click="emit('toggle-panel')">
-          {{ panelOpen ? '收起资料' : '客户资料' }}
+        <el-button
+          size="small"
+          :icon="User"
+          :title="panelOpen ? '收起资料' : '客户资料'"
+          @click="emit('toggle-panel')"
+        >
+          <span v-if="!compactHeader">{{ panelOpen ? '收起资料' : '客户资料' }}</span>
         </el-button>
       </div>
     </header>
@@ -80,6 +85,7 @@
 
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue'
+import { User } from '@element-plus/icons-vue'
 import type { Conversation, Message, MessageType } from '@/types'
 import { channelColor, channelLabel, statusLabel } from '@/utils/format'
 import MessageBubble from './MessageBubble.vue'
@@ -91,6 +97,10 @@ const props = defineProps<{
   loading: boolean
   hasMore: boolean
   panelOpen: boolean
+  /** 移动端：客户资料以抽屉打开，此处仅显示图标按钮 */
+  compactHeader?: boolean
+  /** 移动端：是否显示返回按钮（由父级控制顶栏，这里仅作占位） */
+  showBack?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -215,5 +225,36 @@ const hasMore = computed(() => props.hasMore)
   display: flex;
   justify-content: center;
   margin-bottom: 8px;
+}
+
+/* ---------------- 移动端适配 ---------------- */
+@media (max-width: 768px) {
+  .chat-header {
+    height: 48px;
+    padding: 0 10px;
+    gap: 8px;
+  }
+
+  .title-name {
+    max-width: 40vw;
+    font-size: 14px;
+  }
+
+  /* 副标题在移动端隐藏，节省纵向空间 */
+  .header-sub {
+    display: none;
+  }
+
+  .header-actions {
+    gap: 4px;
+
+    :deep(.el-button) {
+      padding: 5px 8px;
+    }
+  }
+
+  .chat-body {
+    padding: 10px 12px;
+  }
 }
 </style>

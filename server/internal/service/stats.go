@@ -24,6 +24,7 @@ type AgentStat struct {
 	AgentID   uint   `json:"agent_id"`
 	Name      string `json:"name"`
 	Avatar    string `json:"avatar"`
+	Role      string `json:"role"`            // admin | agent
 	Handled   int64  `json:"handled"`         // 接待会话数
 	Closed    int64  `json:"closed"`          // 结束会话数
 	Messages  int64  `json:"messages"`        // 发送消息数
@@ -100,34 +101,44 @@ func StatsOverviewData(tenantID uint, days int) (*StatsOverview, error) {
 		out.Trend = append(out.Trend, p)
 	}
 
-	// 客服工作量
+	// 客服工作量：包含所有接待过会话的账号（admin 也算）
+	// 注意：不能简单按 role='agent' 过滤 —— SAAS 管理员常常也亲自坐席
 	var users []model.User
-	gormDB().Where("tenant_id = ? AND role = 'agent'", tenantID).Find(&users)
+	gormDB().Where("tenant_id = ?", tenantID).Order("role desc, id asc").Find(&users)
 	for _, u := range users {
-		s := AgentStat{AgentID: u.ID, Name: u.Name, Avatar: u.Avatar}
+		// 跳过完全没有参与接待的客服，表格更精炼
+		var handled int64
 		gormDB().Model(&model.Conversation{}).
-			Where("tenant_id = ? AND agent_id = ?", tenantID, u.ID).Count(&s.Handled)
+			Where("tenant_id = ? AND agent_id = ?", tenantID, u.ID).Count(&handled)
+		if handled == 0 && !u.Online {
+			continue
+		}
+		s := AgentStat{AgentID: u.ID, Name: u.Name, Avatar: u.Avatar, Role: u.Role}
+		s.Handled = handled
 		gormDB().Model(&model.Conversation{}).
 			Where("tenant_id = ? AND agent_id = ? AND status = 'closed'", tenantID, u.ID).Count(&s.Closed)
 		gormDB().Model(&model.Conversation{}).
 			Where("tenant_id = ? AND agent_id = ? AND status = 'open'", tenantID, u.ID).Count(&s.ActiveNow)
+		// 最近 N 天的消息数（与表头 "最近 N 天" 对齐）
 		gormDB().Model(&model.Message{}).
-			Where("tenant_id = ? AND sender_id = ? AND sender_role = 'user'", tenantID, u.ID).Count(&s.Messages)
+			Where("tenant_id = ? AND sender_id = ? AND sender_role = 'user' AND created_at >= ?",
+				tenantID, u.ID, start).Count(&s.Messages)
 		out.Agents = append(out.Agents, s)
 	}
 
-	// 渠道分布
+	// 渠道分布：最近 N 天的会话（与趋势图、客服工作量时间口径一致）
 	var chs []model.Channel
 	gormDB().Where("tenant_id = ?", tenantID).Order("id asc").Find(&chs)
 	for _, c := range chs {
 		s := ChannelStat{ChannelID: c.ID, Name: c.Name, Type: c.Type}
-		gormDB().Model(&model.Conversation{}).Where("tenant_id = ? AND channel_id = ?", tenantID, c.ID).Count(&s.Total)
 		gormDB().Model(&model.Conversation{}).
-			Where("tenant_id = ? AND channel_id = ? AND status = 'pending'", tenantID, c.ID).Count(&s.Pending)
+			Where("tenant_id = ? AND channel_id = ? AND created_at >= ?", tenantID, c.ID, start).Count(&s.Total)
 		gormDB().Model(&model.Conversation{}).
-			Where("tenant_id = ? AND channel_id = ? AND status = 'open'", tenantID, c.ID).Count(&s.Open)
+			Where("tenant_id = ? AND channel_id = ? AND status = 'pending' AND created_at >= ?", tenantID, c.ID, start).Count(&s.Pending)
 		gormDB().Model(&model.Conversation{}).
-			Where("tenant_id = ? AND channel_id = ? AND status = 'closed'", tenantID, c.ID).Count(&s.Closed)
+			Where("tenant_id = ? AND channel_id = ? AND status = 'open' AND created_at >= ?", tenantID, c.ID, start).Count(&s.Open)
+		gormDB().Model(&model.Conversation{}).
+			Where("tenant_id = ? AND channel_id = ? AND status = 'closed' AND created_at >= ?", tenantID, c.ID, start).Count(&s.Closed)
 		out.Channels = append(out.Channels, s)
 	}
 

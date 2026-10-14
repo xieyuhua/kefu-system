@@ -132,7 +132,10 @@ func HandleIncoming(tenantID, convID, customerID, channelID uint, question strin
 	}
 	gormDB().Model(&model.Conversation{}).Where("id = ?", convID).
 		Updates(map[string]interface{}{"last_message": reply, "last_message_at": time.Now()})
-	HubInstance().Publish(tenantID, nil, Event{Event: "message.new", Data: buildMessageVO(m)})
+	vo := buildMessageVO(m)
+	// 客服端 + 用户端同时收到机器人回复
+	HubInstance().Publish(tenantID, nil, Event{Event: "message.new", Data: vo})
+	HubInstance().PublishToGuest(tenantID, convID, Event{Event: "message.new", Data: vo})
 }
 
 // notifyChannelAgents 通知该渠道下所有在线客服（转人工场景）
@@ -153,7 +156,35 @@ func broadcastConversation(tenantID, convID uint) {
 	if err := gormDB().Where("tenant_id = ? AND id = ?", tenantID, convID).First(&c).Error; err != nil {
 		return
 	}
-	HubInstance().Publish(tenantID, nil, Event{Event: "conversation.updated", Data: buildConversationVO(c)})
+	vo := buildConversationVO(c)
+	HubInstance().Publish(tenantID, nil, Event{Event: "conversation.updated", Data: vo})
+	HubInstance().PublishToGuest(tenantID, convID, Event{Event: "conversation.updated", Data: vo})
+}
+
+// FindGuestConversation 定位（或创建）某渠道下某个外部用户的客户与会话。
+// 用户端 WebSocket 与 guest/init 共用，保证两端拿到的是同一个会话。
+func FindGuestConversation(tenantID, channelID uint, externalID string) (model.Customer, uint, error) {
+	var cu model.Customer
+	if err := gormDB().Where("tenant_id = ? AND channel_id = ? AND external_id = ?",
+		tenantID, channelID, externalID).First(&cu).Error; err != nil {
+		return cu, 0, errors.New("会话不存在，请先调用 /api/guest/init")
+	}
+	// 优先复用未结束的会话
+	var conv model.Conversation
+	if err := gormDB().Where("tenant_id = ? AND customer_id = ? AND status != 'closed'",
+		tenantID, cu.ID).Order("id desc").First(&conv).Error; err == nil {
+		return cu, conv.ID, nil
+	}
+	// 全部已结束则新建一个
+	now := time.Now()
+	conv = model.Conversation{
+		TenantID: tenantID, ChannelID: channelID, CustomerID: cu.ID,
+		Status: "pending", LastMessageAt: now,
+	}
+	if err := gormDB().Create(&conv).Error; err != nil {
+		return cu, 0, err
+	}
+	return cu, conv.ID, nil
 }
 
 func robotAnswer(q string) string {

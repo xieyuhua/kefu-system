@@ -1,6 +1,7 @@
 package router
 
 import (
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -12,17 +13,50 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// spaIndex 返回前端首页（SPA 回退）。目录不存在时给出明确提示而不是 500。
-func spaIndex(webDir string) gin.HandlerFunc {
-	index := filepath.Join(webDir, "index.html")
+// spaEntry 返回指定入口 HTML（admin.html / chat.html / kefu.html / index.html）。
+// 文件不存在时给出明确提示而不是 500，方便本地用 pnpm dev 调试。
+func spaEntry(webDir, entry string) gin.HandlerFunc {
+	file := filepath.Join(webDir, entry)
 	return func(c *gin.Context) {
-		if _, err := os.Stat(index); err != nil {
+		if _, err := os.Stat(file); err != nil {
 			c.String(http.StatusNotFound,
-				"前端产物未找到：请把 web/dist 复制到 server/web 后再访问，或用 `pnpm dev` 启动前端开发服务。")
+				"前端产物 %s 未找到：请把 web/dist 复制到 server/web 后再访问，或用 `pnpm dev` 启动前端开发服务。", entry)
 			return
 		}
-		c.File(index)
+		c.File(file)
 	}
+}
+
+// ends 定义三个独立端：URL 前缀 → 入口 HTML
+var ends = []struct {
+	Prefix string
+	Entry  string
+}{
+	{"admin", "admin.html"},
+	{"chat", "chat.html"},
+	{"kefu", "kefu.html"},
+}
+
+// WebDir 定位前端产物目录。优先用环境变量 KEFU_WEB_DIR，
+// 其次取「可执行文件所在目录 /web」，最后回退到当前工作目录下的 web。
+// 这样无论从哪个目录启动（go run . 或运行编译好的二进制）都能找到产物。
+func WebDir() string {
+	if v := os.Getenv("KEFU_WEB_DIR"); v != "" {
+		return v
+	}
+	if exe, err := os.Executable(); err == nil {
+		dir := filepath.Join(filepath.Dir(exe), "web")
+		if _, statErr := os.Stat(dir); statErr == nil {
+			return dir
+		}
+	}
+	if wd, err := os.Getwd(); err == nil {
+		dir := filepath.Join(wd, "web")
+		if _, statErr := os.Stat(dir); statErr == nil {
+			return dir
+		}
+	}
+	return "web"
 }
 
 func Setup() *gin.Engine {
@@ -35,24 +69,51 @@ func Setup() *gin.Engine {
 	r.Static("/uploads", config.C.Upload.Dir)
 	r.Static("/demo", filepath.Join("data", "demo"))
 
-	// 前端三个独立入口：/ （用户端）、/chat/ （客服工作台）、/admin/ （管理后台）
-	// 前端构建产物放在 server/web 目录下时由后端直接托管，且每个前缀都做 SPA 回退。
-	webDir := "web"
-	r.StaticFile("/", filepath.Join(webDir, "index.html"))
-	r.Static("/assets", filepath.Join(webDir, "assets"))
+	// 前端三端独立入口：/ 与 /kefu/（用户端）、/chat/（客服工作台）、/admin/（管理后台）
+	// 前端 `pnpm build` 已直接把产物输出到 server/web，这里只读托管。
+	webDir := WebDir()
+	if _, err := os.Stat(webDir); err != nil {
+		log.Printf("[router] 未找到前端产物目录 %s：请先执行 `cd web && pnpm install && pnpm build`", webDir)
+	}
+	// 带内容哈希的静态资源可长期缓存；找不到时返回 404，避免浏览器报 MIME 错误
+	r.GET("/assets/*filepath", func(c *gin.Context) {
+		p := filepath.Join(webDir, "assets", filepath.Clean("/"+c.Param("filepath")))
+		if _, err := os.Stat(p); err != nil {
+			c.Status(http.StatusNotFound)
+			return
+		}
+		c.Header("Cache-Control", "public, max-age=31536000, immutable")
+		c.File(p)
+	})
+	// 前端 public 目录下的原样拷贝资源（兜底图等）
+	r.Static("/img", filepath.Join(webDir, "img"))
 	r.StaticFile("/favicon.svg", filepath.Join(webDir, "favicon.svg"))
 	r.StaticFile("/icons.svg", filepath.Join(webDir, "icons.svg"))
 
-	// 带前缀的入口：把 /chat/xxx、/admin/xxx 回退到各自的 index.html。
-	// gin 不允许同时注册 "/chat" 与 "/chat/*any"，这里统一用 *any 带可选的尾部斜杠处理。
-	for _, prefix := range []string{"chat", "admin"} {
-		p := "/" + prefix
-		r.GET(p, spaIndex(webDir))
-		r.GET(p+"/*any", spaIndex(webDir))
+	// 根路径：用户端（index.html）
+	r.GET("/", spaEntry(webDir, "index.html"))
+
+	// 每个前缀返回自己的入口 HTML，并对前缀下的任意路径做 SPA 回退。
+	// gin 的路由树不允许同层同时出现 "/x" 与 "/x/*any"，
+	// 因此只注册 "/x/*any"（它会同时匹配 "/x"），避免冲突。
+	for _, e := range ends {
+		entry := spaEntry(webDir, e.Entry)
+		r.GET("/"+e.Prefix+"/*any", entry)
 	}
-	// 其它未知路径也回退到首页（用户端 /c 等走 hash 路由）
+
+	// 旧的单入口路径自动跳到对应端
+	r.GET("/c", func(c *gin.Context) { c.Redirect(http.StatusFound, "/kefu/") })
+	r.GET("/workbench", func(c *gin.Context) { c.Redirect(http.StatusFound, "/chat/") })
+
+	// 无尾斜杠的 /admin、/chat、/kefu 补斜杠（gin 的 /*any 不匹配裸前缀）
+	for _, e := range ends {
+		prefix := "/" + e.Prefix
+		r.GET(prefix, func(c *gin.Context) { c.Redirect(http.StatusMovedPermanently, prefix+"/") })
+	}
+
+	// 其它未知路径回退到用户端首页
 	r.NoRoute(func(c *gin.Context) {
-		if idx := len("/api"); len(c.Request.URL.Path) >= idx && c.Request.URL.Path[:idx] == "/api" {
+		if len(c.Request.URL.Path) >= len("/api") && c.Request.URL.Path[:len("/api")] == "/api" {
 			c.JSON(http.StatusNotFound, gin.H{"code": 404, "message": "接口不存在"})
 			return
 		}
@@ -63,8 +124,9 @@ func Setup() *gin.Engine {
 		c.JSON(http.StatusOK, gin.H{"code": 0, "data": gin.H{"ok": true}})
 	})
 
-	// WebSocket（token 走 query，APP/PC 桌面端同样适用）
+	// WebSocket：客服端（需 token）与用户端/访客（凭 channel+uid）两条独立通道
 	r.GET("/ws", api.WSHandler)
+	r.GET("/ws/guest", api.GuestWSHandler)
 
 	g := r.Group("/api")
 	{
@@ -145,6 +207,7 @@ func Setup() *gin.Engine {
 			authed.GET("/devices", api.ListDevices)
 			authed.POST("/devices", api.RegisterDevice)
 			authed.DELETE("/devices/:id", api.DeleteDevice)
+			authed.POST("/devices/test-push", api.TestDevicePush)
 
 			// 离线消息同步
 			authed.GET("/offline/messages", api.OfflineMessages)

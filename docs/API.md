@@ -146,6 +146,14 @@ Authorization: Bearer <token>
 ```
 > `agent` 角色只返回自己可接待的渠道。
 
+### 设备推送自检
+`POST /api/devices/test-push`
+```json
+{ "title": "推送自检", "body": "收到说明厂商通道已接通" }
+```
+向**当前登录账号**已注册的所有设备触发一次推送，用于验证厂商通道是否接通。结果看服务端日志 `[push]`。
+> 厂商通道未启用时接口仍返回 `code: 0`，但不会实际下发（提醒仍会落库，端侧可补拉）。
+
 ### 渠道二维码与接入地址
 
 `GET /api/channels/:id/qr?size=320&base=<可选>`
@@ -235,7 +243,12 @@ Query：
   "list": [{
     "id": 11, "channel_id": 1,
     "channel": {"id":1,"type":"wechat","name":"微信公众号客服"},
-    "user": {"id":3,"external_id":"wx_o_abc","nickname":"王小明","avatar":"/demo/avatar-3.svg","phone":"138****8888"},
+    "user": {
+      "id":3, "external_id":"wx_o_abc", "nickname":"王小明",
+      "avatar":"/demo/avatar-3.svg", "phone":"138****8888",
+      "ip":"203.0.113.45", "city":"广东省 深圳市",
+      "tags":[{"id":1,"name":"VIP","color":"red"}], "remark":"老客户"
+    },
     "status": "open",
     "agent": {"id":2,"name":"小李"},
     "unread": 2,
@@ -275,8 +288,7 @@ Query：
 ### `GET /api/conversations/:id/messages`
 Query：`before_id`（翻页用，返回更早的消息）、`limit`（缺省 50）。
 
-响应 `data`：数组，按 id 升序
-```json
+响应 `data`：数组，按 id 升序```json
 [{
   "id": 101, "conversation_id": 11, "type": "text", "direction": "in",
   "content": "你好，在吗？",
@@ -485,9 +497,31 @@ http(s)://<host>/c?channel=web&uid=o_abc123&nickname=王小明&avatar=&order_no=
 - `reply`：命中自动回复规则时的机器人回复（可能是文本或商品卡片）
 - `transferred=true`：命中"转人工"关键词，会话已转为待人工接待，前端提示"正在为您转接人工客服"
 
-### 13.4 用户端轮询 / 长连接
-- 实时：`GET /ws?token=<guest_token>&device=web`
-- 无 WebSocket 环境降级轮询：`GET /api/guest/messages?channel=web&uid=u_10001&since_id=0`
+### 13.4 实时通道与离线补偿
+
+两端统一走 WebSocket，各自一条通道：
+
+| 端 | 连接地址 | 鉴权 |
+|---|---|---|
+| 客服端 | `GET /ws?token=<jwt>&device=web\|desktop\|app` | JWT |
+| **用户端（访客）** | `GET /ws/guest?channel=web&uid=u_10001&since_id=0&tenant=1` | channel + uid |
+
+**用户端事件**
+```json
+{ "event": "connected", "data": { "conversation_id":31,"customer_id":12,"nickname":"王小明","channel":{...} } }
+{ "event": "message.new", "data": { ...消息对象... } }
+{ "event": "conversation.updated", "data": { "id":31,"status":"pending","transferred":false } }
+```
+
+**离线不丢消息的保证**：
+1. 消息一律先入库，再推送 —— 对方在线即时收到，离线也不丢。
+2. 任一端重连时带上 `since_id`（端侧已收到的最大消息 ID），**服务端自动回放这之后累积的消息**。
+3. 访客端 `since_id` 存在 `localStorage`（key 按 `channel+uid` 隔离），换设备/清缓存后会由 `guest/init` 的 `history` 兜底。
+4. 前端连续 3 次连接失败时**自动降级为轮询** `GET /api/guest/messages?since_id=`（3s 一次），连接恢复后自动切回 WebSocket。
+5. 分布式部署时通过 Redis Pub/Sub（`events` 与 `guest-events` 两个 topic）跨实例投递，访客连到任意实例都能收到。
+
+> 保留 `GET /api/guest/messages` 作为降级兜底，其 `since_id` 为**正向游标**：返回 `id > since_id` 的新消息。
+> 注意与 `GET /api/conversations/:id/messages` 的 `before_id`（向前翻页，语义相反）区分。
 
 ---
 
@@ -521,13 +555,27 @@ http(s)://<host>/c?channel=web&uid=o_abc123&nickname=王小明&avatar=&order_no=
 ## 15. 数据统计
 
 ### `GET /api/stats/overview?days=7`
+
+`days` 支持 1-90，默认 7。
+
+**统计口径**（页面上各区块共用同一时间范围）：
+- `trend`：按天统计所选区间内**新建**的会话与消息
+- `channels`：所选区间内**新建**的会话按渠道分布
+- `agents.messages`：所选区间内该账号发送的客服消息数
+- `agents.handled / closed / active_now`：**累计值**（不受 days 影响）
+- `summary.total_conversations / customers / orders`：**累计值**
+- `summary.new_customers`：所选区间内新增客户数
+
+> 客服工作量表包含**管理员**——管理员若也亲自接待会话，其工作量会计入（`role: "admin"`）。
+> 没有参与过接待且当前离线的账号不会出现在表中。
+
 ```json
 {
   "trend": [{
      "date":"2026-03-05", "total":32, "handled":28, "closed":25,
      "pending":4, "messages":210, "customer_msgs":120, "agent_msgs":90
   }],
-  "agents": [{ "agent_id":2,"name":"小李","handled":18,"closed":15,"messages":96,"active_now":3 }],
+  "agents": [{ "agent_id":2,"name":"小李","role":"agent","handled":18,"closed":15,"messages":96,"active_now":3 }],
   "channels": [{ "channel_id":1,"name":"微信公众号客服","type":"wechat","total":12,"pending":2,"open":3,"closed":7 }],
   "summary": {
      "total_conversations": 128, "handled_rate": 87.5, "avg_messages": 6.4,
@@ -535,7 +583,6 @@ http(s)://<host>/c?channel=web&uid=o_abc123&nickname=王小明&avatar=&order_no=
   }
 }
 ```
-> `days` 支持 1-90，默认 7（最近一周接待趋势）。
 
 ---
 

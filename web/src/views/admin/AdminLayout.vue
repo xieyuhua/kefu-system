@@ -24,15 +24,15 @@ interface MenuItem {
 }
 
 const MENUS: MenuItem[] = [
-  { path: '/admin/dashboard', title: '概览', icon: DataLine },
-  { path: '/admin/channels', title: '渠道管理', icon: Grid },
-  { path: '/admin/channel-types', title: '渠道类型', icon: CollectionTag },
-  { path: '/admin/auto-replies', title: '自动回复', icon: ChatRound },
-  { path: '/admin/agents', title: '子账号管理', icon: UserFilled },
-  { path: '/admin/users', title: '客户管理', icon: Headset },
-  { path: '/admin/orders', title: '订单管理', icon: Tickets },
-  { path: '/admin/products', title: '商品管理', icon: ShoppingCart },
-  { path: '/admin/devices', title: '设备管理', icon: Iphone },
+  { path: '/dashboard', title: '概览', icon: DataLine },
+  { path: '/channels', title: '渠道管理', icon: Grid },
+  { path: '/channel-types', title: '渠道类型', icon: CollectionTag },
+  { path: '/auto-replies', title: '自动回复', icon: ChatRound },
+  { path: '/agents', title: '子账号管理', icon: UserFilled },
+  { path: '/users', title: '客户管理', icon: Headset },
+  { path: '/orders', title: '订单管理', icon: Tickets },
+  { path: '/products', title: '商品管理', icon: ShoppingCart },
+  { path: '/devices', title: '设备管理', icon: Iphone },
 ]
 
 const route = useRouter()
@@ -44,8 +44,11 @@ const userName = computed(() => auth.user?.name || auth.user?.account || '未登
 const userRole = computed(() => (auth.user?.role === 'admin' ? '管理员' : '客服'))
 const pageTitle = computed(() => (current.meta.title as string | undefined) || '概览')
 
+/** 跨端跳转：工作台在另一个入口 /chat/ */
+const WORKBENCH_URL = '/chat/'
+
 function goWorkbench(): void {
-  void route.push('/chat/')
+  window.location.href = WORKBENCH_URL
 }
 
 async function onLogout(): Promise<void> {

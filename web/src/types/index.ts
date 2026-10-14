@@ -68,6 +68,10 @@ export interface Channel {
   created_at: string
   agent_count: number
   pending_count: number
+  /** 用户端接入相对路径（来自后端，方便调试） */
+  access_path?: string
+  /** 完整接入地址（基于后端 public_base 拼接），直接对外复制/分享 */
+  access_url?: string
 }
 
 export interface ChannelPayload {
@@ -90,6 +94,19 @@ export interface ConversationUser {
   avatar: string
   phone: string
   order_count?: number
+  /** 客户最近一次访问 IP */
+  ip?: string
+  /** IP 归属城市，如「广东 深圳」 */
+  city?: string
+  tags?: TagRef[]
+  remark?: string
+}
+
+/** 客户标签 */
+export interface TagRef {
+  id: number
+  name: string
+  color: string
 }
 
 /** 会话中的客服简要信息 */
@@ -241,6 +258,10 @@ export interface Customer {
   last_seen_at: string
   created_at: string
   tags?: string[]
+  /** 客户最近一次访问 IP */
+  ip?: string
+  /** IP 归属城市 */
+  city?: string
 }
 
 /** 客户详情（历史档案） */

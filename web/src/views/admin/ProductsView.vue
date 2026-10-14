@@ -2,6 +2,7 @@
 import { onMounted, reactive, ref } from 'vue'
 import { Refresh, Search } from '@element-plus/icons-vue'
 import { listProducts, type ProductQuery } from '../../api/admin'
+import ThumbImage from '@/components/ThumbImage.vue'
 import type { Product } from '../../types'
 
 const loading = ref(false)
@@ -98,9 +99,9 @@ onMounted(load)
         <el-table-column label="商品" min-width="260">
           <template #default="{ row }">
             <div class="goods">
-              <img v-if="row.image" class="goods__img" :src="row.image" :alt="row.title" />
+              <ThumbImage :src="row.image" :size="40" :fallback="'图'" :alt="row.title" />
               <div class="goods__meta">
-                <span class="goods__title">{{ row.title }}</span>
+                <span class="goods__title kf-ellipsis">{{ row.title }}</span>
                 <span class="goods__id">{{ row.id }}</span>
               </div>
             </div>
@@ -194,20 +195,13 @@ onMounted(load)
   display: flex;
   align-items: center;
   gap: 8px;
-
-  &__img {
-    width: 40px;
-    height: 40px;
-    border-radius: 4px;
-    object-fit: cover;
-    background: #f5f5f5;
-    flex: 0 0 40px;
-  }
+  min-width: 0;
 
   &__meta {
     display: flex;
     flex-direction: column;
     line-height: 1.3;
+    min-width: 0;
   }
 
   &__title {

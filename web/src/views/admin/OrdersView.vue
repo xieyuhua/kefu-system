@@ -2,6 +2,7 @@
 import { onMounted, reactive, ref } from 'vue'
 import { Refresh, Search } from '@element-plus/icons-vue'
 import { listOrders, type OrderQuery } from '../../api/admin'
+import ThumbImage from '@/components/ThumbImage.vue'
 import type { Order } from '../../types'
 
 const loading = ref(false)
@@ -114,11 +115,11 @@ onMounted(load)
         empty-text="暂无订单"
       >
         <el-table-column prop="order_no" label="订单号" min-width="160" />
-        <el-table-column label="商品" min-width="240">
+        <el-table-column label="商品" min-width="260">
           <template #default="{ row }">
             <div class="goods">
-              <img v-if="row.image" class="goods__img" :src="row.image" :alt="row.title" />
-              <span class="goods__title">{{ row.title }}</span>
+              <ThumbImage :src="row.image" :size="36" :fallback="'图'" :alt="row.title" />
+              <span class="goods__title kf-ellipsis">{{ row.title }}</span>
             </div>
           </template>
         </el-table-column>
@@ -209,18 +210,11 @@ onMounted(load)
   display: flex;
   align-items: center;
   gap: 8px;
-
-  &__img {
-    width: 36px;
-    height: 36px;
-    border-radius: 4px;
-    object-fit: cover;
-    background: #f5f5f5;
-    flex: 0 0 36px;
-  }
+  min-width: 0;
 
   &__title {
-    color: #191919;
+    color: var(--kf-text, #191919);
+    min-width: 0;
   }
 }
 

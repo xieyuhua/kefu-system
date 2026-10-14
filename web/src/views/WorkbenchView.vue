@@ -1,56 +1,77 @@
 <template>
-  <div class="workbench">
+  <div class="workbench" :class="{ 'workbench--mobile': isMobile }">
     <header class="workbench-topbar">
+      <!-- 移动端：左侧返回按钮（列表 <-> 聊天） -->
       <div class="topbar-left">
-        <span class="topbar-title">客服工作台</span>
+        <el-button
+          v-if="isMobile && mobileView === 'chat'"
+          class="topbar-back"
+          size="small"
+          text
+          :icon="ArrowLeft"
+          @click="mobileView = 'list'"
+        >
+          会话
+        </el-button>
+        <span v-else class="topbar-title">客服工作台</span>
         <el-tag size="small" effect="plain" :type="socketStatus === 'open' ? 'success' : 'info'">
           {{ socketStatus === 'open' ? '实时连接正常' : '连接中…' }}
         </el-tag>
       </div>
       <div class="topbar-right">
-        <span class="topbar-stat">待接待 {{ chat.stats.pending }}</span>
-        <span class="topbar-stat">进行中 {{ chat.stats.open }}</span>
-        <span class="topbar-stat">未读 {{ chat.stats.unread }}</span>
+        <template v-if="!isMobile">
+          <span class="topbar-stat">待接待 {{ chat.stats.pending }}</span>
+          <span class="topbar-stat">进行中 {{ chat.stats.open }}</span>
+          <span class="topbar-stat">未读 {{ chat.stats.unread }}</span>
+        </template>
         <DemoPanel />
-        <el-button size="small" :icon="Clock" @click="goHistory">历史档案</el-button>
+        <el-button v-if="!isMobile" size="small" :icon="Clock" @click="goHistory">历史档案</el-button>
         <el-button size="small" :icon="Refresh" @click="refresh">刷新</el-button>
       </div>
     </header>
 
     <div class="workbench-body">
-      <ChannelSidebar />
+      <!-- 左侧导航 + 会话列表（移动端为独立一页） -->
+      <div v-show="!isMobile || mobileView === 'list'" class="pane pane--list">
+        <ChannelSidebar />
+        <ConversationList
+          :conversations="chat.conversations"
+          :current-id="chat.currentId"
+          :loading="chat.listLoading"
+          :total="chat.total"
+          :stats="chat.stats"
+          :status="chat.filters.status"
+          @select="onSelect"
+          @update:status="(s) => chat.setFilter({ status: s })"
+          @update:keyword="onKeyword"
+          @refresh="refresh"
+        />
+      </div>
 
-      <ConversationList
-        :conversations="chat.conversations"
-        :current-id="chat.currentId"
-        :loading="chat.listLoading"
-        :total="chat.total"
-        :stats="chat.stats"
-        :status="chat.filters.status"
-        @select="onSelect"
-        @update:status="(s) => chat.setFilter({ status: s })"
-        @update:keyword="onKeyword"
-        @refresh="refresh"
-      />
+      <!-- 聊天区 -->
+      <div v-show="!isMobile || mobileView === 'chat'" class="pane pane--chat">
+        <ChatWindow
+          :conversation="chat.current"
+          :messages="chat.messages"
+          :loading="chat.messageLoading"
+          :has-more="false"
+          :panel-open="sidePanelVisible"
+          :compact-header="isMobile"
+          :show-back="false"
+          @send="onSend"
+          @claim="onClaim"
+          @transfer="onTransfer"
+          @close="onClose"
+          @toggle-panel="onTogglePanel"
+          @pick-order="orderPickerOpen = true"
+          @pick-product="productPickerOpen = true"
+          @load-more="() => {}"
+        />
+      </div>
 
-      <ChatWindow
-        :conversation="chat.current"
-        :messages="chat.messages"
-        :loading="chat.messageLoading"
-        :has-more="false"
-        :panel-open="panelOpen"
-        @send="onSend"
-        @claim="onClaim"
-        @transfer="onTransfer"
-        @close="onClose"
-        @toggle-panel="panelOpen = !panelOpen"
-        @pick-order="orderPickerOpen = true"
-        @pick-product="productPickerOpen = true"
-        @load-more="() => {}"
-      />
-
+      <!-- 右侧客户资料（仅桌面档固定栏；平板与移动端改用抽屉） -->
       <CustomerPanel
-        v-if="panelOpen"
+        v-if="sidePanelVisible"
         :customer="customer"
         :orders="customerOrders"
         :loading="customerLoading"
@@ -58,6 +79,26 @@
         @close="panelOpen = false"
         @send-order="sendOrderCard"
       />
+
+      <!-- 平板 / 移动端：客户资料以抽屉形式弹出 -->
+      <el-drawer
+        v-if="!sidePanelVisible"
+        v-model="mobileProfileOpen"
+        direction="rtl"
+        size="86%"
+        :with-header="false"
+        class="mobile-profile"
+      >
+        <CustomerPanel
+          :customer="customer"
+          :orders="customerOrders"
+          :loading="customerLoading"
+          :can-send="canSend"
+          :embedded="true"
+          @close="mobileProfileOpen = false"
+          @send-order="sendOrderCard"
+        />
+      </el-drawer>
     </div>
 
     <OrderPicker v-model="orderPickerOpen" :user-id="chat.current?.user?.id" @pick="onPickOrder" />
@@ -69,7 +110,7 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Clock, Refresh } from '@element-plus/icons-vue'
+import { ArrowLeft, Clock, Refresh } from '@element-plus/icons-vue'
 import ChannelSidebar from '@/components/ChannelSidebar.vue'
 import ConversationList from '@/components/ConversationList.vue'
 import ChatWindow from '@/components/ChatWindow.vue'
@@ -80,6 +121,7 @@ import ProductPicker from '@/components/ProductPicker.vue'
 import { useAuthStore } from '@/stores/auth'
 import { useChatStore } from '@/stores/chat'
 import { useSocket } from '@/composables/useSocket'
+import { useScreenTier } from '@/composables/useIsMobile'
 import { getCustomer } from '@/api/users'
 import { listAgents, type Agent } from '@/api/agents'
 import type {
@@ -102,6 +144,17 @@ const { status: socketStatus, connect, close, on } = useSocket()
 const panelOpen = ref(true)
 const orderPickerOpen = ref(false)
 const productPickerOpen = ref(false)
+
+/** 响应式分档：mobile 单栏 / tablet 三栏 / desktop 四栏 */
+const { tier } = useScreenTier()
+/** 是否移动端窄屏（单栏「列表 ↔ 聊天」布局） */
+const isMobile = computed(() => tier.value === 'mobile')
+/** 移动端当前展示的页面：list（会话列表）| chat（聊天） */
+const mobileView = ref<'list' | 'chat'>('list')
+/** 移动端 / 平板：客户资料抽屉 */
+const mobileProfileOpen = ref(false)
+/** 是否显示右侧客户资料固定栏（仅桌面档） */
+const sidePanelVisible = computed(() => tier.value === 'desktop' && panelOpen.value)
 
 const customer = ref<Customer | null>(null)
 const customerOrders = ref<Order[]>([])
@@ -131,6 +184,17 @@ async function loadCustomer(userId: number | undefined): Promise<void> {
 
 async function onSelect(conversation: Conversation): Promise<void> {
   await chat.selectConversation(conversation)
+  // 移动端：选中会话后切到聊天页
+  if (isMobile.value) mobileView.value = 'chat'
+}
+
+/** 切换客户资料：桌面档用右侧固定栏，平板 / 移动端用抽屉 */
+function onTogglePanel(): void {
+  if (tier.value === 'desktop') {
+    panelOpen.value = !panelOpen.value
+  } else {
+    mobileProfileOpen.value = true
+  }
 }
 
 function refresh(): void {
@@ -260,7 +324,7 @@ async function onClose(conversation: Conversation): Promise<void> {
 }
 
 function goHistory(): void {
-  void router.push('/chat/history')
+  void router.push('/history')
 }
 
 function notify(payload: NotificationPayload): void {
@@ -315,7 +379,8 @@ onBeforeUnmount(() => {
 .workbench {
   display: flex;
   flex-direction: column;
-  height: 100%;
+  /* 移动端用动态视口高度，避免地址栏导致内容被裁切 */
+  height: var(--kf-viewport-h, 100vh);
   overflow: hidden;
   background: var(--kf-bg);
 }
@@ -323,6 +388,19 @@ onBeforeUnmount(() => {
 .workbench-body {
   display: flex;
   flex: 1;
+  min-height: 0;
+}
+
+/* PC：导航 + 会话列表 + 聊天 + 客户资料 四栏并排 */
+.pane--list {
+  display: flex;
+  min-height: 0;
+}
+
+.pane--chat {
+  display: flex;
+  flex: 1;
+  min-width: 0;
   min-height: 0;
 }
 
@@ -343,6 +421,7 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   gap: 10px;
+  min-width: 0;
 }
 
 .topbar-title {
@@ -354,5 +433,52 @@ onBeforeUnmount(() => {
 .topbar-stat {
   font-size: 12px;
   color: var(--kf-text-sub);
+}
+
+.topbar-back {
+  padding-left: 0;
+  font-weight: 600;
+}
+
+/* ---------------- 移动端 ---------------- */
+.workbench--mobile {
+  .workbench-topbar {
+    height: 46px;
+    padding: 0 8px;
+  }
+
+  .workbench-body {
+    position: relative;
+  }
+
+  /* 单栏：列表与聊天互斥显示，各自占满宽度 */
+  .pane--list,
+  .pane--chat {
+    flex: 1;
+    width: 100%;
+  }
+
+  /* 会话列表在移动端独占整屏，不再有左侧图标导航条 */
+  .pane--list :deep(.channel-sidebar) {
+    display: none;
+  }
+
+  /* 移动端顶栏做刘海屏安全区适配 */
+  .workbench-topbar {
+    padding-top: env(safe-area-inset-top, 0);
+    height: calc(46px + env(safe-area-inset-top, 0));
+  }
+
+  /* 聊天输入区避让底部手势条 */
+  .pane--chat :deep(.message-input) {
+    padding-bottom: calc(8px + env(safe-area-inset-bottom, 0));
+  }
+}
+
+/* 平板：隐藏右侧客户资料栏（改为抽屉），给聊天区更多空间 */
+@media (max-width: 1200px) {
+  .workbench :deep(.customer-panel) {
+    display: none;
+  }
 }
 </style>

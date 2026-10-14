@@ -6,12 +6,13 @@ import { clearToken, getToken } from './token'
 const TOKEN_PREFIX = 'Bearer '
 
 /**
- * 统一跳转登录（router 使用 hash 模式，直接改 hash 即可；
- * 若已在登录页则不重复跳转，避免死循环）。
+ * 统一跳转登录。三个端各自独立入口，登录路由都是本端的 `/login`，
+ * 直接改 hash 即可，不会跨端跳转。
  */
 function redirectToLogin(): void {
   clearToken()
-  if (window.location.hash.replace(/^#/, '') !== '/login') {
+  const current = window.location.hash.replace(/^#/, '')
+  if (current !== '/login' && !current.endsWith('/login')) {
     window.location.hash = '#/login'
   }
 }

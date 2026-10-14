@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Refresh } from '@element-plus/icons-vue'
 import { getStatsOverview, type StatsOverviewResult, type TrendPoint } from '../../api/admin'
+import ThumbImage from '@/components/ThumbImage.vue'
 
 const DAY_OPTIONS = [7, 14, 30]
 
@@ -313,7 +314,7 @@ onBeforeUnmount(() => {
         <div class="section-head">
           <span class="section-head__title">渠道分布</span>
           <span class="section-head__sub">
-            共 {{ channels.length }} 个渠道 · 累计 {{ channelTotalSum }} 个会话
+            共 {{ channels.length }} 个渠道 · 最近 {{ days }} 天 {{ channelTotalSum }} 个会话
           </span>
         </div>
 
@@ -346,22 +347,41 @@ onBeforeUnmount(() => {
       <div class="admin-card">
         <div class="section-head">
           <span class="section-head__title">客服工作量</span>
-          <span class="section-head__sub">最近 {{ days }} 天</span>
+          <span class="section-head__sub">
+            接待数 / 结束数 / 进行中为累计值，消息数为最近 {{ days }} 天
+          </span>
         </div>
 
         <el-table class="admin-table" :data="agents" stripe border empty-text="暂无客服数据">
-          <el-table-column label="客服" min-width="160">
+          <el-table-column label="客服" min-width="180">
             <template #default="{ row }">
               <span class="agent">
-                <img v-if="row.avatar" class="agent__avatar" :src="row.avatar" alt="" />
-                <span v-else class="agent__avatar agent__avatar--text">{{ row.name.slice(0, 1) }}</span>
+                <ThumbImage
+                  :src="row.avatar"
+                  :size="26"
+                  round
+                  kind="avatar"
+                  :fallback="row.name.slice(0, 1)"
+                  :alt="row.name"
+                />
                 <span>{{ row.name }}</span>
+                <el-tag
+                  v-if="row.role === 'admin'"
+                  size="small"
+                  type="warning"
+                  effect="plain"
+                  class="agent__role"
+                >管理员</el-tag>
               </span>
             </template>
           </el-table-column>
           <el-table-column prop="handled" label="接待数" width="110" align="center" sortable />
           <el-table-column prop="closed" label="结束数" width="110" align="center" sortable />
-          <el-table-column prop="messages" label="消息数" width="110" align="center" sortable />
+          <el-table-column prop="messages" label="消息数" width="110" align="center" sortable>
+            <template #default="{ row }">
+              <span :title="`最近 ${days} 天发送`">{{ row.messages ?? 0 }}</span>
+            </template>
+          </el-table-column>
           <el-table-column prop="active_now" label="进行中" width="110" align="center" sortable>
             <template #default="{ row }">
               <span :class="{ 'in-progress': (row.active_now ?? 0) > 0 }">{{ row.active_now ?? 0 }}</span>
@@ -661,20 +681,8 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: 8px;
 
-  &__avatar {
-    width: 26px;
-    height: 26px;
-    border-radius: 50%;
-    object-fit: cover;
-    background: #f2f3f5;
-
-    &--text {
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      font-size: 12px;
-      color: #7f7f7f;
-    }
+  &__role {
+    flex-shrink: 0;
   }
 }
 

@@ -61,6 +61,7 @@ type ChannelVO struct {
 	AgentCount   int64  `json:"agent_count"`
 	PendingCount int64  `json:"pending_count"`
 	AccessPath   string `json:"access_path"` // 用户端接入路径，如 /c?channel=web
+	AccessURL    string `json:"access_url"`  // 完整接入地址（基于后端 public_base），可直接对外使用
 }
 
 // ChannelAgentVO 渠道的接待账号（用于渠道列表快速设置）
@@ -128,6 +129,8 @@ type CustomerRef struct {
 	ChannelID  uint     `json:"channel_id"`
 	Tags       []TagRef `json:"tags"`
 	Remark     string   `json:"remark"`
+	IP         string   `json:"ip"`
+	City       string   `json:"city"`
 }
 
 type ConversationVO struct {
@@ -202,6 +205,8 @@ type CustomerListItem struct {
 	Phone             string      `json:"phone"`
 	Remark            string      `json:"remark"`
 	Tags              []TagRef    `json:"tags"`
+	IP                string      `json:"ip"`
+	City              string      `json:"city"`
 	Channel           *ChannelRef `json:"channel"`
 	OrderCount        int64       `json:"order_count"`
 	ConversationCount int64       `json:"conversation_count"`
@@ -236,6 +241,8 @@ type CustomerDetailUser struct {
 	Remark     string      `json:"remark"`
 	Channel    *ChannelRef `json:"channel"`
 	Tags       []TagRef    `json:"tags"`
+	IP         string      `json:"ip"`
+	City       string      `json:"city"`
 	OrderCount int64       `json:"order_count"`
 	CreatedAt  string      `json:"created_at"`
 }

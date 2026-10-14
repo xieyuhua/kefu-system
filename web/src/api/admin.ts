@@ -186,6 +186,8 @@ export interface Device {
   device: DeviceKind
   platform: string
   name: string
+  /** 厂商推送 Token；为空表示该设备仅走 WebSocket（如 PC 桌面端） */
+  push_token?: string
   created_at: string
 }
 
@@ -210,6 +212,11 @@ export function registerDevice(payload: DevicePayload): Promise<Device> {
 /** 注销设备 */
 export function deleteDevice(id: number): Promise<boolean> {
   return http.del<boolean>(`/devices/${id}`)
+}
+
+/** 触发一条测试推送（推给当前登录账号的已注册设备），用于验证厂商通道 */
+export function testDevicePush(payload?: { title?: string; body?: string }): Promise<boolean> {
+  return http.post<boolean>('/devices/test-push', payload)
 }
 
 /* ------------------------------------------------------------------ *
@@ -353,8 +360,11 @@ export interface AgentStat {
   agent_id: number
   name: string
   avatar: string
+  /** admin | agent：管理员若也参与接待会计入工作量 */
+  role?: string
   handled: number
   closed: number
+  /** 最近 N 天的消息数 */
   messages: number
   active_now: number
   avg_first_reply: number

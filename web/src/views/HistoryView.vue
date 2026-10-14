@@ -209,7 +209,7 @@ async function open(user: Customer): Promise<void> {
 }
 
 function goWorkbench(): void {
-  void router.push('/chat/')
+  void router.push('/')
 }
 
 onMounted(() => {

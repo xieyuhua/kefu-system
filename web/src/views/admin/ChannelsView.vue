@@ -18,6 +18,7 @@ import {
   type ChannelTypeItem,
 } from '../../api/admin'
 import { getToken } from '../../api/token'
+import ThumbImage from '@/components/ThumbImage.vue'
 import type { Channel, ChannelPayload } from '../../types'
 
 const loading = ref(false)
@@ -192,10 +193,18 @@ const qrSize = ref<number>(320)
 const qrChannelId = ref<number>(0)
 const qrChannelName = ref('')
 
-/** 完整接入地址：origin + access_path（没有 access_path 时退回 /c?channel=<type>） */
+/**
+ * 完整接入地址：直接读后端返回的 access_url（基于后端 public_base 拼接）。
+ * 不再使用 window.location.origin —— 客服可能在内网通过内网 IP/端口访问后台，
+ * 但客户用的是另一个公网域名/端口，按 origin 拼出来会让客户扫到错误的地址。
+ */
 function accessUrl(row: ChannelRow): string {
-  const path = row.access_path || `/c?channel=${row.type}`
-  return window.location.origin + path
+  return row.access_url || (row.access_path || `/c?channel=${row.type}`)
+}
+
+/** 是否是相对路径（说明后端没配 public_base） */
+function isRelativeUrl(url: string): boolean {
+  return !!url && url.startsWith('/')
 }
 
 async function loadQr(): Promise<void> {
@@ -467,6 +476,18 @@ onMounted(() => {
           <span v-else-if="!qrLoading" class="qr__empty">二维码加载失败</span>
         </div>
 
+        <el-alert
+          v-if="qr && isRelativeUrl(qr.url)"
+          type="warning"
+          :closable="false"
+          show-icon
+          class="qr__alert"
+        >
+          二维码里的地址是相对路径，请先在后端
+          <code>config.yaml</code> 配 <code>server.public_base</code>（重启后再生效），
+          客户扫码后才会进入正确的域名。
+        </el-alert>
+
         <div class="qr__url">
           <span class="qr__url-text">{{ qr ? qr.url : '--' }}</span>
           <el-button link type="primary" :disabled="!qr" @click="qr && copyText(qr.url, '接入地址已复制')">
@@ -501,9 +522,14 @@ onMounted(() => {
           <div v-for="item in agentList" :key="item.id" class="agents__item">
             <el-checkbox :value="item.id">
               <span class="agents__cell" :class="{ 'agents__cell--off': !item.enabled }">
-                <el-avatar :size="28" :src="item.avatar">
-                  {{ (item.name || item.account || '?').slice(0, 1) }}
-                </el-avatar>
+                <ThumbImage
+                  :src="item.avatar"
+                  :size="28"
+                  round
+                  kind="avatar"
+                  :fallback="(item.name || item.account || '?').slice(0, 1)"
+                  :alt="item.name"
+                />
                 <span class="agents__info">
                   <span class="agents__name">
                     {{ item.name || item.account }}

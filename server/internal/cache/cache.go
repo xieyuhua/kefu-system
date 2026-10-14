@@ -16,6 +16,7 @@ import (
 // Envelope 跨实例广播的信封（走 Redis Pub/Sub）。
 type Envelope struct {
 	TenantID  uint        `json:"tenant_id"`
+	ConvID    uint        `json:"conv_id"` // >0 表示投递给用户端（访客）该会话
 	Event     string      `json:"event"`
 	Data      interface{} `json:"data"`
 	SenderID  string      `json:"sender_id"` // 发送方实例 ID，用于忽略自己发的消息

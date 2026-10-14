@@ -87,11 +87,12 @@ async function submit(): Promise<void> {
   try {
     await auth.login({ account: form.account, password: form.password })
     ElMessage.success(`欢迎回来，${auth.userName}`)
-    // 按角色分流：管理员进后台，客服进工作台；带 redirect 时优先跳转目标
-    const fallback = auth.isAdmin ? '/admin/' : '/chat/'
+
+    // 每个端独立路由：登录成功后留在本端。
+    // admin 端要求管理员角色；chat 端管理员与客服都可进。
     const raw = route.query.redirect
     const redirect =
-      typeof raw === 'string' && raw.startsWith('/') && !raw.startsWith('/login') ? raw : fallback
+      typeof raw === 'string' && raw.startsWith('/') && !raw.includes('/login') ? raw : '/'
     await router.replace(redirect)
   } catch {
     // 错误已由 http 拦截器提示
