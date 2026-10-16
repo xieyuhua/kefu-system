@@ -42,6 +42,12 @@ export const adminRoutes: RouteRecordRaw[] = [
     meta: { title: '客户管理' },
   },
   {
+    path: '/conversation-records',
+    name: 'admin-conversation-records',
+    component: () => import('../views/admin/ConversationRecordsView.vue'),
+    meta: { title: '对话记录' },
+  },
+  {
     path: '/orders',
     name: 'admin-orders',
     component: () => import('../views/admin/OrdersView.vue'),
@@ -58,5 +64,11 @@ export const adminRoutes: RouteRecordRaw[] = [
     name: 'admin-devices',
     component: () => import('../views/admin/DevicesView.vue'),
     meta: { title: '设备管理' },
+  },
+  {
+    path: '/settings',
+    name: 'admin-settings',
+    component: () => import('../views/admin/SettingsView.vue'),
+    meta: { title: '系统设置' },
   },
 ]

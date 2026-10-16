@@ -8,6 +8,7 @@ import (
 	"kefu-server/internal/cache"
 	"kefu-server/internal/config"
 	"kefu-server/internal/db"
+	"kefu-server/internal/model"
 	"kefu-server/internal/router"
 	"kefu-server/internal/seed"
 	"kefu-server/internal/service"
@@ -42,6 +43,12 @@ func main() {
 	if err := seed.Run(); err != nil {
 		log.Printf("初始化演示数据失败: %v", err)
 	}
+	// 历史渠道补齐随机标识 app_id（幂等）
+	seed.BackfillChannelAppID()
+	// 补齐演示静态资源（幂等，防止 data/demo 被清理后图片全部 404）
+	seed.EnsureDemoAssets()
+	// 重启后没有任何 WebSocket 连接，把所有客服重置为离线
+	db.DB.Model(&model.User{}).Where("online = ?", true).Update("online", false)
 
 	r := router.Setup()
 	addr := ":" + config.C.Server.Port

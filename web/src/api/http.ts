@@ -6,15 +6,27 @@ import { clearToken, getToken } from './token'
 const TOKEN_PREFIX = 'Bearer '
 
 /**
- * 统一跳转登录。三个端各自独立入口，登录路由都是本端的 `/login`，
- * 直接改 hash 即可，不会跨端跳转。
+ * 登录态失效时统一处理。
+ *
+ * 关键：必须用「整页跳转」而不是改 hash。
+ * 之前只改 hash → 路由守卫又把用户送回 /login（子账号在 /admin 会被弹去 /chat，
+ * 再被 chat 守卫弹回），形成无限弹跳，表现就是「一直卡在登录页」。
+ * 整页 reload 会重新走一次守卫，且此时 token 已清空，能稳定停在登录页。
  */
+let redirecting = false
+
 function redirectToLogin(): void {
+  if (redirecting) return
+  redirecting = true
   clearToken()
-  const current = window.location.hash.replace(/^#/, '')
-  if (current !== '/login' && !current.endsWith('/login')) {
-    window.location.hash = '#/login'
+  const { pathname, search, hash } = window.location
+  // 已在本端登录页就不重复跳转，避免循环
+  if (hash.replace(/^#/, '').endsWith('/login')) {
+    redirecting = false
+    window.location.reload()
+    return
   }
+  window.location.replace(`${pathname}${search}#/login`)
 }
 
 /** 从统一响应壳 { code, message, data } 中取出 data，非 0 抛错 */

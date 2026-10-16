@@ -31,9 +31,9 @@
 
           <ul class="profile-meta">
             <li v-if="customer.phone"><span>手机</span>{{ customer.phone }}</li>
-            <li v-if="customer.city"><span>归属地</span>{{ customer.city }}</li>
-            <li v-if="customer.ip"><span>IP</span>{{ customer.ip }}</li>
             <li v-if="customer.external_id"><span>ID</span>{{ customer.external_id }}</li>
+            <li><span>归属地</span>{{ customer.city || '未知' }}</li>
+            <li><span>IP</span>{{ customer.ip || '未知' }}</li>
             <li><span>订单</span>{{ customer.order_count ?? 0 }} 笔</li>
             <li><span>会话</span>{{ customer.conversation_count ?? 0 }} 次</li>
           </ul>

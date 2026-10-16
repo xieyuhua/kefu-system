@@ -54,6 +54,7 @@ func Init() error {
 		&model.User{},
 		&model.Channel{},
 		&model.ChannelType{},
+		&model.Setting{},
 		&model.AgentChannel{},
 		&model.Customer{},
 		&model.Tag{},

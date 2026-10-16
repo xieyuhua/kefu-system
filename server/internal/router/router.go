@@ -59,15 +59,59 @@ func WebDir() string {
 	return "web"
 }
 
+// UploadDir 定位上传文件目录（用绝对路径，避免进程 CWD 不同导致图片 404）。
+// 优先环境变量，其次可执行文件同级，最后回退到当前工作目录。
+func UploadDir() string {
+	if v := os.Getenv("KEFU_UPLOAD_DIR"); v != "" {
+		return v
+	}
+	if exe, err := os.Executable(); err == nil {
+		dir := filepath.Join(filepath.Dir(exe), "data", "uploads")
+		if _, statErr := os.Stat(dir); statErr == nil {
+			return dir
+		}
+	}
+	if wd, err := os.Getwd(); err == nil {
+		dir := filepath.Join(wd, "data", "uploads")
+		if _, statErr := os.Stat(dir); statErr == nil {
+			return dir
+		}
+	}
+	return config.C.Upload.Dir
+}
+
+// statOK 判断路径是否存在（供静态目录定位复用）
+func statOK(p string) bool {
+	_, err := os.Stat(p)
+	return err == nil
+}
+
+// absPath 把相对路径解析为绝对路径：优先以可执行文件目录为基准，其次当前工作目录。
+// 静态资源（上传图片、演示图）必须用绝对路径注册，否则进程 CWD 变化时会 404，
+// 进而被 NoRoute 兜底成 index.html（text/html），浏览器按 image/png 解析就报「图片加载异常」。
+func absPath(p string) string {
+	if filepath.IsAbs(p) {
+		return p
+	}
+	if exe, err := os.Executable(); err == nil {
+		if cand := filepath.Join(filepath.Dir(exe), p); statOK(cand) {
+			return cand
+		}
+	}
+	if wd, err := os.Getwd(); err == nil {
+		return filepath.Join(wd, p)
+	}
+	return p
+}
+
 func Setup() *gin.Engine {
 	gin.SetMode(config.C.Server.Mode)
 	r := gin.New()
 	r.Use(gin.Recovery())
 	r.Use(middleware.CORS())
 
-	// 静态资源
-	r.Static("/uploads", config.C.Upload.Dir)
-	r.Static("/demo", filepath.Join("data", "demo"))
+	r.StaticFS("/uploads", gin.Dir(absPath(config.C.Upload.Dir), false))
+	r.Static("/demo", absPath(filepath.Join("data", "demo")))
 
 	// 前端三端独立入口：/ 与 /kefu/（用户端）、/chat/（客服工作台）、/admin/（管理后台）
 	// 前端 `pnpm build` 已直接把产物输出到 server/web，这里只读托管。
@@ -134,11 +178,15 @@ func Setup() *gin.Engine {
 		g.POST("/auth/login", api.Login)
 		g.POST("/auth/logout", middleware.JWTAuth(), api.Logout)
 		g.GET("/auth/me", middleware.JWTAuth(), api.Me)
+		g.PUT("/auth/profile", middleware.JWTAuth(), api.UpdateProfile)
+		g.PUT("/auth/password", middleware.JWTAuth(), api.ChangePassword)
 
 		// 用户端（GET 参数传递渠道等信息，无需登录）
 		g.GET("/guest/init", api.GuestInit)
 		g.POST("/guest/message", api.GuestSend)
 		g.GET("/guest/messages", api.GuestMessages)
+		// 用户端上传附件（图片/视频/文件）
+		g.POST("/guest/upload", api.Upload)
 
 		authed := g.Group("", middleware.JWTAuth())
 		{
@@ -147,6 +195,8 @@ func Setup() *gin.Engine {
 			authed.POST("/channels", api.CreateChannel)
 			authed.PUT("/channels/:id", api.UpdateChannel)
 			authed.DELETE("/channels/:id", api.DeleteChannel)
+			// 重置渠道标识（app_id）：生成新的随机标识，旧链接失效
+			authed.POST("/channels/:id/reset-app-id", api.ResetChannelAppID)
 
 			// 渠道二维码 / 接入地址
 			authed.GET("/channels/:id/qr", api.ChannelQRInfo)
@@ -176,10 +226,18 @@ func Setup() *gin.Engine {
 			authed.POST("/conversations/:id/transfer", api.TransferConversation)
 			authed.POST("/conversations/:id/close", api.CloseConversation)
 			authed.POST("/conversations/:id/read", api.MarkRead)
+			// 会话归档 / 删除 / 消息搜索
+			authed.POST("/conversations/archive-bulk", api.ArchiveConversationsBulk)
+			authed.POST("/conversations/:id/archive", api.ArchiveConversation)
+			authed.POST("/conversations/:id/unarchive", api.UnarchiveConversation)
+			authed.DELETE("/conversations/:id", api.DeleteConversation)
+			authed.GET("/conversations/:id/messages/search", api.SearchConversationMessages)
 			authed.GET("/conversations/:id/messages", api.ListMessages)
 			authed.POST("/conversations/:id/messages", api.SendMessage)
 
 			// 客户与历史档案
+			authed.GET("/conversation-records", api.SearchConversationRecords)
+			authed.GET("/conversation-records/:id/messages", api.GetConversationMessages)
 			authed.GET("/users", api.ListCustomers)
 			authed.GET("/users/:id", api.GetCustomer)
 			authed.PUT("/users/:id/remark", api.UpdateCustomerRemark)
@@ -203,6 +261,10 @@ func Setup() *gin.Engine {
 			// 数据统计
 			authed.GET("/stats/overview", api.StatsOverview)
 
+			// 系统配置（默认图片等）
+			authed.GET("/settings", api.ListSettings)
+			authed.PUT("/settings", api.SaveSetting)
+
 			// 设备（APP / PC 桌面端推送注册）
 			authed.GET("/devices", api.ListDevices)
 			authed.POST("/devices", api.RegisterDevice)
@@ -217,6 +279,9 @@ func Setup() *gin.Engine {
 			// 演示
 			authed.POST("/demo/incoming", api.DemoIncoming)
 			authed.GET("/demo/products", api.DemoProducts)
+
+			// 上传附件（图片 / 视频 / 文件）
+			authed.POST("/upload", api.Upload)
 		}
 	}
 	return r

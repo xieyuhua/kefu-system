@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"kefu-server/internal/cache"
+	"kefu-server/internal/model"
 
 	"github.com/gorilla/websocket"
 )
@@ -194,6 +195,10 @@ func (h *Hub) Add(c *Client) {
 	h.mu.Lock()
 	h.clients[c] = true
 	h.mu.Unlock()
+	// 标记客服在线（供列表展示「在线/离线」小圆点）
+	if c.UserID > 0 {
+		gormDB().Model(&model.User{}).Where("id = ?", c.UserID).Update("online", true)
+	}
 }
 
 // AddGuest 注册访客（用户端）连接，按会话归类
@@ -228,6 +233,50 @@ func (h *Hub) Remove(c *Client) {
 		close(c.send)
 	}
 	h.mu.Unlock()
+
+	// 客服端断开：若该客服没有其它在线连接，则标记离线并释放其正在接待的会话，
+	// 让同渠道的其他客服可以接手（管理员离线同样释放）。
+	if c.UserID > 0 && !h.IsUserOnline(c.UserID) {
+		gormDB().Model(&model.User{}).Where("id = ?", c.UserID).Update("online", false)
+		releaseAgentConversations(c.TenantID, c.UserID)
+	}
+}
+
+// IsUserOnline 判断某客服是否还有活跃的 WebSocket 连接
+func (h *Hub) IsUserOnline(userID uint) bool {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	for c := range h.clients {
+		if c.UserID == userID {
+			return true
+		}
+	}
+	return false
+}
+
+// releaseAgentConversations 把某客服正在接待的会话全部置回「待接待」。
+// 用于客服（含管理员）离线后自动释放，避免会话被已离线的人长期占用。
+func releaseAgentConversations(tenantID, agentID uint) {
+	var convs []model.Conversation
+	if err := gormDB().
+		Where("tenant_id = ? AND agent_id = ? AND status = ?", tenantID, agentID, "open").
+		Find(&convs).Error; err != nil || len(convs) == 0 {
+		return
+	}
+	now := time.Now()
+	for _, c := range convs {
+		c.AgentID = 0
+		c.Status = "pending"
+		c.LastMessageAt = now
+		_ = gormDB().Save(&c).Error
+		addSystemMessage(tenantID, c.ID, agentName(agentID)+" 已离线，会话回到待接待")
+		vo := buildConversationVO(c)
+		HubInstance().Publish(tenantID, nil, Event{Event: "conversation.updated", Data: vo})
+		if m := lastSystemMessage(tenantID, c.ID); m != nil {
+			HubInstance().PublishToGuest(tenantID, c.ID, Event{Event: "message.new", Data: *m})
+		}
+	}
+	log.Printf("[hub] 客服 #%d 离线，释放 %d 个会话回待接待", agentID, len(convs))
 }
 
 // GuestCount 返回某会话当前在线的访客连接数（用于判断是否在线）

@@ -10,6 +10,17 @@
         @keyup.enter="onSearch"
         @clear="onSearch"
       />
+      <!-- 管理员可切换「全部会话 / 我接待的」 -->
+      <el-radio-group
+        v-if="showScopeSwitch"
+        :model-value="scope"
+        size="small"
+        class="scope-switch"
+        @change="onScope"
+      >
+        <el-radio-button value="all">全部</el-radio-button>
+        <el-radio-button value="mine">我接待的</el-radio-button>
+      </el-radio-group>
     </header>
 
     <div class="tabs">
@@ -36,17 +47,29 @@
         <div class="conv-avatar">
           <img v-if="c.user?.avatar" :src="c.user.avatar" alt="" />
           <span v-else>{{ (c.user?.nickname || '?').slice(0, 1) }}</span>
-          <span class="dot" v-if="c.unread > 0">{{ c.unread > 99 ? '99+' : c.unread }}</span>
         </div>
 
         <div class="conv-main">
           <div class="conv-line">
-            <span class="conv-name kf-ellipsis">{{ c.user?.nickname || '匿名客户' }}</span>
-            <span class="conv-time">{{ formatListTime(c.last_message_at || c.created_at) }}</span>
+            <span class="conv-name-box">
+              <el-tooltip :content="onlineHint(c.user?.online, c.user?.last_seen_at)" placement="top">
+                <span
+                  class="online-dot"
+                  :style="{ background: onlineColor(c.user?.online) }"
+                ></span>
+              </el-tooltip>
+              <span class="conv-name kf-ellipsis" :class="{ unread: unreadOf(c) > 0 }">{{
+                c.user?.nickname || '匿名客户'
+              }}</span>
+            </span>
+            <span class="conv-right">
+              <span class="conv-time">{{ formatListTime(c.last_message_at || c.created_at) }}</span>
+              <!-- 未读数：像微信一样挂在右侧（超过 99 显示 99+） -->
+              <span v-if="unreadOf(c) > 0" class="unread-badge">{{ unreadText(c) }}</span>
+            </span>
           </div>
           <div class="conv-line">
             <span class="conv-msg kf-ellipsis">{{ preview(c) }}</span>
-            <span class="dot-inline" v-if="c.unread > 0">{{ c.unread > 99 ? '99+' : c.unread }}</span>
           </div>
           <div class="conv-line conv-line--meta">
             <!-- 来源渠道标注：所有渠道会话合并展示，靠这里区分 -->
@@ -57,19 +80,18 @@
                 c.channel?.name || channelLabel(c.channel?.type)
               }}</span>
             </span>
-            <!-- 客户归属地：IP + 城市 -->
-            <span
-              v-if="c.user?.city || c.user?.ip"
-              class="conv-geo"
-              :title="geoTitle(c.user)"
-            >
-              <span class="conv-geo__icon">📍</span>
-              <span v-if="c.user?.city" class="conv-geo__city">{{ c.user.city }}</span>
-              <span v-if="c.user?.ip" class="conv-geo__ip">{{ c.user.ip }}</span>
-            </span>
             <span v-if="c.status === 'pending'" class="conv-state conv-state--pending">未接待</span>
             <span v-else-if="c.status === 'open'" class="conv-state conv-state--open">进行中</span>
             <span v-else class="conv-state">已结束</span>
+            <el-tooltip content="删除会话" placement="top">
+              <el-button
+                class="conv-del"
+                text
+                size="small"
+                :icon="Delete"
+                @click.stop="emit('archive', c)"
+              />
+            </el-tooltip>
           </div>
         </div>
       </div>
@@ -86,9 +108,16 @@
 
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { Refresh, Search } from '@element-plus/icons-vue'
+import { Delete, Refresh, Search } from '@element-plus/icons-vue'
 import type { Conversation } from '@/types'
-import { channelColor, channelIcon, channelLabel, formatListTime } from '@/utils/format'
+import {
+  channelColor,
+  channelIcon,
+  channelLabel,
+  formatListTime,
+  onlineColor,
+  onlineHint,
+} from '@/utils/format'
 import type { StatusFilter } from '@/stores/chat'
 
 const props = defineProps<{
@@ -98,13 +127,18 @@ const props = defineProps<{
   total: number
   stats: { pending: number; open: number; closed: number; unread: number }
   status: StatusFilter
+  /** 管理员才显示「全部 / 我接待的」切换 */
+  isAdmin?: boolean
+  scope?: 'all' | 'mine'
 }>()
 
 const emit = defineEmits<{
   select: [conversation: Conversation]
   'update:status': [status: StatusFilter]
   'update:keyword': [keyword: string]
+  'update:scope': [scope: 'all' | 'mine']
   refresh: []
+  archive: [conversation: Conversation]
 }>()
 
 const keyword = ref('')
@@ -112,6 +146,14 @@ const keyword = ref('')
 watch(keyword, (val) => emit('update:keyword', val))
 
 const filters = computed(() => ({ status: props.status }))
+
+/** 仅管理员需要「全部 / 我接待的」切换 */
+const showScopeSwitch = computed(() => props.isAdmin === true)
+const scope = computed<'all' | 'mine'>(() => props.scope || 'all')
+
+function onScope(val: unknown): void {
+  emit('update:scope', val === 'mine' ? 'mine' : 'all')
+}
 
 const tabs: { key: StatusFilter; label: string }[] = [
   { key: 'open', label: '进行中' },
@@ -145,13 +187,16 @@ function preview(c: Conversation): string {
   return c.last_message || '[暂无消息]'
 }
 
-/** IP + 城市 的完整提示文本 */
-function geoTitle(u: Conversation['user']): string {
-  const parts: string[] = []
-  if (u?.city) parts.push(`归属地：${u.city}`)
-  if (u?.ip) parts.push(`IP：${u.ip}`)
-  return parts.join('\n')
+function unreadOf(c: Conversation): number {
+  return c.unread || 0
 }
+
+/** 未读数文案：超过 99 显示 99+ */
+function unreadText(c: Conversation): string {
+  const n = unreadOf(c)
+  return n > 99 ? '99+' : String(n)
+}
+
 </script>
 
 <style scoped lang="scss">
@@ -184,11 +229,27 @@ function geoTitle(u: Conversation['user']): string {
   .tab {
     padding: 8px 0;
   }
+
+  /* 触摸设备无 hover，删除按钮常驻 */
+  .conv-del {
+    opacity: 1;
+  }
 }
 
 .list-header {
   padding: 10px 12px;
   border-bottom: 1px solid var(--kf-border-light);
+}
+
+/* 管理员「全部 / 我接待的」切换 */
+.scope-switch {
+  margin-top: 8px;
+  display: flex;
+
+  :deep(.el-radio-button__inner) {
+    padding: 5px 12px;
+    font-size: 12px;
+  }
 }
 
 .tabs {
@@ -265,21 +326,6 @@ function geoTitle(u: Conversation['user']): string {
     object-fit: cover;
     display: block;
   }
-
-  .dot {
-    position: absolute;
-    top: -4px;
-    right: -4px;
-    min-width: 16px;
-    height: 16px;
-    padding: 0 4px;
-    border-radius: 8px;
-    background: var(--kf-red);
-    color: #fff;
-    font-size: 11px;
-    line-height: 16px;
-    text-align: center;
-  }
 }
 
 .conv-main {
@@ -302,6 +348,66 @@ function geoTitle(u: Conversation['user']): string {
   font-size: 14px;
   color: var(--kf-text);
   font-weight: 500;
+}
+
+/* 昵称 + 在线状态圆点 */
+.conv-name-box {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+}
+
+.online-dot {
+  flex-shrink: 0;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+}
+
+/* 有未读：昵称变蓝 + 加粗（微信式） */
+.conv-name.unread {
+  color: #2c7be5;
+  font-weight: 600;
+}
+
+/* 右侧：时间 + 未读气泡 */
+.conv-right {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.unread-badge {
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 9px;
+  background: var(--kf-red);
+  color: #fff;
+  font-size: 11px;
+  line-height: 18px;
+  text-align: center;
+  font-weight: 500;
+}
+
+/* 列表项操作：删除（默认隐藏，hover 显示） */
+.conv-del {
+  margin-left: auto;
+  padding: 0 4px;
+  height: 20px;
+  color: var(--kf-text-weak);
+  opacity: 0;
+  transition: opacity 0.15s;
+
+  &:hover {
+    color: var(--kf-red);
+  }
+}
+
+.conv-item:hover .conv-del {
+  opacity: 1;
 }
 
 .conv-time {
@@ -354,40 +460,6 @@ function geoTitle(u: Conversation['user']): string {
   }
 }
 
-/* ---------- 客户归属地（IP + 城市） ---------- */
-.conv-geo {
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
-  min-width: 0;
-  max-width: 52%;
-  padding: 0 5px;
-  border-radius: 3px;
-  background: #f2f6ff;
-  color: #4a6fa5;
-  font-size: 11px;
-  line-height: 18px;
-  cursor: default;
-
-  &__icon {
-    font-size: 10px;
-  }
-
-  &__city {
-    flex-shrink: 0;
-    overflow: hidden;
-    white-space: nowrap;
-    text-overflow: ellipsis;
-  }
-
-  &__ip {
-    flex-shrink: 0;
-    color: #8aa0c4;
-    font-family: Consolas, Monaco, monospace;
-    font-size: 10px;
-  }
-}
-
 .conv-state {
   flex-shrink: 0;
   font-size: 11px;
@@ -400,19 +472,6 @@ function geoTitle(u: Conversation['user']): string {
   &--open {
     color: var(--kf-primary);
   }
-}
-
-.dot-inline {
-  flex-shrink: 0;
-  min-width: 16px;
-  height: 16px;
-  padding: 0 4px;
-  border-radius: 8px;
-  background: var(--kf-red);
-  color: #fff;
-  font-size: 11px;
-  line-height: 16px;
-  text-align: center;
 }
 
 .list-footer {

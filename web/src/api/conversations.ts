@@ -47,6 +47,34 @@ export function readConversation(id: number): Promise<boolean> {
   return http.post<boolean>(`/conversations/${id}/read`)
 }
 
+/** POST /api/conversations/:id/archive 归档（从工作台移除） */
+export function archiveConversation(id: number): Promise<boolean> {
+  return http.post<boolean>(`/conversations/${id}/archive`)
+}
+
+/** POST /api/conversations/:id/unarchive 取消归档 */
+export function unarchiveConversation(id: number): Promise<boolean> {
+  return http.post<boolean>(`/conversations/${id}/unarchive`)
+}
+
+/**
+ * POST /api/conversations/archive-bulk —— 一键清空工作台列表。
+ * 按当前筛选条件批量归档，返回实际处理的条数。
+ */
+export function archiveConversationsBulk(query: {
+  channel_id?: number
+  status?: string
+  scope?: string
+  keyword?: string
+}): Promise<{ archived: number }> {
+  const params: Record<string, string | number> = {}
+  if (query.channel_id) params.channel_id = query.channel_id
+  if (query.status) params.status = query.status
+  if (query.scope) params.scope = query.scope
+  if (query.keyword) params.keyword = query.keyword
+  return http.post<{ archived: number }>('/conversations/archive-bulk', null, { params })
+}
+
 /** GET /api/conversations/stats */
 export function getConversationStats(): Promise<ConversationStats> {
   return http.get<ConversationStats>('/conversations/stats')

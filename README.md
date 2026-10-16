@@ -5,7 +5,7 @@
 
 ```
 kefu/
-├─ server/          Go 后端（Gin + GORM + WebSocket + Redis 可选）   端口 8080
+├─ server/          Go 后端（Gin + GORM + WebSocket + Redis 可选）   端口 8480
 ├─ web/             Vue3 + Vite + TS + Element Plus 前端            端口 5173
 └─ docs/
    ├─ API.md        前后端唯一契约（所有接口/字段以此为准）
@@ -41,9 +41,9 @@ go run .          # 首次启动自动建表 + 写入演示数据
 
 | 地址 | 端 |
 |---|---|
-| `http://127.0.0.1:8080/` 或 `/kefu/` | 用户端（客户聊天页） |
-| `http://127.0.0.1:8080/chat/` | 客服工作台 |
-| `http://127.0.0.1:8080/admin/` | 管理后台 |
+| `http://127.0.0.1:8480/` 或 `/kefu/` | 用户端（客户聊天页） |
+| `http://127.0.0.1:8480/chat/` | 客服工作台 |
+| `http://127.0.0.1:8480/admin/` | 管理后台 |
 
 前端产物目录按以下顺序定位，**从任何目录启动都能找到**：
 1. 环境变量 `KEFU_WEB_DIR`
@@ -52,9 +52,9 @@ go run .          # 首次启动自动建表 + 写入演示数据
 
 开发调试时用 `pnpm dev`（Vite 开发服务器，代理到后端），不需要先 build。
 
-> ⚠️ 本机 8080 端口可能被其他软件占用（如某些工控/驱动软件自带 Web 服务）。被占用时：
+> ⚠️ 若本机 8480 端口被占用，改用其他端口：
 > ```bash
-> cd server && KEFU_PORT=8081 go run .
+> cd server && KEFU_PORT=8481 go run .
 > ```
 > 前端 build 时用 `VITE_PROXY_TARGET` 只影响 dev 代理，不影响 build 产物。
 
@@ -223,7 +223,7 @@ server/
 
 | 变量 | 说明 |
 |---|---|
-| `KEFU_PORT` | 监听端口，默认 8080 |
+| `KEFU_PORT` | 监听端口，默认 8480 |
 | `KEFU_MODE` | debug / release |
 | `KEFU_DB_DRIVER` | sqlite / mysql |
 | `KEFU_DB_DSN` | SQLite 文件路径 |

@@ -4,7 +4,6 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
-	"net/url"
 	"strings"
 
 	"kefu-server/internal/config"
@@ -17,16 +16,25 @@ import (
 // ---------------- 渠道接入地址与二维码 ----------------
 
 // AccessURL 生成渠道的完整用户端接入地址。
-// publicBase 为空时，用配置的 public_base，再为空则回退成相对路径 /c?channel=xxx。
+// publicBase 为空时用配置的 public_base；两者都为空则回退成相对路径 /kefu/?channel=xxx。
 func AccessURL(c model.Channel, publicBase string) string {
 	if publicBase == "" {
 		publicBase = config.C.Server.PublicBase
 	}
-	path := "/c?channel=" + url.QueryEscape(c.Type)
+	path := AccessPath(c)
 	if publicBase == "" {
 		return path
 	}
 	return strings.TrimRight(publicBase, "/") + path
+}
+
+// AccessURLByAppID 按渠道 ID 取完整接入地址（重置 app_id 后返回新地址）
+func AccessURLByAppID(tenantID, channelID uint, publicBase string) string {
+	var c model.Channel
+	if err := gormDB().Where("tenant_id = ? AND id = ?", tenantID, channelID).First(&c).Error; err != nil {
+		return ""
+	}
+	return AccessURL(c, publicBase)
 }
 
 // ChannelQR 生成渠道接入二维码（PNG bytes / base64）。
@@ -52,7 +60,7 @@ func ChannelQR(tenantID, channelID uint, publicBase string, size int) (*ChannelQ
 		ChannelName: c.Name,
 		ChannelType: c.Type,
 		URL:         target,
-		Path:        "/c?channel=" + c.Type,
+		Path:        AccessPath(c),
 		PNG:         png,
 		Base64:      "data:image/png;base64," + base64.StdEncoding.EncodeToString(png),
 		Size:        size,

@@ -34,14 +34,16 @@ func Run() error {
 
 	// ---- 渠道 ----
 	channels := []model.Channel{
-		{TenantID: tenant.ID, Type: "wechat", Name: "微信公众号客服", AppID: "wx_demo_001", Enabled: true},
-		{TenantID: tenant.ID, Type: "wecom", Name: "企业微信客服", AppID: "ww_demo_002", Enabled: true},
-		{TenantID: tenant.ID, Type: "web", Name: "网页在线客服", AppID: "web_demo", Enabled: true},
-		{TenantID: tenant.ID, Type: "app", Name: "APP 内客服", AppID: "app_demo", Enabled: true},
-		{TenantID: tenant.ID, Type: "douyin", Name: "抖音小店", AppID: "dy_demo", Enabled: true},
-		{TenantID: tenant.ID, Type: "robot", Name: "机器人助手", AppID: "robot", Enabled: true, RobotEnabled: true},
+		{TenantID: tenant.ID, Type: "wechat", Name: "微信公众号客服", Enabled: true},
+		{TenantID: tenant.ID, Type: "wecom", Name: "企业微信客服", Enabled: true},
+		{TenantID: tenant.ID, Type: "web", Name: "网页在线客服", Enabled: true},
+		{TenantID: tenant.ID, Type: "app", Name: "APP 内客服", Enabled: true},
+		{TenantID: tenant.ID, Type: "douyin", Name: "抖音小店", Enabled: true},
+		{TenantID: tenant.ID, Type: "robot", Name: "机器人助手", Enabled: true, RobotEnabled: true},
 	}
 	for i := range channels {
+		// 渠道标识（app_id）随机生成，作为接入链接里区分渠道来源的唯一标识
+		channels[i].AppID = service.GenerateAppID(tenant.ID)
 		db.DB.Create(&channels[i])
 	}
 
@@ -235,7 +237,10 @@ func Run() error {
 	return nil
 }
 
-// writeDemoAssets 生成内置演示 SVG 资源
+// writeDemoAssets 生成内置演示 SVG 资源。
+// 注意：必须在每次启动时都执行（幂等覆盖写），不能只在首次种子时执行。
+// 否则 data/demo 被清理后，/demo/*.svg 会 404 并被 SPA 回退成 HTML，
+// 前端所有头像/商品图/订单图表现为「图片加载异常」。
 func writeDemoAssets() {
 	dir := filepath.Join("data", "demo")
 	_ = os.MkdirAll(dir, 0755)

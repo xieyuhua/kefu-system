@@ -1,6 +1,8 @@
 package api
 
 import (
+	"strings"
+
 	"kefu-server/internal/dto"
 	"kefu-server/internal/response"
 	"kefu-server/internal/service"
@@ -12,12 +14,13 @@ import (
 
 func ListConversations(c *gin.Context) {
 	q := service.ConvQuery{
-		ChannelID: queryUint(c, "channel_id"),
-		Status:    c.Query("status"),
-		Scope:     c.Query("scope"),
-		Keyword:   c.Query("keyword"),
-		Page:      queryInt(c, "page", 1),
-		PageSize:  queryInt(c, "page_size", 20),
+		ChannelID:       queryUint(c, "channel_id"),
+		Status:          c.Query("status"),
+		Scope:           c.Query("scope"),
+		Keyword:         c.Query("keyword"),
+		Page:            queryInt(c, "page", 1),
+		PageSize:        queryInt(c, "page_size", 20),
+		IncludeArchived: c.Query("include_archived") == "1" || c.Query("include_archived") == "true",
 	}
 	paged, err := service.ListConversations(tenantID(c), userID(c), isAdmin(c), q)
 	if err != nil {
@@ -87,6 +90,107 @@ func ConversationStats(c *gin.Context) {
 		return
 	}
 	response.OK(c, s)
+}
+
+// ArchiveConversation 归档会话（客服清理工作台列表；客户再咨询会自动恢复）
+func ArchiveConversation(c *gin.Context) {
+	if err := service.ArchiveConversation(tenantID(c), uintParam(c, "id"), userID(c)); err != nil {
+		response.Param(c, err.Error())
+		return
+	}
+	response.OK(c, true)
+}
+
+// ArchiveConversationsBulk 一键清空工作台列表（批量归档）
+// POST /api/conversations/archive-bulk  body/query 同列表接口的过滤条件
+// 只处理「当前筛选条件下可见」的会话，保证所见即所清。
+func ArchiveConversationsBulk(c *gin.Context) {
+	q := service.ConvQuery{
+		ChannelID: queryUint(c, "channel_id"),
+		Status:    c.Query("status"),
+		Scope:     c.Query("scope"),
+		Keyword:   c.Query("keyword"),
+		Page:      queryInt(c, "page", 1),
+		PageSize:  queryInt(c, "page_size", 20),
+	}
+	n, err := service.ArchiveConversationsBulk(tenantID(c), userID(c), isAdmin(c), q)
+	if err != nil {
+		response.Server(c, err.Error())
+		return
+	}
+	response.OK(c, gin.H{"archived": n})
+}
+
+// UnarchiveConversation 取消归档
+func UnarchiveConversation(c *gin.Context) {
+	if err := service.UnarchiveConversation(tenantID(c), uintParam(c, "id")); err != nil {
+		response.Param(c, err.Error())
+		return
+	}
+	response.OK(c, true)
+}
+
+// DeleteConversation 彻底删除会话与消息（不可恢复）
+func DeleteConversation(c *gin.Context) {
+	if err := service.DeleteConversation(tenantID(c), uintParam(c, "id")); err != nil {
+		response.Param(c, err.Error())
+		return
+	}
+	response.OK(c, true)
+}
+
+// SearchConversationMessages 在会话内按关键词搜索历史消息
+func SearchConversationMessages(c *gin.Context) {
+	convID := uintParam(c, "id")
+	keyword := c.Query("keyword")
+	if strings.TrimSpace(keyword) == "" {
+		response.OK(c, []interface{}{})
+		return
+	}
+	rows, err := service.SearchMessages(tenantID(c), convID, keyword, queryInt(c, "limit", 50))
+	if err != nil {
+		response.Server(c, err.Error())
+		return
+	}
+	out := make([]interface{}, 0, len(rows))
+	for _, m := range rows {
+		out = append(out, service.BuildMessageVO(m))
+	}
+	response.OK(c, out)
+}
+
+// SearchConversationRecords 全局查询对话记录（管理后台）
+// GET /api/conversation-records?keyword=&channel_id=&status=&agent_id=&start=&end=&page=&page_size=
+func SearchConversationRecords(c *gin.Context) {
+	q := service.ConversationRecordsQuery{
+		Keyword:   c.Query("keyword"),
+		ChannelID: queryUint(c, "channel_id"),
+		Status:    c.Query("status"),
+		AgentID:   queryUint(c, "agent_id"),
+		Start:     c.Query("start"),
+		End:       c.Query("end"),
+		Page:      queryInt(c, "page", 1),
+		PageSize:  queryInt(c, "page_size", 20),
+	}
+	list, total, err := service.SearchConversations(tenantID(c), q)
+	if err != nil {
+		response.Server(c, err.Error())
+		return
+	}
+	if list == nil {
+		list = []service.ConversationRecord{}
+	}
+	response.OKPaged(c, list, total, q.Page, q.PageSize)
+}
+
+// GetConversationMessages 管理后台查看某个会话的完整消息（只读）
+func GetConversationMessages(c *gin.Context) {
+	list, err := service.ListMessages(tenantID(c), uintParam(c, "id"), 0, queryInt(c, "limit", 200))
+	if err != nil {
+		response.Server(c, err.Error())
+		return
+	}
+	response.OK(c, list)
 }
 
 // ---------------- Message ----------------

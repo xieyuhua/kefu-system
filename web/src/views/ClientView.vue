@@ -1,8 +1,10 @@
 <template>
   <div class="client-view">
     <div class="client-shell">
-      <!-- 顶部标题栏：客服名称 + 企业认证徽标 -->
-      <header class="topbar">
+      <!-- 顶部标题栏：客服名称 + 企业认证徽标。
+           APP WebView 内嵌时隐藏（宿主 APP 自带导航栏）：
+           URL ?chrome=0 / ?hide_header=1，或后台 渠道管理 → 隐藏 header。 -->
+      <header v-if="!hideHeader" class="topbar">
         <button type="button" class="topbar__btn" title="返回" @click="goBack">
           <el-icon :size="20"><ArrowLeft /></el-icon>
         </button>
@@ -15,7 +17,7 @@
           </span>
         </div>
 
-        <div class="topbar__right">
+        <div v-if="!hideDebug" class="topbar__right">
           <button
             type="button"
             class="topbar__btn"
@@ -25,25 +27,38 @@
           >
             <el-icon :size="17"><Setting /></el-icon>
           </button>
-          <button type="button" class="topbar__btn" title="更多" @click="moreOpen = !moreOpen">
-            <el-icon :size="18"><MoreFilled /></el-icon>
-          </button>
-        </div>
-
-        <div v-if="moreOpen" class="more-menu">
-          <button type="button" @click="copyLink">复制接入链接</button>
-          <button type="button" @click="clearLocal">清空本地消息游标</button>
         </div>
       </header>
 
-      <!-- 接入调试面板（默认收起，右上角齿轮打开） -->
-      <section v-if="debugOpen" class="debug">
+      <!-- header 被隐藏时（APP 内嵌），用浮动按钮保留调试入口 -->
+      <div v-if="hideHeader && !hideDebug" class="float-tools">
+        <button
+          type="button"
+          class="float-tools__btn"
+          :class="{ 'is-on': debugOpen }"
+          title="接入调试"
+          @click="toggleDebug"
+        >
+          <el-icon :size="15"><Setting /></el-icon>
+        </button>
+      </div>
+
+      <!-- 接入调试面板（默认收起，右上角齿轮打开）。
+           header 隐藏时上方有浮动按钮，需留出间距避免被遮挡。 -->
+      <section v-if="debugOpen" class="debug" :class="{ 'debug--floated': hideHeader }">
         <div class="debug__head">
           <span class="debug__title">接入调试面板 · URL 参数解析</span>
           <button type="button" class="debug__close" @click="debugOpen = false">收起</button>
         </div>
 
-        <div class="debug__url">{{ currentUrl }}</div>
+        <div
+          class="debug__url"
+          :title="`点击复制：${currentUrl}`"
+          @click="copyDebugUrl"
+        >
+          {{ currentUrl }}
+          <span class="debug__url-tip">点击复制</span>
+        </div>
 
         <div class="debug__grid">
           <div v-for="row in paramRows" :key="row.key" class="debug__row">
@@ -81,7 +96,7 @@
       </section>
 
       <!-- 会话区 -->
-      <div ref="scroller" class="chat kf-scroll">
+      <div ref="scroller" class="chat kf-scroll" @scroll="onHistoryScroll">
         <div v-if="loading" class="chat__loading">正在接入客服…</div>
 
         <div v-else-if="errorText" class="chat__error">
@@ -131,6 +146,10 @@
             </div>
           </div>
 
+          <!-- 历史消息上滑分页 -->
+          <div v-if="loadingHistory" class="chat__pager">加载中…</div>
+          <div v-else-if="!hasMoreHistory && stream.length" class="chat__pager">没有更多消息了</div>
+
           <template v-for="item in stream" :key="item.id">
             <!-- 系统通知：居中灰色 pill -->
             <div v-if="item.kind === 'system'" class="sys-pill">
@@ -167,11 +186,12 @@
                   class="bubble"
                   :class="{
                     'bubble--mine': item.kind === 'mine',
+                    'bubble--media': item.media,
                     'is-pending': item.pending,
                     'is-failed': item.failed,
                   }"
                 >
-                  <img v-if="item.type === 'image'" class="bubble__image" :src="item.text" alt="图片" />
+                  <MediaBubble v-if="item.media" :payload="item.media" :failed="item.failed" />
                   <span v-else class="bubble__text">{{ item.text }}</span>
                 </div>
 
@@ -187,9 +207,7 @@
       <!-- 底部输入栏 -->
       <footer class="composer">
         <div class="composer__bar">
-          <button type="button" class="composer__icon" title="语音输入" @click="onVoice">
-            <el-icon :size="20"><Mic /></el-icon>
-          </button>
+          <!-- 语音输入：当前版本暂时隐藏，后续版本开放 -->
 
           <div class="composer__box">
             <textarea
@@ -213,12 +231,12 @@
           </button>
           <button
             type="button"
-            class="composer__icon composer__icon--plus"
-            :class="{ 'is-on': panel === 'more' }"
-            title="更多"
-            @click="togglePanel('more')"
+            class="composer__icon"
+            title="发送图片 / 视频 / 文件"
+            :disabled="uploading"
+            @click="pickMedia"
           >
-            <el-icon :size="22"><Plus /></el-icon>
+            <el-icon :size="20"><Paperclip /></el-icon>
           </button>
           <button
             type="button"
@@ -226,9 +244,17 @@
             :disabled="!ready || !canSend || sending"
             @click="send"
           >
-            {{ sending ? '发送中' : '发送' }}
+            {{ sending || uploading ? '发送中' : '发送' }}
           </button>
         </div>
+
+        <input
+          ref="fileRef"
+          type="file"
+          hidden
+          accept="image/*,video/*,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv,.zip,.rar,.7z"
+          @change="onPickFile"
+        />
 
         <div v-if="panel === 'emoji'" class="panel">
           <button
@@ -239,18 +265,6 @@
             @click="insert(e)"
           >
             {{ e }}
-          </button>
-        </div>
-
-        <div v-else-if="panel === 'more'" class="panel">
-          <button
-            v-for="q in QUICK_QUESTIONS"
-            :key="q"
-            type="button"
-            class="panel__quick"
-            @click="useQuick(q)"
-          >
-            {{ q }}
           </button>
         </div>
       </footer>
@@ -265,13 +279,13 @@ import { ElMessage } from 'element-plus'
 import {
   ArrowLeft,
   CircleCheck,
-  Mic,
-  MoreFilled,
-  Plus,
+  Paperclip,
   Setting,
 } from '@element-plus/icons-vue'
 import dayjs from 'dayjs'
 import { guestInit, guestMessages, guestSend, type GuestParams } from '@/api/guest'
+import { kindOfFile, uploadAttachment, validateFile } from '@/api/upload'
+import MediaBubble, { type MediaPayload } from '@/components/MediaBubble.vue'
 import type {
   ChannelBasic,
   Message,
@@ -284,7 +298,13 @@ import { useSocket } from '@/composables/useSocket'
 import OrderCard from '@/components/OrderCard.vue'
 import ProductCard from '@/components/ProductCard.vue'
 
-/** 用户端 URL 上允许出现的参数（与 docs/API.md §13.1 一致） */
+/**
+ * 用户端 URL 上允许出现的参数（与 docs/API.md §13.1 一致）
+ * 额外支持展示层参数：
+ *   chrome=0 / hide_header=1 —— 隐藏顶部 header（APP WebView 内嵌用）
+ *   hide_debug=1             —— 隐藏「接入调试」齿轮入口
+ *   hide_more_menu=1         —— 已废弃（「更多」菜单已整体移除，仅保留解析以兼容旧链接）
+ */
 const PARAM_KEYS = [
   'channel',
   'uid',
@@ -297,10 +317,13 @@ const PARAM_KEYS = [
   'visitor_id',
   'tenant',
   'sign',
+  'chrome',
+  'hide_header',
+  'hide_debug',
+  'hide_more_menu',
 ] as const
 
 const EMOJIS = ['😊', '😄', '😍', '🤔', '😅', '👍', '🙏', '👏', '❤️', '🎉', '😢', '😡', '📦', '🚚']
-const QUICK_QUESTIONS = ['你好', '什么时候发货？', '怎么申请退款？', '我要转人工']
 
 /** 消息流渲染项：把 Message 摊平成模板可直接用的结构 */
 interface StreamItem {
@@ -314,6 +337,8 @@ interface StreamItem {
   fallback: string
   order: OrderCardPayload | null
   product: ProductCardPayload | null
+  /** 图片 / 视频 / 文件载荷 */
+  media: MediaPayload | null
   time: string
   pending: boolean
   failed: boolean
@@ -321,6 +346,11 @@ interface StreamItem {
 
 const route = useRoute()
 const router = useRouter()
+
+/** 附件上传中 */
+const uploading = ref(false)
+/** 附件选择框 */
+const fileRef = ref<HTMLInputElement | null>(null)
 
 const loading = ref(true)
 const ready = ref(false)
@@ -338,9 +368,8 @@ const customerAvatar = ref('')
 
 const sinceId = ref(0)
 const draft = ref('')
-const panel = ref<'' | 'emoji' | 'more'>('')
+const panel = ref<'' | 'emoji'>('')
 const debugOpen = ref(false)
-const moreOpen = ref(false)
 
 const scroller = ref<HTMLElement | null>(null)
 let timer: number | undefined
@@ -348,28 +377,92 @@ let timer: number | undefined
 let socket: ReturnType<typeof useSocket> | null = null
 let unsubscribers: (() => void)[] = []
 
-/** 从 route.query 读取单个字符串参数（重复参数取第一个） */
+/** 从 query 对象读取单个字符串参数（重复参数取第一个） */
 function readParam(value: unknown): string {
   if (typeof value === 'string') return value
   if (Array.isArray(value) && typeof value[0] === 'string') return value[0]
   return ''
 }
 
-function parseParams(): GuestParams {
-  const q = route.query
-  return {
-    channel: readParam(q.channel),
-    uid: readParam(q.uid),
-    nickname: readParam(q.nickname),
-    avatar: readParam(q.avatar),
-    phone: readParam(q.phone),
-    order_no: readParam(q.order_no),
-    pid: readParam(q.pid),
-    scene: readParam(q.scene),
-    visitor_id: readParam(q.visitor_id),
-    tenant: readParam(q.tenant),
-    sign: readParam(q.sign),
+/**
+ * 读取接入参数。
+ *
+ * 用户端使用 hash 路由，但投放链接的参数写在 pathname 之后：
+ *   /kefu/?channel=wechat&uid=u1   ← 参数在 window.location.search
+ * 而 vue-router 的 route.query 在 hash 模式下只解析 `#` 之后的部分，这里读不到。
+ * 因此优先读 location.search，读不到再回退到 route.query（兼容 /kefu/#/?channel=... 形式）。
+ */
+function queryOf(key: string): string {
+  if (typeof window !== 'undefined' && window.location.search) {
+    const v = new URLSearchParams(window.location.search).get(key)
+    if (v) return v
   }
+  return readParam(route.query[key])
+}
+
+function parseParams(): GuestParams {
+  return {
+    channel: queryOf('channel'),
+    uid: queryOf('uid'),
+    nickname: queryOf('nickname'),
+    avatar: queryOf('avatar'),
+    phone: queryOf('phone'),
+    order_no: queryOf('order_no'),
+    pid: queryOf('pid'),
+    scene: queryOf('scene'),
+    visitor_id: queryOf('visitor_id'),
+    tenant: queryOf('tenant'),
+    sign: queryOf('sign'),
+    chrome: queryOf('chrome'),
+    hide_header: queryOf('hide_header'),
+    hide_debug: queryOf('hide_debug'),
+    hide_more_menu: queryOf('hide_more_menu'),
+  }
+}
+
+/** URL 参数命中「真值」集合 */
+const TRUTHY = ['1', 'true', 'yes', 'on']
+/** URL 参数命中「假值」集合（chrome=0 这种写法） */
+const FALSY = ['0', 'false', 'no', 'off']
+
+function isTruthy(v?: string): boolean {
+  return TRUTHY.includes((v || '').trim().toLowerCase())
+}
+
+function isFalsy(v?: string): boolean {
+  return FALSY.includes((v || '').trim().toLowerCase())
+}
+
+/**
+ * 顶部 header 是否隐藏（APP WebView 内嵌场景）。
+ * 优先级：URL 参数 > 后台渠道配置。
+ *   URL：?chrome=0 / ?hide_header=1
+ *   后台：管理后台 → 渠道管理 → 该渠道「隐藏 header」
+ */
+const hideHeader = computed(() => {
+  const fromURL = isFalsy(params.value.chrome) || isTruthy(params.value.hide_header)
+  if (fromURL) return true
+  // URL 显式要求显示时优先（chrome=1 / hide_header=0）
+  if (isTruthy(params.value.chrome) || isFalsy(params.value.hide_header)) return false
+  return channel.value?.hide_header === true
+})
+
+/**
+ * 「接入调试」入口是否隐藏。
+ * 优先级：URL 参数 > 后台渠道配置。
+ * 注意与 hide_header 相互独立——header 隐藏时调试入口会移到浮动按钮上，
+ * 但只要 hide_debug=1（或渠道配置开启），浮动按钮也不出现。
+ */
+const hideDebug = computed(() => {
+  if (isTruthy(params.value.hide_debug)) return true
+  if (isFalsy(params.value.hide_debug)) return false
+  return channel.value?.hide_debug === true
+})
+
+/** 剥掉纯展示层参数，避免传给后端 */
+function businessParams(): GuestParams {
+  const { chrome: _c, hide_header: _h, hide_debug: _d, hide_more_menu: _m, ...rest } = params.value
+  return rest
 }
 
 const params = ref<GuestParams>(parseParams())
@@ -414,12 +507,43 @@ function writeSince(id: number): void {
   localStorage.setItem(sinceKey(), String(id))
 }
 
+/**
+ * 把服务端生成的游客 ID 同步到地址栏。
+ * 这样刷新 / 分享链接时仍是同一个游客，不会每次都新建一个会话。
+ */
+function writeSinceKeyToUrl(uid: string): void {
+  if (!uid || typeof window === 'undefined') return
+  try {
+    const url = new URL(window.location.href)
+    if (url.searchParams.get('uid') === uid) return
+    url.searchParams.set('uid', uid)
+    window.history.replaceState(null, '', url.toString())
+  } catch {
+    // 地址栏改写失败不影响聊天，静默忽略
+  }
+}
+
 function isSystem(m: Message): boolean {
   return m.direction === 'system' || m.type === 'system'
 }
 
 function isMine(m: Message): boolean {
   return m.direction === 'in'
+}
+
+/** 解析图片 / 视频 / 文件载荷，兼容历史写法（content 直接是 URL） */
+function parseMedia(m: Message): MediaPayload | null {
+  if (m.type !== 'image' && m.type !== 'video' && m.type !== 'file') return null
+  const raw = m.content || ''
+  if (!raw) return null
+  if (raw.startsWith('{')) {
+    const p = parseCardContent<MediaPayload>(raw)
+    return p && p.url ? p : null
+  }
+  return {
+    url: raw,
+    kind: m.type === 'image' ? 'image' : m.type === 'video' ? 'video' : 'file',
+  }
 }
 
 function toItem(m: Message): StreamItem {
@@ -437,6 +561,7 @@ function toItem(m: Message): StreamItem {
     fallback: kind === 'mine' ? '我' : '客',
     order: m.type === 'order' ? parseCardContent<OrderCardPayload>(m.content) : null,
     product: m.type === 'product' ? parseCardContent<ProductCardPayload>(m.content) : null,
+    media: parseMedia(m),
     time: formatMessageTime(m.created_at),
     pending: !!m.pending,
     failed: !!m.failed,
@@ -457,10 +582,96 @@ const stream = computed<StreamItem[]>(() => sortMessages(messages.value).map(toI
 
 const canSend = computed(() => draft.value.trim().length > 0)
 
-async function scrollToBottom(): Promise<void> {
-  await nextTick()
+/* ---------------- 历史消息分页（微信式上滑加载） ---------------- */
+/** 是否还有更早的历史可拉 */
+const hasMoreHistory = ref(true)
+/** 翻页加载中 */
+const loadingHistory = ref(false)
+
+/** 最早一条消息 id，作为向前翻页游标 */
+const earliestId = computed(() => {
+  const ids = messages.value.filter((m) => !m.local).map((m) => m.id)
+  return ids.length ? Math.min(...ids) : 0
+})
+
+/**
+ * 上滑加载更早的历史消息（id < earliestId）。
+ * 与客服端一致：先记下原 scrollHeight，把新增高度补回 scrollTop，
+ * 视觉上停留在原处不会跳动。
+ */
+async function loadMoreHistory(): Promise<void> {
   const el = scroller.value
-  if (el) el.scrollTop = el.scrollHeight
+  if (!el || loadingHistory.value || !hasMoreHistory.value) return
+  const before = earliestId.value
+  if (!before) {
+    hasMoreHistory.value = false
+    return
+  }
+
+  loadingHistory.value = true
+  const prevHeight = el.scrollHeight
+  const prevTop = el.scrollTop
+  try {
+    const list = await guestMessages(
+      { channel: params.value.channel, uid: params.value.uid, tenant: params.value.tenant },
+      0,
+      before,
+      20,
+    )
+    if (!list.length) {
+      hasMoreHistory.value = false
+      return
+    }
+    // 不足一页说明到头了
+    if (list.length < 20) hasMoreHistory.value = false
+    prependMany(list)
+    await nextTick()
+    el.scrollTop = prevTop + (el.scrollHeight - prevHeight)
+  } catch {
+    // 加载失败静默，用户可再次上滑重试
+  } finally {
+    loadingHistory.value = false
+  }
+}
+
+/** 顶部滚动到一定位置时触发翻页 */
+function onHistoryScroll(): void {
+  const el = scroller.value
+  if (!el) return
+  if (el.scrollTop <= 24) void loadMoreHistory()
+}
+
+/**
+ * 滚动到最底部，展示最后一条消息。
+ *
+ * 不能只靠一次 nextTick：消息里的图片/视频是异步加载的，
+ * 首屏那一刻真实高度还没算出来，滚下去后会「停在中途」。
+ * 这里等高度连续稳定后再定位，图片较多时最多等 ~600ms。
+ */
+async function scrollToBottom(): Promise<void> {
+  const el = scroller.value
+  if (!el) return
+  await nextTick()
+
+  el.scrollTop = el.scrollHeight
+
+  let lastHeight = el.scrollHeight
+  let stable = 0
+  for (let i = 0; i < 20; i++) {
+    await new Promise((r) => window.setTimeout(r, 40))
+    if (!scroller.value) return
+    const h = scroller.value.scrollHeight
+    if (h === lastHeight) {
+      stable++
+      // 连续 3 次（约 120ms）高度不变，认为内容已渲染完毕
+      if (stable >= 3) break
+    } else {
+      stable = 0
+      lastHeight = h
+    }
+    el.scrollTop = el.scrollHeight
+  }
+  el.scrollTop = el.scrollHeight
 }
 
 function updateSince(): void {
@@ -479,6 +690,15 @@ function appendMany(list: Message[] | null | undefined): void {
   if (!fresh.length) return
   messages.value = sortMessages(messages.value.concat(fresh))
   updateSince()
+}
+
+/** 往前插入历史消息（分页加载用，按 id 去重） */
+function prependMany(list: Message[] | null | undefined): void {
+  if (!list || !list.length) return
+  const known = new Set(messages.value.map((m) => m.id))
+  const fresh = list.filter((m) => !known.has(m.id))
+  if (!fresh.length) return
+  messages.value = sortMessages(fresh.concat(messages.value))
 }
 
 /**
@@ -568,7 +788,7 @@ async function init(): Promise<void> {
   loading.value = true
   errorText.value = ''
   try {
-    const res = await guestInit(params.value)
+    const res = await guestInit(businessParams())
     channel.value = res.channel ?? null
     conversationId.value = res.conversation?.id ?? null
     convStatus.value = res.conversation?.status ?? ''
@@ -577,10 +797,22 @@ async function init(): Promise<void> {
     ctxProduct.value = res.product ?? null
     customerAvatar.value = res.customer?.avatar || params.value.avatar || ''
     serviceAvatar.value = ''
+
+    // 关键：链接没带 uid 时服务端会生成一个游客 ID，必须回写到 params。
+    // 否则后续 WebSocket（/ws/guest 要求 uid）与轮询都会带空 uid，导致连接被拒。
+    if (!params.value.uid && res.customer?.external_id) {
+      const generatedUid = res.customer.external_id
+      params.value = { ...params.value, uid: generatedUid }
+      writeSinceKeyToUrl(generatedUid)
+    }
     messages.value = sortMessages(res.history ?? [])
+    // 历史超过一页才可继续上滑翻页
+    hasMoreHistory.value = (res.history ?? []).length >= 20
     sinceId.value = readSince()
     updateSince()
     ready.value = true
+    // 先关掉 loading 让消息真正渲染，再滚到底部
+    loading.value = false
     await scrollToBottom()
     // 建立 WebSocket 实时连接（自带离线补拉与自动重连；失败会降级轮询）
     connectSocket()
@@ -589,6 +821,71 @@ async function init(): Promise<void> {
     errorText.value = err instanceof Error ? err.message : '接入失败，请检查链接参数'
   } finally {
     loading.value = false
+  }
+}
+
+/** 选择并上传附件（图片 / 视频 / 文件） */
+function pickMedia(): void {
+  if (!ready.value || uploading.value) return
+  fileRef.value?.click()
+}
+
+async function onPickFile(): Promise<void> {
+  const el = fileRef.value
+  const file = el?.files?.[0]
+  if (!el || !file) return
+
+  const err = validateFile(file)
+  if (err) {
+    ElMessage.error(err)
+    el.value = ''
+    return
+  }
+
+  uploading.value = true
+  const tempId = -Date.now()
+  // 先插入本地占位（乐观显示文件名），上传成功后回填真实载荷
+  messages.value.push({
+    id: tempId,
+    conversation_id: conversationId.value ?? 0,
+    type: kindOfFile(file),
+    direction: 'in',
+    content: JSON.stringify({ url: '', kind: kindOfFile(file), name: file.name, size: file.size }),
+    sender: null,
+    created_at: dayjs().format('YYYY-MM-DD HH:mm:ss'),
+    pending: true,
+    local: true,
+  })
+  void scrollToBottom()
+
+  try {
+    const payload = await uploadAttachment(file, {
+      guest: true,
+      params: {
+        channel: params.value.channel || '',
+        uid: params.value.uid || '',
+        tenant: params.value.tenant || '',
+      },
+    })
+    removeLocal(tempId)
+    const content = JSON.stringify(payload)
+    const res = await guestSend(
+      { channel: params.value.channel, uid: params.value.uid, tenant: params.value.tenant },
+      { type: payload.kind, content },
+    )
+    upsertById({ ...res.message })
+    if (res.reply) appendMany([res.reply])
+    await scrollToBottom()
+  } catch {
+    ElMessage.error('上传失败，请重试')
+    const idx = messages.value.findIndex((m) => m.id === tempId)
+    if (idx >= 0) {
+      messages.value[idx] = { ...messages.value[idx], pending: false, failed: true }
+      messages.value = messages.value.slice()
+    }
+  } finally {
+    uploading.value = false
+    el.value = ''
   }
 }
 
@@ -673,17 +970,8 @@ function insert(text: string): void {
   draft.value += text
 }
 
-function useQuick(text: string): void {
-  draft.value = text
-  panel.value = ''
-}
-
-function togglePanel(name: 'emoji' | 'more'): void {
+function togglePanel(name: 'emoji'): void {
   panel.value = panel.value === name ? '' : name
-}
-
-function onVoice(): void {
-  ElMessage.info('演示页面暂未接入语音输入')
 }
 
 function openDetail(url?: string): void {
@@ -695,7 +983,6 @@ function toggleDebug(): void {
   edit.uid = params.value.uid ?? ''
   edit.nickname = params.value.nickname ?? ''
   debugOpen.value = !debugOpen.value
-  moreOpen.value = false
 }
 
 async function reInit(): Promise<void> {
@@ -709,13 +996,14 @@ async function reInit(): Promise<void> {
   else delete next.nickname
 
   params.value = next
-  const query: Record<string, string> = {}
+  // 用 location.search 承载参数（与投放链接格式一致），不走 hash query
+  const q = new URLSearchParams()
   const source = next as unknown as Record<string, string | undefined>
   for (const key of Object.keys(source)) {
     const value = source[key]
-    if (value) query[key] = value
+    if (value) q.set(key, value)
   }
-  await router.replace({ path: '/', query })
+  window.history.replaceState(null, '', `${window.location.pathname}?${q.toString()}`)
 
   messages.value = []
   ctxOrder.value = null
@@ -729,21 +1017,36 @@ function goBack(): void {
   else void router.push('/')
 }
 
-async function copyLink(): Promise<void> {
-  moreOpen.value = false
+/** 点击调试面板里的地址即复制（带降级：非 https / 旧浏览器用 execCommand） */
+async function copyDebugUrl(): Promise<void> {
+  const text = currentUrl.value
   try {
-    await navigator.clipboard.writeText(window.location.href)
-    ElMessage.success('接入链接已复制')
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text)
+    } else {
+      legacyCopy(text)
+    }
+    ElMessage.success('接入地址已复制')
   } catch {
-    ElMessage.warning('当前环境不支持剪贴板，请手动复制地址栏链接')
+    legacyCopy(text)
+    ElMessage.success('接入地址已复制')
   }
 }
 
-function clearLocal(): void {
-  moreOpen.value = false
-  localStorage.removeItem(sinceKey())
-  sinceId.value = 0
-  ElMessage.success('已清空本地消息游标')
+/** 老浏览器 / 非安全上下文下的复制兜底 */
+function legacyCopy(text: string): void {
+  const ta = document.createElement('textarea')
+  ta.value = text
+  ta.style.position = 'fixed'
+  ta.style.opacity = '0'
+  document.body.appendChild(ta)
+  ta.select()
+  try {
+    document.execCommand('copy')
+  } catch {
+    ElMessage.warning('复制失败，请手动选择地址复制')
+  }
+  document.body.removeChild(ta)
 }
 
 onMounted(() => {
@@ -788,6 +1091,61 @@ onBeforeUnmount(stopPolling)
 }
 
 /* ---------------- 顶部标题栏 ---------------- */
+/* header 隐藏时（APP 内嵌）的浮动工具按钮 */
+.float-tools {
+  position: absolute;
+  top: 6px;
+  right: 8px;
+  z-index: 20;
+  display: flex;
+  gap: 4px;
+
+  &__btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 26px;
+    height: 26px;
+    border: none;
+    border-radius: 13px;
+    background: rgba(0, 0, 0, 0.32);
+    color: #fff;
+    cursor: pointer;
+    backdrop-filter: blur(2px);
+
+    &.is-on {
+      background: rgba(0, 0, 0, 0.55);
+    }
+  }
+
+  &__menu {
+    position: absolute;
+    top: 32px;
+    right: 0;
+    min-width: 148px;
+    padding: 4px 0;
+    background: #fff;
+    border-radius: 6px;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.14);
+
+    button {
+      display: block;
+      width: 100%;
+      padding: 9px 14px;
+      border: none;
+      background: none;
+      font-size: 13px;
+      color: #191919;
+      text-align: left;
+      cursor: pointer;
+
+      &:hover {
+        background: #f5f5f5;
+      }
+    }
+  }
+}
+
 .topbar {
   position: relative;
   flex: 0 0 52px;
@@ -888,6 +1246,11 @@ onBeforeUnmount(stopPolling)
   background: #f7f8fa;
   border-bottom: 1px solid #e5e5e5;
 
+  /* header 隐藏时右上角有浮动按钮，给「收起」留出空间 */
+  &--floated {
+    padding-top: 34px;
+  }
+
   &__head {
     display: flex;
     align-items: center;
@@ -910,6 +1273,7 @@ onBeforeUnmount(stopPolling)
   }
 
   &__url {
+    position: relative;
     padding: 6px 8px;
     background: #fff;
     border: 1px solid #e5e5e5;
@@ -917,6 +1281,33 @@ onBeforeUnmount(stopPolling)
     font-size: 11px;
     color: #7f7f7f;
     word-break: break-all;
+    cursor: pointer;
+    transition: border-color 0.15s, color 0.15s;
+
+    &:hover {
+      border-color: #07c160;
+      color: #07c160;
+    }
+
+    /* 悬停时右上角提示「点击复制」 */
+    &-tip {
+      position: absolute;
+      top: 4px;
+      right: 6px;
+      padding: 1px 5px;
+      border-radius: 3px;
+      background: #07c160;
+      color: #fff;
+      font-size: 10px;
+      line-height: 1.5;
+      opacity: 0;
+      transition: opacity 0.15s;
+      pointer-events: none;
+    }
+
+    &:hover &-tip {
+      opacity: 1;
+    }
   }
 
   &__grid {
@@ -1014,6 +1405,14 @@ onBeforeUnmount(stopPolling)
     text-align: center;
     font-size: 13px;
     color: #7f7f7f;
+  }
+
+  /* 上滑分页提示（顶部） */
+  &__pager {
+    padding: 6px 0 10px;
+    text-align: center;
+    font-size: 12px;
+    color: #9c9c9c;
   }
 
   &__error {
@@ -1186,6 +1585,17 @@ onBeforeUnmount(stopPolling)
     border: 1px solid #fa5151;
   }
 
+  /* 媒体消息：去掉气泡底色与阴影，让图片/视频/文件自然显示 */
+  &--media {
+    padding: 4px;
+    background: transparent;
+    box-shadow: none;
+
+    &::before {
+      display: none;
+    }
+  }
+
   &__text {
     white-space: pre-wrap;
   }
@@ -1286,10 +1696,6 @@ onBeforeUnmount(stopPolling)
 
     &.is-on {
       color: #07c160;
-    }
-
-    &--plus {
-      font-size: 18px;
     }
   }
 

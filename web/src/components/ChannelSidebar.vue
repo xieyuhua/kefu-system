@@ -20,61 +20,48 @@
         <span class="nav-icon">🔔</span>
         <span class="badge" v-if="stats.pending > 0">{{ badge(stats.pending) }}</span>
       </div>
-
-      <el-divider class="nav-divider" />
     </div>
 
-    <div class="sidebar-channels kf-scroll">
-      <!-- 渠道来源只作「标注」展示在会话列表里，这里只保留统计概览，不再逐个切换 -->
-      <div
-        v-for="ch in channels"
-        :key="ch.id"
-        class="stat-item"
-        :class="{ 'stat-item--alert': ch.pending_count > 0 }"
-        :title="`${ch.name}：待接待 ${ch.pending_count}`"
-      >
-        <span class="stat-icon" :style="{ background: channelColor(ch.type) }">
-          {{ channelIcon(ch.type) }}
-        </span>
-        <span class="stat-badge" v-if="ch.pending_count > 0">{{ badge(ch.pending_count) }}</span>
-      </div>
-
-      <div v-if="!channels.length && !loading" class="nav-empty">无渠道</div>
-    </div>
+    <!-- 弹性占位，把底部操作区推到最下面 -->
+    <div class="sidebar-spacer" />
 
     <div class="sidebar-bottom">
-      <el-divider class="nav-divider" />
-      <el-tooltip :content="auth.userName" placement="right">
-        <div class="nav-item" @click="onProfile">
-          <span class="nav-icon nav-avatar">
-            <img v-if="auth.user?.avatar" :src="auth.user.avatar" alt="" />
-            <span v-else>{{ (auth.userName || '?').slice(0, 1) }}</span>
-          </span>
-        </div>
-      </el-tooltip>
-      <div class="nav-item" title="退出登录" @click="onLogout">
-        <span class="nav-icon">🚪</span>
+        <el-divider class="nav-divider" />
+        <el-tooltip :content="`${auth.userName} · 个人资料`" placement="right">
+          <div class="nav-item" @click="profileOpen = true">
+            <span class="nav-icon nav-avatar">
+              <img v-if="auth.user?.avatar" :src="auth.user.avatar" alt="" />
+              <span v-else>{{ (auth.userName || '?').slice(0, 1) }}</span>
+            </span>
+          </div>
+        </el-tooltip>
+        <el-tooltip content="退出登录" placement="right">
+          <div class="nav-item" @click="onLogout">
+            <span class="nav-icon">🚪</span>
+          </div>
+        </el-tooltip>
       </div>
-    </div>
+
+    <!-- 个人资料：修改昵称 / 头像 / 密码 -->
+    <ProfileDialog v-model="profileOpen" />
   </aside>
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
-import { useRouter } from 'vue-router'
+import { computed, ref } from 'vue'
 import { ElMessageBox } from 'element-plus'
 import { useAuthStore } from '@/stores/auth'
 import { useChatStore } from '@/stores/chat'
-import { channelColor, channelIcon } from '@/utils/format'
+import ProfileDialog from '@/views/ProfileDialog.vue'
 
 const auth = useAuthStore()
 const chat = useChatStore()
-const router = useRouter()
 
-const channels = computed(() => chat.channels)
 const stats = computed(() => chat.stats)
-const loading = computed(() => chat.listLoading)
 const filters = computed(() => chat.filters)
+
+/** 个人资料弹窗（昵称 / 头像 / 密码） */
+const profileOpen = ref(false)
 
 // 会话已合并为单一列表，渠道只作为来源标注；这里仅保留「未接待」筛选
 const pendingOnly = computed(() => filters.value.status === 'pending')
@@ -94,10 +81,7 @@ function togglePending(): void {
   chat.setFilter({ channelId: 0, status: pendingOnly.value ? 'all' : 'pending' })
 }
 
-function onProfile(): void {
-  void router.push('/history')
-}
-
+/** 退出登录：清空登录态并回到登录页 */
 async function onLogout(): Promise<void> {
   try {
     await ElMessageBox.confirm('确定退出登录吗？', '提示', {
@@ -109,7 +93,7 @@ async function onLogout(): Promise<void> {
     return
   }
   await auth.logout()
-  void router.replace('/login')
+  window.location.replace('/login')
 }
 </script>
 
@@ -128,9 +112,11 @@ async function onLogout(): Promise<void> {
   flex-shrink: 0;
 }
 
-.sidebar-channels {
-  flex: 1;
-  padding: 4px 0;
+/* 弹性占位：把「个人资料 / 退出登录」推到侧边栏最底部，
+   与上面的「全部会话 / 未接待」保持距离，不再紧挨着 */
+.sidebar-spacer {
+  flex: 1 1 auto;
+  min-height: 0;
 }
 
 .nav-divider {

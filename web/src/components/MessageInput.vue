@@ -16,7 +16,7 @@
         </div>
       </el-popover>
 
-      <el-button text size="small" title="图片" :icon="Picture" @click="pickImage" />
+      <el-button text size="small" title="发送图片 / 视频 / 文件" :icon="Paperclip" @click="pickMedia" />
       <el-button text size="small" title="订单" @click="emit('pick-order')">🧾 订单</el-button>
       <el-button text size="small" title="商品" @click="emit('pick-product')">🛍 商品</el-button>
 
@@ -31,7 +31,22 @@
         </div>
       </el-popover>
 
-      <span class="toolbar-tip">Ctrl + Enter 发送</span>
+      <!-- 搜索历史消息（微信式，放在快捷回复旁） -->
+      <el-button
+        text
+        size="small"
+        :class="{ 'is-on': searchActive }"
+        title="搜索该会话的历史消息"
+        :icon="Search"
+        @click="emit('toggle-search')"
+      >
+        搜索
+      </el-button>
+
+      <span class="toolbar-tip">
+        <span v-if="uploading" class="toolbar-uploading">上传中…</span>
+        <span v-else>Ctrl + Enter 发送</span>
+      </span>
     </div>
 
     <textarea
@@ -46,27 +61,47 @@
 
     <div class="input-foot">
       <span class="foot-hint">{{ draft.length }} 字</span>
-      <el-button type="primary" size="small" :disabled="disabled || !canSend" @click="submit">
+      <el-button
+        type="primary"
+        size="small"
+        :loading="sending"
+        :disabled="disabled || sending || !canSend"
+        @click="submit"
+      >
         发送
       </el-button>
     </div>
 
-    <input ref="fileRef" type="file" accept="image/*" hidden @change="onFile" />
+    <input ref="fileRef" type="file" hidden accept="image/*,video/*,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv,.zip,.rar,.7z,.json,.log" @change="onFile" />
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { Picture } from '@element-plus/icons-vue'
+import { ElMessage } from 'element-plus'
+import { Paperclip, Search } from '@element-plus/icons-vue'
+import { uploadAttachment, validateFile } from '@/api/upload'
 import type { MessageType } from '@/types'
 
-const props = defineProps<{ disabled?: boolean; conversationId?: number }>()
+const props = defineProps<{
+  disabled?: boolean
+  conversationId?: number
+  /** 搜索面板是否展开（按钮高亮用） */
+  searchActive?: boolean
+  /** 本会话是否有消息正在发送（用于禁用发送按钮、防止重复提交） */
+  sending?: boolean
+}>()
 
 const emit = defineEmits<{
   send: [payload: { type: MessageType; content: string }]
   'pick-order': []
   'pick-product': []
+  'toggle-search': []
 }>()
+
+const searchActive = computed(() => props.searchActive === true)
+/** 发送中（props 变化会触发重渲染，这里转成 ref 便于 submit 内读取最新值） */
+const sending = computed(() => props.sending === true)
 
 const EMOJIS = [
   '😊', '😄', '😁', '🙂', '😉', '😍', '🤔', '😅',
@@ -86,6 +121,8 @@ const QUICK_REPLIES = [
 const draft = ref('')
 const areaRef = ref<HTMLTextAreaElement | null>(null)
 const fileRef = ref<HTMLInputElement | null>(null)
+/** 上传中 */
+const uploading = ref(false)
 
 const canSend = computed(() => draft.value.trim().length > 0)
 
@@ -121,29 +158,44 @@ function useQuick(text: string): void {
   focus()
 }
 
+/** 提交文本：发送中直接忽略，防止连按回车 / 重复点击产生重复请求 */
 function submit(): void {
-  if (props.disabled || !canSend.value) return
-  emit('send', { type: 'text', content: draft.value.trim() })
+  if (props.disabled || sending.value) return
+  const text = draft.value.trim()
+  if (!text) return
+  // 先清空再 emit：即使父组件尚未回传 sending 状态，
+  // 第二次按键也会因为草稿已空而被 canSend 拦下。
   draft.value = ''
+  emit('send', { type: 'text', content: text })
   focus()
 }
 
-function pickImage(): void {
+function pickMedia(): void {
   fileRef.value?.click()
 }
 
-function onFile(): void {
+/** 上传图片 / 视频 / 文件：先调上传接口拿到 URL，再作为消息发送 */
+async function onFile(): Promise<void> {
   const file = fileRef.value?.files?.[0]
   if (!fileRef.value || !file) return
-  const reader = new FileReader()
-  reader.onload = () => {
-    const result = typeof reader.result === 'string' ? reader.result : ''
-    if (result) {
-      emit('send', { type: 'image', content: result })
-    }
+
+  const err = validateFile(file)
+  if (err) {
+    ElMessage.error(err)
+    fileRef.value.value = ''
+    return
   }
-  reader.readAsDataURL(file)
-  fileRef.value.value = ''
+
+  uploading.value = true
+  try {
+    const payload = await uploadAttachment(file)
+    emit('send', { type: payload.kind, content: JSON.stringify(payload) })
+  } catch {
+    ElMessage.error('上传失败，请重试')
+  } finally {
+    uploading.value = false
+    fileRef.value.value = ''
+  }
 }
 
 defineExpose({ focus, insert })
@@ -170,6 +222,10 @@ defineExpose({ focus, insert })
   margin-left: auto;
   font-size: 12px;
   color: var(--kf-text-weak);
+}
+
+.toolbar-uploading {
+  color: var(--kf-primary);
 }
 
 .input-area {

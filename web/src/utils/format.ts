@@ -42,6 +42,8 @@ export const STATUS_LABELS: Record<ConversationStatus, string> = {
 const TYPE_LABELS: Record<MessageType, string> = {
   text: '文本',
   image: '图片',
+  video: '视频',
+  file: '文件',
   order: '订单',
   product: '商品',
   system: '系统',
@@ -88,6 +90,27 @@ export function formatMessageTime(value: string | undefined): string {
   if (d.isSame(now, 'day')) return d.format('HH:mm')
   if (d.isSame(now, 'year')) return d.format('MM-DD HH:mm')
   return d.format('YYYY-MM-DD HH:mm')
+}
+
+/** 在线状态圆点颜色：在线 #07C160，离线 #b2b2b2 */
+export function onlineColor(online: boolean | undefined): string {
+  return online ? '#07C160' : '#b2b2b2'
+}
+
+/** 在线状态提示文案：在线 / 离线 · 最后活跃 x 分钟前 */
+export function onlineHint(online: boolean | undefined, lastSeenAt?: string): string {
+  if (online) return '在线'
+  if (!lastSeenAt) return '离线'
+  const d = dayjs(lastSeenAt.replace(/-/g, '/'))
+  if (!d.isValid()) return '离线'
+  const mins = dayjs().diff(d, 'minute')
+  if (mins < 1) return '离线 · 最后活跃刚刚'
+  if (mins < 60) return `离线 · 最后活跃 ${mins} 分钟前`
+  const hours = dayjs().diff(d, 'hour')
+  if (hours < 24) return `离线 · 最后活跃 ${hours} 小时前`
+  const days = dayjs().diff(d, 'day')
+  if (days < 30) return `离线 · 最后活跃 ${days} 天前`
+  return '离线'
 }
 
 export function formatMoney(value: number | undefined): string {

@@ -19,18 +19,25 @@ import (
 
 var errNoChannel = errors.New("渠道不存在")
 
-// resolveChannel 按渠道类型或 ID 解析渠道（GET 参数 channel）
+// resolveChannel 解析用户端接入参数 channel。
+//
+// 优先按 app_id 匹配 —— 这是渠道的业务唯一标识（同一类型可配多个渠道，只有它能区分）。
+// 同时兼容历史写法：渠道类型（wechat / web / ...）与数字渠道 ID。
 func resolveChannel(c *gin.Context, tenantID uint) (*model.Channel, error) {
 	key := strings.TrimSpace(c.Query("channel"))
 	if key == "" {
-		return nil, errors.New("缺少渠道参数 channel")
-	}
-	var ch model.Channel
-	q := db.Where("tenant_id = ? AND (type = ? OR id = ?)", tenantID, key, key)
-	if err := q.First(&ch).Error; err != nil {
 		return nil, errNoChannel
 	}
-	return &ch, nil
+	var ch model.Channel
+	// ① app_id 精确匹配
+	if err := db.Where("tenant_id = ? AND app_id = ?", tenantID, key).First(&ch).Error; err == nil {
+		return &ch, nil
+	}
+	// ② 兼容：类型或数字 ID
+	if err := db.Where("tenant_id = ? AND (type = ? OR id = ?)", tenantID, key, key).First(&ch).Error; err == nil {
+		return &ch, nil
+	}
+	return nil, errNoChannel
 }
 
 // GuestInit 用户端页面初始化：拿到渠道、客户、会话、欢迎语、上下文卡片
@@ -103,7 +110,14 @@ func GuestInit(c *gin.Context) {
 	service.RecordCustomerIP(cu.ID, service.ClientIP(c.Request.RemoteAddr, c.Request.Header))
 
 	response.OK(c, gin.H{
-		"channel":      gin.H{"id": ch.ID, "type": ch.Type, "name": ch.Name},
+		"channel": gin.H{
+			"id":             ch.ID,
+			"type":           ch.Type,
+			"name":           ch.Name,
+			"hide_header":    ch.HideHeader,
+			"hide_debug":     ch.HideDebug,
+			"hide_more_menu": ch.HideMoreMenu,
+		},
 		"customer":     gin.H{"id": cu.ID, "external_id": cu.ExternalID, "nickname": cu.Nickname, "avatar": cu.Avatar},
 		"conversation": gin.H{"id": conv.ID, "status": conv.Status},
 		"greeting":     "您好，我是智能客服助手，请问有什么可以帮您？",
@@ -192,8 +206,25 @@ func GuestMessages(c *gin.Context) {
 		response.OK(c, []interface{}{})
 		return
 	}
-	// since_id 为正向游标：返回 id > since_id 的新消息（增量拉取）
-	list, err := service.ListMessagesSince(tenantID, conv.ID, queryUint(c, "since_id"), 50)
+	// 三种拉取模式，游标方向各不相同：
+	//   before_id > 0  → 向前翻页，返回 id < before_id 的**更早**消息（上滑加载历史）
+	//   since_id  > 0  → 正向增量，返回 id > since_id 的**更新**消息（轮询补拉）
+	//   两个都不传      → 首屏，返回**最新** limit 条
+	beforeID := queryUint(c, "before_id")
+	sinceID := queryUint(c, "since_id")
+	limit := queryInt(c, "limit", 20)
+
+	var list []dto.MessageVO
+	var err error
+	switch {
+	case beforeID > 0:
+		list, err = service.ListMessages(tenantID, conv.ID, beforeID, limit)
+	case sinceID > 0:
+		list, err = service.ListMessagesSince(tenantID, conv.ID, sinceID, limit)
+	default:
+		// 首屏：取最新的 limit 条（beforeID 传 0 即不带 id < 条件）
+		list, err = service.ListMessages(tenantID, conv.ID, 0, limit)
+	}
 	if err != nil {
 		response.Server(c, err.Error())
 		return

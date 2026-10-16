@@ -3,8 +3,9 @@ import { resolve } from 'node:path'
 import { fileURLToPath, URL } from 'node:url'
 import { defineConfig } from 'vite'
 
-// 后端地址：默认 8080，可用环境变量覆盖（例如后端换了端口：VITE_PROXY_TARGET=http://127.0.0.1:8081 pnpm dev）
-const backend = process.env.VITE_PROXY_TARGET || 'http://127.0.0.1:8080'
+// 后端地址：默认与 server/config.yaml 的 server.port 保持一致（8480）
+// 可用环境变量覆盖：VITE_PROXY_TARGET=http://127.0.0.1:8481 pnpm dev
+const backend = process.env.VITE_PROXY_TARGET || 'http://127.0.0.1:8480'
 
 // 构建产物直接输出到后端的静态目录，build 完即可用后端端口访问三个端。
 // 可用环境变量覆盖：OUT_DIR=../server/web pnpm build

@@ -1,21 +1,24 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
   ChatRound,
   CollectionTag,
   DataLine,
+  Goods,
   Grid,
   Headset,
   Iphone,
   Message,
   Monitor,
+  Setting,
   ShoppingCart,
   SwitchButton,
   Tickets,
   UserFilled,
 } from '@element-plus/icons-vue'
 import { useAuthStore } from '../../stores/auth'
+import ProfileDialog from '@/views/ProfileDialog.vue'
 
 interface MenuItem {
   path: string
@@ -30,9 +33,11 @@ const MENUS: MenuItem[] = [
   { path: '/auto-replies', title: '自动回复', icon: ChatRound },
   { path: '/agents', title: '子账号管理', icon: UserFilled },
   { path: '/users', title: '客户管理', icon: Headset },
-  { path: '/orders', title: '订单管理', icon: Tickets },
-  { path: '/products', title: '商品管理', icon: ShoppingCart },
+  { path: '/conversation-records', title: '对话记录', icon: Tickets },
+  { path: '/orders', title: '订单管理', icon: ShoppingCart },
+  { path: '/products', title: '商品管理', icon: Goods },
   { path: '/devices', title: '设备管理', icon: Iphone },
+  { path: '/settings', title: '系统设置', icon: Setting },
 ]
 
 const route = useRouter()
@@ -50,6 +55,9 @@ const WORKBENCH_URL = '/chat/'
 function goWorkbench(): void {
   window.location.href = WORKBENCH_URL
 }
+
+/** 个人资料弹窗（昵称 / 头像 / 密码） */
+const profileOpen = ref(false)
 
 async function onLogout(): Promise<void> {
   await auth.logout()
@@ -93,10 +101,14 @@ async function onLogout(): Promise<void> {
           <span class="admin-header__tenant">{{ tenantName }}</span>
         </div>
         <div class="admin-header__right">
-          <div class="admin-user">
+          <button type="button" class="admin-link-btn" @click="goWorkbench">
+            <el-icon :size="14"><Monitor /></el-icon>
+            <span>进入工作台</span>
+          </button>
+          <button type="button" class="admin-user" title="个人资料" @click="profileOpen = true">
             <span class="admin-user__name">{{ userName }}</span>
             <span class="admin-user__role">{{ userRole }}</span>
-          </div>
+          </button>
           <button type="button" class="admin-link-btn" @click="onLogout">
             <el-icon :size="14"><SwitchButton /></el-icon>
             <span>退出登录</span>
@@ -108,6 +120,8 @@ async function onLogout(): Promise<void> {
         <router-view />
       </main>
     </div>
+
+    <ProfileDialog v-model="profileOpen" />
   </div>
 </template>
 

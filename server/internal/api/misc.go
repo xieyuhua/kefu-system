@@ -170,6 +170,47 @@ func DeleteChannelType(c *gin.Context) {
 	response.OK(c, true)
 }
 
+// ResetChannelAppID 重置渠道标识（app_id），生成新的随机值
+func ResetChannelAppID(c *gin.Context) {
+	appID, err := service.ResetChannelAppID(tenantID(c), uintParam(c, "id"))
+	if err != nil {
+		response.Param(c, err.Error())
+		return
+	}
+	response.OK(c, map[string]interface{}{
+		"app_id":     appID,
+		"access_url": service.AccessURLByAppID(tenantID(c), uintParam(c, "id"), ""),
+	})
+}
+
+// ---------------- 系统配置（默认图片等） ----------------
+
+// ListSettings 读取全部配置项
+func ListSettings(c *gin.Context) {
+	list, err := service.ListSettings(tenantID(c))
+	if err != nil {
+		response.Server(c, err.Error())
+		return
+	}
+	response.OK(c, list)
+}
+
+// SaveSetting 保存单个配置项
+func SaveSetting(c *gin.Context) {
+	var req struct {
+		Key   string `json:"key"`
+		Value string `json:"value"`
+	}
+	if !bindJSON(c, &req) {
+		return
+	}
+	if err := service.SaveSetting(tenantID(c), req.Key, req.Value); err != nil {
+		response.Param(c, err.Error())
+		return
+	}
+	response.OK(c, true)
+}
+
 // ---------------- 设备推送自检 ----------------
 
 // TestDevicePush 手动触发一次推送，用于验证厂商通道是否接对。

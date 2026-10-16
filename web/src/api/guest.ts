@@ -31,6 +31,17 @@ export interface GuestParams {
   tenant?: string
   /** 签名（可选，防篡改） */
   sign?: string
+  /**
+   * 展示层参数（不传给后端），URL 参数优先级高于后台渠道配置：
+   *   chrome=0       —— 隐藏顶部 header，用于 APP WebView 内嵌
+   *   hide_header=1  —— 同上，别名
+   *   hide_debug=1   —— 隐藏「接入调试」入口
+   *   hide_more_menu=1 —— 隐藏「更多」菜单入口
+   */
+  chrome?: string
+  hide_header?: string
+  hide_debug?: string
+  hide_more_menu?: string
 }
 
 /** GET /api/guest/init 响应 */
@@ -93,12 +104,21 @@ export function guestSend(
   return http.post<GuestSendResult>('/guest/message', body, { params: toQuery(params) })
 }
 
-/** 13.4 降级轮询：拉取 since_id 之后的消息（无 WebSocket 环境） */
+/**
+ * 13.4 用户端拉取消息，三种模式：
+ *  - 不传任何游标            → 该会话最新的 limit 条（默认 20，用于首屏）
+ *  - sinceId > 0             → 正向增量，id > sinceId 的新消息（WebSocket 降级轮询用）
+ *  - beforeId > 0            → 向前翻页，id < beforeId 的更早消息（上滑加载历史用）
+ */
 export function guestMessages(
   params: Pick<GuestParams, 'channel' | 'uid' | 'tenant'>,
-  sinceId: number,
+  sinceId = 0,
+  beforeId = 0,
+  limit = 20,
 ): Promise<Message[]> {
   const query = toQuery(params)
-  query.since_id = String(sinceId)
+  if (sinceId > 0) query.since_id = String(sinceId)
+  if (beforeId > 0) query.before_id = String(beforeId)
+  query.limit = String(limit)
   return http.get<Message[]>('/guest/messages', { params: query })
 }

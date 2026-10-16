@@ -2,10 +2,12 @@
 /**
  * 通用缩略图组件（管理后台用）
  * - 统一尺寸/圆角/懒加载
- * - 加载失败自动替换为**兜底图**（/img/placeholder.svg），不显示浏览器默认破图
+ * - 无地址或加载失败时自动替换为**兜底图**（/img/placeholder.svg），不显示破图
+ * - 兜底图优先取租户配置的「默认图片」（管理后台 → 系统设置），未配置时用内置占位图
  * - 悬停显示放大镜，点击查看大图
  */
 import { ref, computed, watch } from 'vue'
+import { useAuthStore } from '@/stores/auth'
 
 const props = withDefaults(
   defineProps<{
@@ -31,10 +33,10 @@ const props = withDefaults(
   },
 )
 
-const emit = defineEmits<{ preview: [src: string] }>()
+const auth = useAuthStore()
 
-/** 兜底图地址（public/img 下，构建时原样拷贝到 server/web/img） */
-const PLACEHOLDER = {
+/** 内置兜底图（public/img 下，构建时原样拷贝到 server/web/img） */
+const BUILTIN_PLACEHOLDER = {
   goods: '/img/placeholder.svg',
   avatar: '/img/avatar-placeholder.svg',
 }
@@ -52,10 +54,19 @@ watch(
   },
 )
 
+/** 租户配置的默认图片（头像场景用内置头像兜底） */
+const tenantDefault = computed(() => auth.user?.tenant?.default_image || '')
+
+const placeholderUrl = computed(() => {
+  // 后台配置了默认图片 → 业务场景用它；头像仍用内置头像兜底，保持圆形剪影
+  if (props.kind === 'goods' && tenantDefault.value) return tenantDefault.value
+  return BUILTIN_PLACEHOLDER[props.kind]
+})
+
 const hasSrc = computed(() => !!props.src)
 const useFallbackImg = computed(() => failed.value)
 const displaySrc = computed(() => {
-  if (useFallbackImg.value) return PLACEHOLDER[props.kind]
+  if (useFallbackImg.value) return placeholderUrl.value
   return props.src
 })
 const boxStyle = computed(() => ({
@@ -87,7 +98,7 @@ function openViewer(): void {
     <img
       v-if="!hasSrc"
       class="thumb__img"
-      :src="PLACEHOLDER[kind]"
+      :src="placeholderUrl"
       :alt="alt"
       loading="lazy"
     />

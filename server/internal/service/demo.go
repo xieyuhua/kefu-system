@@ -20,10 +20,49 @@ func DemoIncoming(tenantID uint, req dto.DemoIncomingRequest) (*dto.Conversation
 		return nil, nil, errors.New("渠道不存在")
 	}
 	nickname := strings.TrimSpace(req.Nickname)
+
+	now := time.Now()
+	uid := strings.TrimSpace(req.UID)
+
+	// ① 指定了 uid：复用该渠道下已存在的客户与会话（可对同一用户反复发消息）
+	if uid != "" {
+		externalID := "demo_" + ch.Type + "_" + uid
+		var cu model.Customer
+		if err := gormDB().
+			Where("tenant_id = ? AND channel_id = ? AND external_id = ?", tenantID, ch.ID, externalID).
+			First(&cu).Error; err == nil {
+			// 昵称有填则更新
+			if nickname != "" {
+				gormDB().Model(&model.Customer{}).Where("id = ?", cu.ID).Update("nickname", nickname)
+			}
+			gormDB().Model(&model.Customer{}).Where("id = ?", cu.ID).Update("last_seen_at", now)
+
+			// 复用未结束的会话；全部结束则重开一个
+			var conv model.Conversation
+			if e := gormDB().
+				Where("tenant_id = ? AND customer_id = ? AND status != 'closed' AND archived = ?", tenantID, cu.ID, false).
+				Order("id desc").First(&conv).Error; e == nil {
+				return sendDemoMessage(tenantID, &conv, &cu, req)
+			}
+			conv = model.Conversation{
+				TenantID: tenantID, ChannelID: ch.ID, CustomerID: cu.ID,
+				Status: "pending", LastMessageAt: now,
+			}
+			if err := gormDB().Create(&conv).Error; err != nil {
+				return nil, nil, err
+			}
+			return sendDemoMessage(tenantID, &conv, &cu, req)
+		}
+	}
+
+	// ② 未指定 uid（或该 uid 首次出现）：新建客户 + 新会话
 	if nickname == "" {
 		nickname = randomNickname()
 	}
 	externalID := fmt.Sprintf("demo_%s_%d", ch.Type, time.Now().UnixNano()%100000)
+	if uid != "" {
+		externalID = "demo_" + ch.Type + "_" + uid
+	}
 
 	cu := model.Customer{
 		TenantID:   tenantID,
@@ -33,7 +72,6 @@ func DemoIncoming(tenantID uint, req dto.DemoIncomingRequest) (*dto.Conversation
 		Avatar:     fmt.Sprintf("/demo/avatar-%d.svg", rand.Intn(6)+1),
 		Phone:      randomPhone(),
 	}
-	now := time.Now()
 	cu.LastSeenAt = &now
 	if err := gormDB().Create(&cu).Error; err != nil {
 		return nil, nil, err
@@ -49,7 +87,16 @@ func DemoIncoming(tenantID uint, req dto.DemoIncomingRequest) (*dto.Conversation
 	if err := gormDB().Create(&conv).Error; err != nil {
 		return nil, nil, err
 	}
+	return sendDemoMessage(tenantID, &conv, &cu, req)
+}
 
+// sendDemoMessage 往指定会话追加一条客户消息并广播
+func sendDemoMessage(
+	tenantID uint,
+	conv *model.Conversation,
+	cu *model.Customer,
+	req dto.DemoIncomingRequest,
+) (*dto.ConversationVO, *dto.MessageVO, error) {
 	content := strings.TrimSpace(req.Content)
 	if content == "" {
 		content = "你好，我想咨询一下"
@@ -65,9 +112,10 @@ func DemoIncoming(tenantID uint, req dto.DemoIncomingRequest) (*dto.Conversation
 
 	HubInstance().Publish(tenantID, nil, Event{Event: "conversation.new", Data: *cvo})
 	HubInstance().Publish(tenantID, nil, Event{Event: "message.new", Data: *mvo})
+	HubInstance().PublishToGuest(tenantID, conv.ID, Event{Event: "message.new", Data: *mvo})
 
 	// 自动回复 / 转人工判定
-	go HandleIncoming(tenantID, conv.ID, cu.ID, ch.ID, content)
+	go HandleIncoming(tenantID, conv.ID, cu.ID, conv.ChannelID, content)
 	return cvo, mvo, nil
 }
 

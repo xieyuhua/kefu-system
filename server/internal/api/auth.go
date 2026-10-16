@@ -6,6 +6,7 @@ import (
 	"kefu-server/internal/dto"
 	"kefu-server/internal/model"
 	"kefu-server/internal/response"
+	"kefu-server/internal/service"
 
 	"github.com/gin-gonic/gin"
 )
@@ -64,7 +65,7 @@ func Login(c *gin.Context) {
 			ID: u.ID, TenantID: u.TenantID, Role: u.Role, Name: u.Name,
 			Account: u.Account, Avatar: u.Avatar, Online: true,
 			MaxConcurrent: u.MaxConcurrent, Channels: channelIDs,
-			Tenant: dto.TenantBrief{ID: tenant.ID, Name: tenant.Name, Logo: tenant.Logo},
+			Tenant: dto.TenantBrief{ID: tenant.ID, Name: tenant.Name, Logo: tenant.Logo, DefaultImage: service.DefaultImageURL(tenant.ID)},
 		},
 	})
 }
@@ -98,7 +99,7 @@ func Me(c *gin.Context) {
 		ID: u.ID, TenantID: u.TenantID, Role: u.Role, Name: u.Name,
 		Account: u.Account, Avatar: u.Avatar, Online: u.Online,
 		MaxConcurrent: u.MaxConcurrent, Channels: channelIDs,
-		Tenant: dto.TenantBrief{ID: tenant.ID, Name: tenant.Name, Logo: tenant.Logo},
+		Tenant: dto.TenantBrief{ID: tenant.ID, Name: tenant.Name, Logo: tenant.Logo, DefaultImage: service.DefaultImageURL(tenant.ID)},
 	})
 }
 

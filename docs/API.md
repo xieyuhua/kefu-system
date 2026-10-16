@@ -154,14 +154,41 @@ Authorization: Bearer <token>
 向**当前登录账号**已注册的所有设备触发一次推送，用于验证厂商通道是否接通。结果看服务端日志 `[push]`。
 > 厂商通道未启用时接口仍返回 `code: 0`，但不会实际下发（提醒仍会落库，端侧可补拉）。
 
-### 渠道二维码与接入地址
+### 渠道标识 app_id 与接入地址
+
+每个渠道有唯一 `app_id`（随机生成，形如 `kefu_a1b2c3d4`），是接入链接里区分渠道来源的依据。
+
+`GET /api/channels` 返回：
+```json
+{
+  "id": 1, "type": "wechat", "name": "微信公众号客服",
+  "app_id": "kefu_a1b2c3d4",
+  "access_path": "/kefu/?channel=kefu_a1b2c3d4",
+  "access_url": "https://kefu.example.com/kefu/?channel=kefu_a1b2c3d4"
+}
+```
+
+`POST /api/channels` 时 `app_id` 可省略 —— 留空由后端自动生成随机值；填写则校验同租户内唯一。
+
+`POST /api/channels/:id/reset-app-id` —— **重置**渠道标识（生成新随机值）：
+```json
+{ "app_id": "kefu_6bd7600b", "access_url": "https://kefu.example.com/kefu/?channel=kefu_6bd7600b" }
+```
+> ⚠️ 重置后旧链接与二维码立即失效，需重新分发。
+
+**用户端渠道解析优先级**（`GET /api/guest/*`、`/ws/guest`）：
+1. `app_id` 精确匹配 ← **推荐**，同类型多渠道靠它区分
+2. 渠道类型（`wechat` / `web` …）← 兼容旧链接
+3. 数字渠道 ID ← 兼容旧链接
+
+> 服务端启动时会为历史渠道自动补齐空的 `app_id`（幂等，不影响已分发的链接）。
 
 `GET /api/channels/:id/qr?size=320&base=<可选>`
 ```json
 {
   "channel_id": 1, "channel_name": "微信公众号客服", "channel_type": "wechat",
-  "url": "http://127.0.0.1:5173/c?channel=wechat",
-  "path": "/c?channel=wechat",
+  "url": "http://127.0.0.1:8480/kefu/?channel=wechat",
+  "path": "/kefu/?channel=wechat",
   "base64": "data:image/png;base64,iVBORw0KGgo...",
   "size": 320, "file_name": "channel-wechat-微信公众号客服.png"
 }
@@ -171,7 +198,7 @@ Authorization: Bearer <token>
 
 `GET /api/channels/:id/qr.png?size=320` —— 直接返回 PNG，带 `Content-Disposition: attachment`，用于前端下载。
 
-> 渠道接入地址的完整形式 = 前端根地址 + `access_path`（如 `http://host/c?channel=wechat`）。
+> 渠道接入地址的完整形式 = 前端根地址 + `access_path`（如 `http://host/kefu/?channel=wechat`）。
 > 后端根地址由 `config.yaml` 的 `server.public_base` 或环境变量 `KEFU_PUBLIC_BASE` 配置。
 
 ### 渠道接待账号快速设置
@@ -449,7 +476,7 @@ Query：`keyword`、`page`、`page_size`
 
 ### 13.1 用户端页面入口
 ```
-http(s)://<host>/c?channel=web&uid=o_abc123&nickname=王小明&avatar=&order_no=SO2026...&scene=product&pid=P10086&visitor_id=v_8899&sign=xxxx
+http(s)://<host>/kefu/?channel=web&uid=o_abc123&nickname=王小明&avatar=&order_no=SO2026...&scene=product&pid=P10086&visitor_id=v_8899&sign=xxxx
 ```
 
 | 参数 | 必填 | 说明 |
@@ -467,8 +494,10 @@ http(s)://<host>/c?channel=web&uid=o_abc123&nickname=王小明&avatar=&order_no=
 
 示例：
 ```
-/c?channel=web&uid=u_10001&nickname=%E7%8E%8B%E5%B0%8F%E6%98%8E&scene=product&pid=P10086
+/kefu/?channel=web&uid=u_10001&nickname=%E7%8E%8B%E5%B0%8F%E6%98%8E&scene=product&pid=P10086
 ```
+
+> 旧的 `/c?channel=xxx` 仍可用，后端会 302 跳到 `/kefu/?channel=xxx`（向后兼容）。
 
 ### 13.2 初始化接口（用户端页面加载时调用）
 `GET /api/guest/init?channel=web&uid=u_10001&nickname=...&order_no=...&pid=...`

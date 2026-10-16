@@ -34,6 +34,16 @@ const router = createRouter({
   routes,
 })
 
+/**
+ * 子账号（客服）没有后台权限，直接整页跳到客服工作台。
+ * 不能用 router.replace('/login') —— 守卫会把他们又送回 /admin，
+ * 形成「登录页 ↔ 后台」来回弹跳，表现为「提示登录成功却不跳转、一直卡着」。
+ */
+function leaveToWorkbench(): false {
+  window.location.replace('/chat/')
+  return false
+}
+
 router.beforeEach(async (to) => {
   const token = getToken()
   const auth = useAuthStore()
@@ -47,7 +57,8 @@ router.beforeEach(async (to) => {
         return true
       }
     }
-    return auth.isAdmin ? { path: ADMIN_HOME } : { path: '/login' }
+    // 已登录：管理员进后台，子账号去工作台
+    return auth.isAdmin ? { path: ADMIN_HOME } : leaveToWorkbench()
   }
 
   if (!token) {
@@ -62,7 +73,7 @@ router.beforeEach(async (to) => {
       return { path: '/login' }
     }
   }
-  if (!auth.isAdmin) return { path: '/login' }
+  if (!auth.isAdmin) return leaveToWorkbench()
 
   return true
 })

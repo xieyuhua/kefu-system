@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from 'element-plus'
-import { Link, Picture, Plus } from '@element-plus/icons-vue'
+import { Link, Picture, Plus, CopyDocument, Refresh } from '@element-plus/icons-vue'
 import {
   createChannel,
   createChannelType,
@@ -10,6 +10,7 @@ import {
   listChannelAgents,
   listChannelTypes,
   listChannels,
+  resetChannelAppId,
   updateChannel,
   updateChannelAgents,
   channelQrPngUrl,
@@ -37,10 +38,23 @@ interface ChannelForm {
   app_id: string
   enabled: boolean
   robot_enabled: boolean
+  /** 用户端展示控制 */
+  hide_header: boolean
+  hide_debug: boolean
+  hide_more_menu: boolean
 }
 
 function emptyForm(): ChannelForm {
-  return { type: 'wechat', name: '', app_id: '', enabled: true, robot_enabled: false }
+  return {
+    type: 'wechat',
+    name: '',
+    app_id: '',
+    enabled: true,
+    robot_enabled: false,
+    hide_header: false,
+    hide_debug: false,
+    hide_more_menu: false,
+  }
 }
 
 const form = reactive<ChannelForm>(emptyForm())
@@ -48,7 +62,17 @@ const form = reactive<ChannelForm>(emptyForm())
 const rules: FormRules<ChannelForm> = {
   type: [{ required: true, message: '请选择或直接输入渠道类型', trigger: 'change' }],
   name: [{ required: true, message: '请输入渠道名称', trigger: 'blur' }],
-  app_id: [{ required: true, message: '请输入 app_id', trigger: 'blur' }],
+}
+
+/** 本地生成随机渠道标识（与后端格式一致：kefu_ + 8 位十六进制）。后端也会兜底生成。 */
+function randomAppId(): string {
+  const buf = new Uint8Array(4)
+  if (typeof crypto !== 'undefined' && crypto.getRandomValues) {
+    crypto.getRandomValues(buf)
+  } else {
+    for (let i = 0; i < buf.length; i += 1) buf[i] = Math.floor(Math.random() * 256)
+  }
+  return `kefu_${Array.from(buf, (b) => b.toString(16).padStart(2, '0')).join('')}`
 }
 
 const dialogTitle = computed(() => (editingId.value === null ? '新增渠道' : '编辑渠道'))
@@ -75,6 +99,29 @@ async function ensureType(type: string): Promise<void> {
   await loadTypes()
 }
 
+/** 重置渠道标识：生成新的随机 app_id（旧链接与二维码会失效） */
+async function resetAppId(row: Channel): Promise<void> {
+  try {
+    await ElMessageBox.confirm(
+      `重置后「${row.name}」的渠道标识会变成新的随机值，<strong>已分发的链接和二维码立即失效</strong>。确认重置？`,
+      '重置渠道标识',
+      { type: 'warning', confirmButtonText: '重置', cancelButtonText: '取消', dangerouslyUseHTMLString: true },
+    )
+  } catch {
+    return
+  }
+  resettingId.value = row.id
+  try {
+    const res = await resetChannelAppId(row.id)
+    ElMessage.success(`已重置为 ${res.app_id}`)
+    await load()
+  } catch {
+    ElMessage.error('重置失败')
+  } finally {
+    resettingId.value = null
+  }
+}
+
 async function loadTypes(): Promise<void> {
   try {
     typeOptions.value = await listChannelTypes()
@@ -94,8 +141,13 @@ async function load(): Promise<void> {
 
 function openCreate(): void {
   editingId.value = null
-  Object.assign(form, emptyForm())
+  // 新建时预填一个随机渠道标识（可点「随机」重新生成，也可手动修改）
+  Object.assign(form, { ...emptyForm(), app_id: randomAppId() })
   dialogVisible.value = true
+}
+
+function regenerateAppId(): void {
+  form.app_id = randomAppId()
 }
 
 function openEdit(row: Channel): void {
@@ -106,6 +158,9 @@ function openEdit(row: Channel): void {
     app_id: row.app_id,
     enabled: row.enabled,
     robot_enabled: row.robot_enabled,
+    hide_header: row.hide_header,
+    hide_debug: row.hide_debug,
+    hide_more_menu: row.hide_more_menu,
   })
   dialogVisible.value = true
 }
@@ -124,8 +179,10 @@ async function submit(): Promise<void> {
     app_id: form.app_id.trim(),
     enabled: form.enabled,
     robot_enabled: form.robot_enabled,
+    hide_header: form.hide_header,
+    hide_debug: form.hide_debug,
+    hide_more_menu: form.hide_more_menu,
   }
-
   submitting.value = true
   try {
     if (editingId.value === null) {
@@ -192,6 +249,8 @@ const qr = ref<ChannelQr | null>(null)
 const qrSize = ref<number>(320)
 const qrChannelId = ref<number>(0)
 const qrChannelName = ref('')
+/** 正在重置 app_id 的渠道 id */
+const resettingId = ref<number | null>(null)
 
 /**
  * 完整接入地址：直接读后端返回的 access_url（基于后端 public_base 拼接）。
@@ -370,9 +429,30 @@ onMounted(() => {
             </span>
           </template>
         </el-table-column>
-        <el-table-column prop="type" label="类型标识" min-width="120" show-overflow-tooltip />
-        <el-table-column prop="name" label="渠道名称" min-width="180" show-overflow-tooltip />
-        <el-table-column prop="app_id" label="app_id" min-width="140" show-overflow-tooltip />
+        <el-table-column prop="type" label="类型标识" min-width="110" show-overflow-tooltip />
+        <el-table-column prop="name" label="渠道名称" min-width="160" show-overflow-tooltip />
+        <el-table-column label="渠道标识 app_id" min-width="190">
+          <template #default="{ row }">
+            <div class="appid-cell">
+              <code class="appid-cell__code">{{ row.app_id || '--' }}</code>
+              <el-button
+                link
+                size="small"
+                :icon="CopyDocument"
+                title="复制 app_id"
+                @click="copyText(row.app_id, '渠道标识已复制')"
+              />
+              <el-button
+                link
+                size="small"
+                :icon="Refresh"
+                :loading="resettingId === row.id"
+                title="重置为新的随机标识（旧链接会失效）"
+                @click="resetAppId(row)"
+              />
+            </div>
+          </template>
+        </el-table-column>
         <el-table-column label="客服数" width="100" align="center">
           <template #default="{ row }">{{ row.agent_count ?? 0 }}</template>
         </el-table-column>
@@ -397,6 +477,33 @@ onMounted(() => {
               :model-value="row.robot_enabled"
               @update:model-value="(val: boolean) => toggleRobot(row, val)"
             />
+          </template>
+        </el-table-column>
+        <el-table-column label="用户端展示" width="150" align="center">
+          <template #default="{ row }">
+            <div class="display-tags">
+              <el-tag
+                v-if="row.hide_header"
+                size="small"
+                type="warning"
+                effect="plain"
+                @click="openEdit(row)"
+              >
+                无header
+              </el-tag>
+              <el-tag
+                v-if="row.hide_debug"
+                size="small"
+                type="info"
+                effect="plain"
+                @click="openEdit(row)"
+              >
+                无调试
+              </el-tag>
+              <span v-if="!row.hide_header && !row.hide_debug" class="display-none">
+                默认
+              </span>
+            </div>
           </template>
         </el-table-column>
         <el-table-column prop="created_at" label="创建时间" min-width="160" />
@@ -447,14 +554,41 @@ onMounted(() => {
         <el-form-item label="渠道名称" prop="name">
           <el-input v-model="form.name" placeholder="如：微信公众号客服" maxlength="40" show-word-limit />
         </el-form-item>
-        <el-form-item label="app_id" prop="app_id">
-          <el-input v-model="form.app_id" placeholder="如：wx123456" />
+        <el-form-item label="渠道标识 app_id" prop="app_id">
+          <div class="appid-field">
+            <el-input v-model="form.app_id" placeholder="kefu_a1b2c3d4" class="appid-field__input" />
+            <el-button :icon="Refresh" @click="regenerateAppId">随机</el-button>
+          </div>
+          <div class="form-tip">
+            渠道的唯一标识，用于接入链接区分渠道来源与接待：<br />
+            <code>/kefu/?channel={{ form.app_id || 'kefu_xxx' }}</code><br />
+            同一渠道类型可配置多个，每个渠道的 app_id 不同，客户扫码/点击进来即可准确归因到该渠道。
+          </div>
         </el-form-item>
         <el-form-item label="是否启用">
           <el-switch v-model="form.enabled" />
         </el-form-item>
         <el-form-item label="机器人自动回复">
           <el-switch v-model="form.robot_enabled" />
+        </el-form-item>
+
+        <el-divider content-position="left">用户端展示（APP 内嵌场景）</el-divider>
+
+        <el-form-item label="隐藏 header">
+          <el-switch v-model="form.hide_header" />
+          <div class="form-tip">
+            隐藏用户端顶部标题栏（含返回按钮与客服名称）。<br />
+            适用于把客服页面内嵌到 APP / 小程序 WebView，由宿主提供自己的导航栏。<br />
+            也可用链接参数临时控制：<code>?chrome=0</code> 或 <code>?hide_header=1</code>
+            （链接参数优先于此处配置）。
+          </div>
+        </el-form-item>
+        <el-form-item label="隐藏接入调试">
+          <el-switch v-model="form.hide_debug" />
+          <div class="form-tip">
+            隐藏 header 里的齿轮「接入调试」入口（排查参数用）。正式投放建议关闭。<br />
+            链接参数：<code>?hide_debug=1</code>
+          </div>
         </el-form-item>
       </el-form>
 
@@ -607,6 +741,45 @@ onMounted(() => {
   font-size: 12px;
   line-height: 1.5;
   color: #7f7f7f;
+
+  code {
+    padding: 2px 5px;
+    background: #f2f3f5;
+    border-radius: 3px;
+    font-size: 12px;
+    color: #4a6fa5;
+    word-break: break-all;
+  }
+}
+
+/* 渠道标识 app_id：输入 + 随机按钮 */
+.appid-field {
+  display: flex;
+  gap: 8px;
+  width: 100%;
+
+  &__input {
+    flex: 1;
+  }
+}
+
+/* 表格里的 app_id 单元格 */
+.appid-cell {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+
+  &__code {
+    padding: 2px 6px;
+    background: #f2f3f5;
+    border-radius: 3px;
+    font-family: Consolas, Monaco, monospace;
+    font-size: 12px;
+    color: #4a6fa5;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
 }
 
 .type-code {
@@ -618,6 +791,20 @@ onMounted(() => {
 .pending-strong {
   color: #e6162d;
   font-weight: 600;
+}
+
+/* 用户端展示配置标签 */
+.display-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+  align-items: center;
+  justify-content: center;
+}
+
+.display-none {
+  font-size: 12px;
+  color: #bfbfbf;
 }
 
 .dialog-title {

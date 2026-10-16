@@ -80,6 +80,23 @@ const rules: FormRules<typeof form> = {
   password: [{ required: true, message: '请输入密码', trigger: 'blur' }],
 }
 
+/** 当前所在端：'chat' | 'admin'（由 pathname 判断） */
+function currentEnd(): 'chat' | 'admin' {
+  return window.location.pathname.startsWith('/admin') ? 'admin' : 'chat'
+}
+
+/**
+ * 跳到目标端的首页。三个端是各自独立的页面（admin.html / chat.html），
+ * 跨端跳转必须整页刷新，仅靠 hash 路由无法切到另一个入口。
+ */
+function gotoEnd(end: 'chat' | 'admin', hash = ''): void {
+  if (currentEnd() === end) {
+    void router.replace(hash || '/')
+    return
+  }
+  window.location.href = `/${end}/${hash}`
+}
+
 async function submit(): Promise<void> {
   if (!formRef.value) return
   const valid = await formRef.value.validate().catch(() => false)
@@ -88,12 +105,28 @@ async function submit(): Promise<void> {
     await auth.login({ account: form.account, password: form.password })
     ElMessage.success(`欢迎回来，${auth.userName}`)
 
-    // 每个端独立路由：登录成功后留在本端。
-    // admin 端要求管理员角色；chat 端管理员与客服都可进。
+    const end = currentEnd()
+
+    // 管理员端只允许管理员；客服（子账号）没有后台权限 → 直接带他去客服工作台
+    if (end === 'admin' && !auth.isAdmin) {
+      ElMessage.info('子账号无管理后台权限，已为你打开客服工作台')
+      gotoEnd('chat')
+      return
+    }
+
+    // 带了 redirect 且同端 → 优先跳回原页面
     const raw = route.query.redirect
-    const redirect =
-      typeof raw === 'string' && raw.startsWith('/') && !raw.includes('/login') ? raw : '/'
-    await router.replace(redirect)
+    if (typeof raw === 'string' && raw.startsWith('/') && !raw.includes('/login')) {
+      const targetEnd = raw.startsWith('/admin') ? 'admin' : 'chat'
+      if (targetEnd === end) {
+        await router.replace(raw)
+        return
+      }
+      gotoEnd(targetEnd)
+      return
+    }
+
+    gotoEnd(end)
   } catch {
     // 错误已由 http 拦截器提示
   }

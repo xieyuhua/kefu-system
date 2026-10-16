@@ -6,8 +6,10 @@ server:
   mode: debug          # debug | release
 
   # 对外访问的前端根地址：用于生成渠道「接入地址」与「二维码」内容。
+  # 必须是客户实际能访问到的地址（与本端口一致，否则扫出来打不开）。
+  # 注意：不要填 5173，那是 pnpm dev 的开发端口，只在你本地调试前端时用。
   # 生产请改成你的域名，例如 https://kefu.your-domain.com
-  public_base: http://127.0.0.1:5173
+  public_base: http://127.0.0.1:8480
 
 database:
   # sqlite：零依赖，开箱即用（默认）

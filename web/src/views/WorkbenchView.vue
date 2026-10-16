@@ -25,7 +25,20 @@
           <span class="topbar-stat">未读 {{ chat.stats.unread }}</span>
         </template>
         <DemoPanel />
-        <el-button v-if="!isMobile" size="small" :icon="Clock" @click="goHistory">历史档案</el-button>
+        <el-button
+          v-if="!isMobile"
+          size="small"
+          :icon="Delete"
+          :loading="clearing"
+          :disabled="!chat.total"
+          @click="onClearAll"
+        >
+          一键清空
+        </el-button>
+        <!-- 仅管理员可见的后台入口（子账号无后台权限，不显示） -->
+        <el-button v-if="auth.isAdmin" size="small" :icon="Setting" @click="goAdmin">
+          管理后台
+        </el-button>
         <el-button size="small" :icon="Refresh" @click="refresh">刷新</el-button>
       </div>
     </header>
@@ -41,10 +54,14 @@
           :total="chat.total"
           :stats="chat.stats"
           :status="chat.filters.status"
+          :is-admin="auth.isAdmin"
+          :scope="chat.filters.scope"
           @select="onSelect"
           @update:status="(s) => chat.setFilter({ status: s })"
           @update:keyword="onKeyword"
+          @update:scope="(s) => onScope(s)"
           @refresh="refresh"
+          @archive="onArchive"
         />
       </div>
 
@@ -54,7 +71,11 @@
           :conversation="chat.current"
           :messages="chat.messages"
           :loading="chat.messageLoading"
-          :has-more="false"
+          :has-more="chat.hasMoreMessages"
+          :loading-more="chat.loadingMoreMessages"
+          :search-results="chat.searchResults"
+          :searching="chat.searching"
+          :sending="chat.sendingCurrent"
           :panel-open="sidePanelVisible"
           :compact-header="isMobile"
           :show-back="false"
@@ -65,7 +86,9 @@
           @toggle-panel="onTogglePanel"
           @pick-order="orderPickerOpen = true"
           @pick-product="productPickerOpen = true"
-          @load-more="() => {}"
+          @load-more="onLoadMore"
+          @search="onSearchMessages"
+          @clear-search="chat.clearSearch()"
         />
       </div>
 
@@ -103,14 +126,24 @@
 
     <OrderPicker v-model="orderPickerOpen" :user-id="chat.current?.user?.id" @pick="onPickOrder" />
     <ProductPicker v-model="productPickerOpen" @pick="onPickProduct" />
+
+    <!-- 转接会话：按渠道过滤的搜索下拉选择 -->
+    <TransferPicker
+      v-model="transferVisible"
+      :channel-id="transferTarget?.channel_id ?? 0"
+      :channel-name="transferTarget?.channel?.name ?? ''"
+      :agents="agents"
+      :current-user-id="auth.user?.id ?? 0"
+      :loading="transferring"
+      @confirm="onTransferConfirm"
+    />
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { ArrowLeft, Clock, Refresh } from '@element-plus/icons-vue'
+import { ArrowLeft, Delete, Refresh, Setting } from '@element-plus/icons-vue'
 import ChannelSidebar from '@/components/ChannelSidebar.vue'
 import ConversationList from '@/components/ConversationList.vue'
 import ChatWindow from '@/components/ChatWindow.vue'
@@ -118,10 +151,12 @@ import CustomerPanel from '@/components/CustomerPanel.vue'
 import DemoPanel from '@/components/DemoPanel.vue'
 import OrderPicker from '@/components/OrderPicker.vue'
 import ProductPicker from '@/components/ProductPicker.vue'
+import TransferPicker from '@/components/TransferPicker.vue'
 import { useAuthStore } from '@/stores/auth'
 import { useChatStore } from '@/stores/chat'
 import { useSocket } from '@/composables/useSocket'
 import { useScreenTier } from '@/composables/useIsMobile'
+import { statusLabel } from '@/utils/format'
 import { getCustomer } from '@/api/users'
 import { listAgents, type Agent } from '@/api/agents'
 import type {
@@ -138,10 +173,15 @@ import type {
 
 const auth = useAuthStore()
 const chat = useChatStore()
-const router = useRouter()
 const { status: socketStatus, connect, close, on } = useSocket()
 
 const panelOpen = ref(true)
+/** 一键清空中（期间禁用按钮防重复提交） */
+const clearing = ref(false)
+/** 转接选择器 */
+const transferVisible = ref(false)
+const transferring = ref(false)
+const transferTarget = ref<Conversation | null>(null)
 const orderPickerOpen = ref(false)
 const productPickerOpen = ref(false)
 
@@ -212,6 +252,13 @@ function onKeyword(keyword: string): void {
   }, 300)
 }
 
+/** 切换「全部会话 / 我接待的」 */
+function onScope(scope: 'all' | 'mine'): void {
+  chat.setFilter({ scope })
+  void chat.loadConversations()
+  void chat.loadStats()
+}
+
 async function onSend(payload: { type: MessageType; content: string }): Promise<void> {
   try {
     await chat.send(payload)
@@ -251,6 +298,85 @@ async function sendOrderCard(order: Order): Promise<void> {
   await onPickOrder(order)
 }
 
+async function onLoadMore(): Promise<void> {
+  if (!chat.currentId) return
+  await chat.loadMoreMessages(chat.currentId)
+}
+
+/** 聊天区搜索框：会话内历史消息搜索 */
+async function onSearchMessages(keyword: string): Promise<void> {
+  if (!chat.currentId || !keyword) {
+    chat.clearSearch()
+    return
+  }
+  await chat.searchMessages(chat.currentId, keyword)
+}
+
+/**
+ * 工作台「一键清空」：批量归档当前筛选条件下的所有会话。
+ * 只隐藏不删除数据——客户再次咨询会自动恢复为待接待。
+ */
+async function onClearAll(): Promise<void> {
+  const count = chat.total
+  if (!count) {
+    ElMessage.info('当前没有可清空的会话')
+    return
+  }
+  const f = chat.filters
+  const scopeText =
+    f.status && f.status !== 'all' ? `「${statusLabel(f.status)}」` : '当前筛选下的'
+  try {
+    await ElMessageBox.confirm(
+      `将清空${scopeText} ${count} 条会话。清空后会话从工作台移除，` +
+        `客户再次咨询时会自动恢复，聊天记录不会丢失。`,
+      '一键清空会话',
+      {
+        type: 'warning',
+        confirmButtonText: `确认清空 ${count} 条`,
+        cancelButtonText: '取消',
+        confirmButtonClass: 'el-button--danger',
+      },
+    )
+  } catch {
+    return
+  }
+
+  clearing.value = true
+  try {
+    const n = await chat.clearAllConversations()
+    ElMessage.success(`已清空 ${n} 条会话`)
+  } catch {
+    ElMessage.error('清空失败，请重试')
+  } finally {
+    clearing.value = false
+  }
+}
+
+/** 工作台「删除会话」：归档，若正选中则清空当前会话 */
+async function onArchive(conversation: Conversation): Promise<void> {
+  try {
+    await ElMessageBox.confirm(
+      '删除后该会话将从工作台移除，客户再次咨询时会自动恢复',
+      '删除会话',
+      {
+        type: 'warning',
+        confirmButtonText: '删除',
+        cancelButtonText: '取消',
+      },
+    )
+  } catch {
+    return
+  }
+  try {
+    await chat.archiveConversation(conversation.id)
+    ElMessage.success('会话已删除')
+    await chat.loadConversations()
+    await chat.loadStats()
+  } catch {
+    // 错误已提示
+  }
+}
+
 async function onClaim(conversation: Conversation): Promise<void> {
   try {
     await chat.claim(conversation.id)
@@ -262,6 +388,10 @@ async function onClaim(conversation: Conversation): Promise<void> {
   }
 }
 
+/**
+ * 转接会话：打开「搜索下拉」选择器。
+ * 候选客服按当前会话所属渠道过滤——渠道外的客服看不到这个会话，转过去等于丢单。
+ */
 async function onTransfer(conversation: Conversation): Promise<void> {
   if (!agents.value.length) {
     try {
@@ -270,36 +400,25 @@ async function onTransfer(conversation: Conversation): Promise<void> {
       agents.value = []
     }
   }
-  const options = agents.value
-    .filter((a) => a.id !== auth.user?.id)
-    .map((a) => ({ value: a.id, label: `${a.name}（${a.account}）` }))
-  if (!options.length) {
-    ElMessage.warning('暂无可转接的客服')
-    return
-  }
-  const optionsText = options.map((o, i) => `${i + 1}. ${o.label}`).join('\n')
+  transferTarget.value = conversation
+  transferVisible.value = true
+}
+
+/** 确认转接 */
+async function onTransferConfirm(agentId: number): Promise<void> {
+  const target = transferTarget.value
+  if (!target) return
+  transferring.value = true
   try {
-    const { value } = await ElMessageBox.prompt(
-      `可转接客服：\n${optionsText}\n\n请输入序号：`,
-      '转接会话',
-      {
-        confirmButtonText: '转接',
-        cancelButtonText: '取消',
-        inputPattern: /^\d+$/,
-        inputErrorMessage: '请输入正确的序号',
-      },
-    )
-    const index = Number(value) - 1
-    const target = options[index]
-    if (!target) {
-      ElMessage.warning('序号不存在')
-      return
-    }
-    await chat.transfer(conversation.id, target.value)
+    await chat.transfer(target.id, agentId)
     ElMessage.success('已转接')
+    transferVisible.value = false
     await chat.loadConversations()
+    await chat.loadStats()
   } catch {
-    // 取消或失败
+    // 错误已由拦截器提示（如「该客服未配置接待此渠道」）
+  } finally {
+    transferring.value = false
   }
 }
 
@@ -323,8 +442,9 @@ async function onClose(conversation: Conversation): Promise<void> {
   }
 }
 
-function goHistory(): void {
-  void router.push('/history')
+/** 进入管理后台（另一个独立入口页 /admin/，需整页跳转；仅管理员可见） */
+function goAdmin(): void {
+  window.location.href = '/admin/'
 }
 
 function notify(payload: NotificationPayload): void {

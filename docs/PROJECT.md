@@ -3,7 +3,7 @@
 ## 工程结构
 ```
 kefu/
-  server/           Go 后端 (Gin + GORM + WebSocket)，端口 8080
+  server/           Go 后端 (Gin + GORM + WebSocket)，端口 8480
   web/              Vue3 + Vite + TS + Element Plus 客服工作台 (端口 5173)
   docs/API.md       ★ 前后端唯一契约，所有字段以此为准
 ```
@@ -35,7 +35,7 @@ kefu/
 
 ## 前端约定
 - 路径别名 `@` → `web/src`
-- 请求封装 `web/src/api/http.ts`：baseURL `/api`，dev 下 vite proxy 转发到 `http://127.0.0.1:8080`；拦截器返回 `res.data.data`，`code!=0` 抛错
+- 请求封装 `web/src/api/http.ts`：baseURL `/api`，dev 下 vite proxy 转发到 `http://127.0.0.1:8480`；拦截器返回 `res.data.data`，`code!=0` 抛错
 - 状态管理 Pinia：`stores/auth.ts`（token/user）、`stores/chat.ts`（会话/消息/未读）
 - WebSocket：`web/src/composables/useSocket.ts`，`ws://<host>/ws?token=xxx`，自动重连
 - 组件目录：`components/` 通用组件，`views/` 页面

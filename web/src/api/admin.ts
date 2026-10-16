@@ -41,6 +41,11 @@ export function deleteChannel(id: number): Promise<boolean> {
   return http.del<boolean>(`/channels/${id}`)
 }
 
+/** 重置渠道标识 app_id（生成新的随机值，旧链接/二维码失效） */
+export function resetChannelAppId(id: number): Promise<{ app_id: string; access_url: string }> {
+  return http.post<{ app_id: string; access_url: string }>(`/channels/${id}/reset-app-id`)
+}
+
 /* ------------------------------------------------------------------ *
  * 4. 子账号（客服）管理
  * ------------------------------------------------------------------ */
@@ -217,6 +222,27 @@ export function deleteDevice(id: number): Promise<boolean> {
 /** 触发一条测试推送（推给当前登录账号的已注册设备），用于验证厂商通道 */
 export function testDevicePush(payload?: { title?: string; body?: string }): Promise<boolean> {
   return http.post<boolean>('/devices/test-push', payload)
+}
+
+/* ------------------------------------------------------------------ *
+ * 系统配置（默认图片等）
+ * ------------------------------------------------------------------ */
+
+/** 配置项 */
+export interface SettingItem {
+  key: string
+  value: string
+  remark: string
+}
+
+/** GET /api/settings —— 读取全部配置项 */
+export function listSettings(): Promise<SettingItem[]> {
+  return http.get<SettingItem[]>('/settings')
+}
+
+/** PUT /api/settings —— 保存单个配置项 */
+export function saveSetting(key: string, value: string): Promise<boolean> {
+  return http.put<boolean>('/settings', { key, value })
 }
 
 /* ------------------------------------------------------------------ *

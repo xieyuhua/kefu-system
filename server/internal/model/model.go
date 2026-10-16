@@ -39,9 +39,14 @@ type Channel struct {
 	TenantID     uint   `gorm:"index;not null" json:"tenant_id"`
 	Type         string `gorm:"size:32;not null" json:"type"`
 	Name         string `gorm:"size:64;not null" json:"name"`
-	AppID        string `gorm:"size:128" json:"app_id"`
+	AppID        string `gorm:"size:128;index" json:"app_id"` // 渠道唯一标识：接入链接用它区分渠道来源与接待
 	Enabled      bool   `gorm:"default:true" json:"enabled"`
 	RobotEnabled bool   `gorm:"default:false" json:"robot_enabled"`
+
+	// 用户端展示控制（APP WebView 内嵌等场景）
+	HideHeader   bool `gorm:"default:false" json:"hide_header"`    // 隐藏顶部 header
+	HideDebug    bool `gorm:"default:false" json:"hide_debug"`     // 隐藏「接入调试」入口
+	HideMoreMenu bool `gorm:"default:false" json:"hide_more_menu"` // 隐藏「更多」菜单入口
 }
 
 // AgentChannel 子账号可接待的渠道（多对多）
@@ -79,6 +84,10 @@ type Conversation struct {
 	Summary       string     `gorm:"size:255" json:"summary"`
 	MessageCount  int        `gorm:"default:0" json:"message_count"`
 	ClosedAt      *time.Time `json:"closed_at"`
+	// Archived 归档：客服主动清理的工作台会话。归档后不出现在工作台列表，
+	// 客户再次发消息会自动取消归档并重新变为待接待（消息不丢失）。
+	Archived   bool       `gorm:"default:false;index" json:"archived"`
+	ArchivedAt *time.Time `json:"archived_at"`
 }
 
 // Message 消息；type: text|image|order|product|system
@@ -150,6 +159,16 @@ type CustomerTag struct {
 	TagID      uint      `gorm:"primaryKey;index" json:"tag_id"`
 	CreatedBy  uint      `json:"created_by"`
 	CreatedAt  time.Time `json:"created_at"`
+}
+
+// Setting 租户级系统配置（键值对）
+// 用于「默认图片」等可后台维护的全局设置
+type Setting struct {
+	Model
+	TenantID uint   `gorm:"index;not null;uniqueIndex:idx_tenant_key" json:"tenant_id"`
+	Key      string `gorm:"size:64;not null;uniqueIndex:idx_tenant_key" json:"key"`
+	Value    string `gorm:"size:1024" json:"value"`
+	Remark   string `gorm:"size:128" json:"remark"`
 }
 
 // ChannelType 渠道类型库：类型完全自定义、不限制枚举。

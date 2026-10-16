@@ -1,10 +1,15 @@
 <template>
   <!-- 系统通知：居中灰色 pill -->
-  <div v-if="isSystem" class="system-pill">
+  <div v-if="isSystem" class="system-pill" :class="{ 'is-flash': flash }" :data-msg-id="message.id">
     <span>{{ text }}</span>
   </div>
 
-  <div v-else class="bubble-row" :class="isOut ? 'is-out' : 'is-in'">
+  <div
+    v-else
+    class="bubble-row"
+    :class="[isOut ? 'is-out' : 'is-in', { 'is-flash': flash }]"
+    :data-msg-id="message.id"
+  >
     <div class="avatar">
       <img v-if="avatar" :src="avatar" alt="" />
       <span v-else>{{ fallbackName.slice(0, 1) }}</span>
@@ -22,9 +27,9 @@
           <span class="bubble-text">{{ text }}</span>
         </template>
 
-        <!-- 图片 -->
-        <template v-else-if="message.type === 'image'">
-          <img class="bubble-image" :src="text" alt="图片" />
+        <!-- 图片 / 视频 / 文件（mediaPayload 已兼容历史 URL 写法） -->
+        <template v-else-if="mediaPayload">
+          <MediaBubble :payload="mediaPayload" :failed="message.failed" />
         </template>
 
         <!-- 订单卡片 -->
@@ -50,13 +55,18 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import type { Message, OrderCardPayload, ProductCardPayload } from '@/types'
 import { formatMessageTime, parseCardContent } from '@/utils/format'
+import MediaBubble, { type MediaPayload } from './MediaBubble.vue'
 import OrderCard from './OrderCard.vue'
 import ProductCard from './ProductCard.vue'
 
-const props = defineProps<{ message: Message }>()
+const props = defineProps<{
+  message: Message
+  /** 搜索定位高亮：传入当前需要高亮的消息 id（变化即触发闪烁） */
+  flashKey?: number
+}>()
 
 const isSystem = computed(
   () => props.message.direction === 'system' || props.message.type === 'system',
@@ -72,11 +82,53 @@ const productPayload = computed<ProductCardPayload | null>(() =>
   props.message.type === 'product' ? parseCardContent<ProductCardPayload>(text.value) : null,
 )
 
+/**
+ * 媒体载荷：新消息的 content 是上传接口返回的 JSON；
+ * 解析失败时回退为历史写法（content 直接是 URL）。
+ */
+const mediaPayload = computed<MediaPayload | null>(() => {
+  if (props.message.type !== 'image' && props.message.type !== 'video' && props.message.type !== 'file') {
+    return null
+  }
+  const raw = text.value
+  if (!raw) return null
+  if (raw.startsWith('{')) {
+    const p = parseCardContent<MediaPayload>(raw)
+    if (p && p.url) return p
+    return null
+  }
+  // 历史消息：直接是 dataURL 或 /uploads 路径
+  return { url: raw, kind: props.message.type === 'image' ? 'image' : props.message.type === 'video' ? 'video' : 'file' }
+})
+
 const avatar = computed(() => props.message.sender?.avatar || '')
 
 const fallbackName = computed(() => {
   if (props.message.sender?.name) return props.message.sender.name
   return isOut.value ? '我' : '客户'
+})
+
+/** 搜索结果定位时短暂高亮 */
+const flash = ref(false)
+let flashTimer = 0
+
+watch(
+  () => props.flashKey,
+  (val) => {
+    window.clearTimeout(flashTimer)
+    if (!val) {
+      flash.value = false
+      return
+    }
+    flash.value = true
+    flashTimer = window.setTimeout(() => {
+      flash.value = false
+    }, 1600)
+  },
+)
+
+onBeforeUnmount(() => {
+  window.clearTimeout(flashTimer)
 })
 </script>
 
@@ -85,9 +137,30 @@ const fallbackName = computed(() => {
   display: flex;
   gap: 8px;
   padding: 6px 0;
+  scroll-margin-top: 60px;
+  border-radius: 6px;
 
   &.is-out {
     flex-direction: row-reverse;
+  }
+}
+
+/* 搜索定位命中：短暂高亮 */
+.bubble-row.is-flash {
+  animation: kf-flash 1.6s ease;
+}
+
+.system-pill.is-flash {
+  animation: kf-flash 1.6s ease;
+}
+
+@keyframes kf-flash {
+  0%,
+  60% {
+    background: rgba(7, 193, 96, 0.16);
+  }
+  100% {
+    background: transparent;
   }
 }
 
@@ -156,16 +229,23 @@ const fallbackName = computed(() => {
   color: #fff;
 }
 
-.bubble-text {
-  white-space: pre-wrap;
+/* 媒体消息（图片/视频/文件）：去掉气泡底色与阴影 */
+.bubble:has(.media) {
+  padding: 4px;
+  background: transparent;
+  box-shadow: none;
+
+  &.failed {
+    border: 1px solid var(--kf-red);
+  }
 }
 
-.bubble-image {
-  display: block;
-  max-width: 180px;
-  max-height: 200px;
-  border-radius: var(--kf-radius-sm);
-  cursor: zoom-in;
+.is-out .bubble:has(.media) {
+  background: transparent;
+}
+
+.bubble-text {
+  white-space: pre-wrap;
 }
 
 .bubble-error {

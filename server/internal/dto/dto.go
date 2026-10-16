@@ -12,6 +12,8 @@ type TenantBrief struct {
 	ID   uint   `json:"id"`
 	Name string `json:"name"`
 	Logo string `json:"logo"`
+	/** 租户配置的默认图片（客户/商品/订单无图时兜底） */
+	DefaultImage string `json:"default_image"`
 }
 
 type UserBrief struct {
@@ -48,6 +50,10 @@ type ChannelRequest struct {
 	AppID        string `json:"app_id"`
 	Enabled      *bool  `json:"enabled"`
 	RobotEnabled *bool  `json:"robot_enabled"`
+	// 用户端展示控制
+	HideHeader   *bool `json:"hide_header"`
+	HideDebug    *bool `json:"hide_debug"`
+	HideMoreMenu *bool `json:"hide_more_menu"`
 }
 
 type ChannelVO struct {
@@ -57,6 +63,9 @@ type ChannelVO struct {
 	AppID        string `json:"app_id"`
 	Enabled      bool   `json:"enabled"`
 	RobotEnabled bool   `json:"robot_enabled"`
+	HideHeader   bool   `json:"hide_header"`
+	HideDebug    bool   `json:"hide_debug"`
+	HideMoreMenu bool   `json:"hide_more_menu"`
 	CreatedAt    string `json:"created_at"`
 	AgentCount   int64  `json:"agent_count"`
 	PendingCount int64  `json:"pending_count"`
@@ -131,6 +140,9 @@ type CustomerRef struct {
 	Remark     string   `json:"remark"`
 	IP         string   `json:"ip"`
 	City       string   `json:"city"`
+	/** 客户是否在线（按最近活跃时间推断，2 分钟内活跃视为在线） */
+	Online     bool   `json:"online"`
+	LastSeenAt string `json:"last_seen_at"`
 }
 
 type ConversationVO struct {
@@ -148,6 +160,9 @@ type ConversationVO struct {
 	OrderCount    int64        `json:"order_count"`
 	MessageCount  int          `json:"message_count"`
 	Summary       string       `json:"summary"`
+	// Archived 是否已归档（客服清理后的会话，不出现在工作台列表）
+	Archived   bool   `json:"archived"`
+	ArchivedAt string `json:"archived_at"`
 }
 
 // Message
@@ -303,6 +318,9 @@ type DemoIncomingRequest struct {
 	Nickname  string `json:"nickname"`
 	Content   string `json:"content"`
 	Type      string `json:"type"`
+	// UID 业务侧用户唯一标识。填写后：若该渠道下已存在此用户，则复用其客户与会话，
+	// 可对同一用户反复发消息（模拟持续咨询）；留空则每次随机新建一个客户。
+	UID string `json:"uid"`
 }
 
 // 内部：把 model 转成带可展示字符串的 VO 时用

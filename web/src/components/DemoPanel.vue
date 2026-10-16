@@ -14,6 +14,13 @@
             />
           </el-select>
         </el-form-item>
+        <el-form-item label="客户ID">
+          <el-input v-model="form.uid" placeholder="选填，如 user001" clearable />
+          <div class="form-tip">
+            填写后，<b>相同 ID 视为同一个客户</b>，可反复给他发消息（继续同一个会话）；
+            留空则每次都会新建一个客户。
+          </div>
+        </el-form-item>
         <el-form-item label="客户昵称">
           <el-input v-model="form.nickname" placeholder="王小明" />
         </el-form-item>
@@ -57,8 +64,15 @@ const open = ref(false)
 const submitting = ref(false)
 const channels = computed(() => chat.channels)
 
-const form = reactive<{ channel_id: number; nickname: string; content: string; type: MessageType }>({
+const form = reactive<{
+  channel_id: number
+  uid: string
+  nickname: string
+  content: string
+  type: MessageType
+}>({
   channel_id: 0,
+  uid: '',
   nickname: '',
   content: '你好，我想问一下发货时间',
   type: 'text',
@@ -76,14 +90,20 @@ async function submit(): Promise<void> {
     return
   }
   submitting.value = true
+  const uid = form.uid.trim()
   try {
     await incoming({
       channel_id: form.channel_id,
+      uid: uid || undefined,
       nickname: form.nickname.trim(),
       content: form.content.trim() || '你好',
       type: form.type,
     })
-    ElMessage.success('已发起模拟咨询，等待 WebSocket 推送')
+    ElMessage.success(
+      uid
+        ? `已向客户「${uid}」发起咨询（复用同一会话）`
+        : '已发起模拟咨询，等待 WebSocket 推送',
+    )
     emit('created')
     await chat.loadConversations()
     await chat.loadStats()

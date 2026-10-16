@@ -10,7 +10,7 @@ export type ChannelType = 'wechat' | 'wecom' | 'web' | 'app' | 'weibo' | 'douyin
 export type ConversationStatus = 'pending' | 'open' | 'closed'
 
 /** 消息类型 */
-export type MessageType = 'text' | 'image' | 'order' | 'product' | 'system'
+export type MessageType = 'text' | 'image' | 'video' | 'file' | 'order' | 'product' | 'system'
 
 /** 消息方向 */
 export type MessageDirection = 'in' | 'out' | 'system'
@@ -30,6 +30,8 @@ export interface Tenant {
   id: number
   name: string
   logo: string
+  /** 租户配置的默认图片（客户/商品/订单无图时兜底） */
+  default_image?: string
 }
 
 /** 当前登录用户 */
@@ -65,6 +67,10 @@ export interface Channel {
   app_id: string
   enabled: boolean
   robot_enabled: boolean
+  /** 用户端展示控制（后台渠道配置） */
+  hide_header: boolean
+  hide_debug: boolean
+  hide_more_menu: boolean
   created_at: string
   agent_count: number
   pending_count: number
@@ -84,6 +90,9 @@ export interface ChannelPayload {
   app_id: string
   enabled: boolean
   robot_enabled: boolean
+  hide_header?: boolean
+  hide_debug?: boolean
+  hide_more_menu?: boolean
 }
 
 /** 会话中的客户简要信息 */
@@ -94,6 +103,10 @@ export interface ConversationUser {
   avatar: string
   phone: string
   order_count?: number
+  /** 是否在线（最近 2 分钟内有活跃） */
+  online?: boolean
+  /** 最后一次活跃时间 */
+  last_seen_at?: string
   /** 客户最近一次访问 IP */
   ip?: string
   /** IP 归属城市，如「广东 深圳」 */
@@ -129,6 +142,10 @@ export interface Conversation {
   created_at: string
   order_count: number
   closed_at?: string
+  /** 是否已归档（归档后不再展示在工作台列表） */
+  archived?: boolean
+  /** 归档时间 */
+  archived_at?: string
 }
 
 /** 嵌套在会话/用户中的渠道精简对象 */
@@ -136,6 +153,10 @@ export interface ChannelBasic {
   id: number
   type: ChannelType
   name: string
+  /** 渠道级用户端展示控制（后台渠道配置，优先级高于 URL 参数） */
+  hide_header?: boolean
+  hide_debug?: boolean
+  hide_more_menu?: boolean
 }
 
 /** 会话列表查询参数 */
@@ -144,6 +165,8 @@ export interface ConversationQuery {
   status?: ConversationStatus | 'all'
   scope?: 'mine' | 'all'
   keyword?: string
+  /** 是否包含已归档会话 */
+  include_archived?: boolean | number
   page?: number
   page_size?: number
 }
@@ -294,6 +317,8 @@ export interface Paged<T> {
 /** 发起模拟咨询请求 */
 export interface DemoIncomingPayload {
   channel_id: number
+  /** 客户唯一 ID：填写则复用同一客户/会话，可反复发消息；留空则新建客户 */
+  uid?: string
   nickname: string
   content: string
   type: MessageType
