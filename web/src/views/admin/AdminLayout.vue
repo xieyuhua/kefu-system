@@ -9,6 +9,7 @@ import {
   Grid,
   Headset,
   Iphone,
+  Menu as MenuIcon,
   Message,
   Monitor,
   Setting,
@@ -18,6 +19,7 @@ import {
   UserFilled,
 } from '@element-plus/icons-vue'
 import { useAuthStore } from '../../stores/auth'
+import { useIsMobile } from '../../composables/useIsMobile'
 import ProfileDialog from '@/views/ProfileDialog.vue'
 
 interface MenuItem {
@@ -44,6 +46,10 @@ const route = useRouter()
 const current = useRoute()
 const auth = useAuthStore()
 
+const { isMobile } = useIsMobile()
+/** 移动端侧边栏抽屉 */
+const drawerOpen = ref(false)
+
 const tenantName = computed(() => auth.user?.tenant?.name || '客服工作台')
 const userName = computed(() => auth.user?.name || auth.user?.account || '未登录')
 const userRole = computed(() => (auth.user?.role === 'admin' ? '管理员' : '客服'))
@@ -54,6 +60,11 @@ const WORKBENCH_URL = '/chat/'
 
 function goWorkbench(): void {
   window.location.href = WORKBENCH_URL
+}
+
+/** 点击菜单后（移动端）自动收起抽屉 */
+function onNavigate(): void {
+  if (isMobile.value) drawerOpen.value = false
 }
 
 /** 个人资料弹窗（昵称 / 头像 / 密码） */
@@ -67,7 +78,45 @@ async function onLogout(): Promise<void> {
 
 <template>
   <div class="admin admin-layout">
-    <aside class="admin-sidebar">
+    <!-- 移动端：侧边栏抽屉 -->
+    <el-drawer
+      v-model="drawerOpen"
+      direction="ltr"
+      size="240px"
+      :with-header="false"
+      class="admin-drawer"
+    >
+      <div class="admin-sidebar admin-sidebar--drawer">
+        <div class="admin-brand">
+          <el-icon :size="18" color="#07C160"><Message /></el-icon>
+          <span class="admin-brand__text">管理后台</span>
+        </div>
+
+        <nav class="admin-menu">
+          <router-link
+            v-for="item in MENUS"
+            :key="item.path"
+            :to="item.path"
+            class="admin-menu__item"
+            active-class="admin-menu__item--active"
+            @click="onNavigate"
+          >
+            <el-icon :size="16"><component :is="item.icon" /></el-icon>
+            <span>{{ item.title }}</span>
+          </router-link>
+        </nav>
+
+        <div class="admin-sidebar__footer">
+          <button type="button" class="admin-link-btn" @click="goWorkbench">
+            <el-icon :size="14"><Monitor /></el-icon>
+            <span>返回工作台</span>
+          </button>
+        </div>
+      </div>
+    </el-drawer>
+
+    <!-- 桌面 / 平板：固定侧边栏 -->
+    <aside v-if="!isMobile" class="admin-sidebar">
       <div class="admin-brand">
         <el-icon :size="18" color="#07C160"><Message /></el-icon>
         <span class="admin-brand__text">管理后台</span>
@@ -97,21 +146,28 @@ async function onLogout(): Promise<void> {
     <div class="admin-main">
       <header class="admin-header">
         <div class="admin-header__left">
+          <el-button
+            v-if="isMobile"
+            class="admin-header__menu"
+            text
+            :icon="MenuIcon"
+            @click="drawerOpen = true"
+          />
           <span class="admin-header__title">{{ pageTitle }}</span>
-          <span class="admin-header__tenant">{{ tenantName }}</span>
+          <span v-if="!isMobile" class="admin-header__tenant">{{ tenantName }}</span>
         </div>
         <div class="admin-header__right">
           <button type="button" class="admin-link-btn" @click="goWorkbench">
             <el-icon :size="14"><Monitor /></el-icon>
-            <span>进入工作台</span>
+            <span v-if="!isMobile">进入工作台</span>
           </button>
           <button type="button" class="admin-user" title="个人资料" @click="profileOpen = true">
             <span class="admin-user__name">{{ userName }}</span>
-            <span class="admin-user__role">{{ userRole }}</span>
+            <span v-if="!isMobile" class="admin-user__role">{{ userRole }}</span>
           </button>
           <button type="button" class="admin-link-btn" @click="onLogout">
             <el-icon :size="14"><SwitchButton /></el-icon>
-            <span>退出登录</span>
+            <span v-if="!isMobile">退出登录</span>
           </button>
         </div>
       </header>
@@ -282,5 +338,38 @@ async function onLogout(): Promise<void> {
   overflow-y: auto;
   padding: 16px;
   background: #f5f5f5;
+}
+
+/* 抽屉内的侧边栏撑满 */
+.admin-sidebar--drawer {
+  width: 100%;
+  height: 100%;
+  border-right: none;
+}
+
+/* ---------------- 移动端适配 ---------------- */
+@media (max-width: 768px) {
+  .admin-header {
+    height: 48px;
+    flex: 0 0 48px;
+    padding: 0 10px;
+
+    &__menu {
+      margin-right: 2px;
+      padding: 4px;
+    }
+
+    &__title {
+      font-size: 15px;
+    }
+
+    &__right {
+      gap: 10px;
+    }
+  }
+
+  .admin-content {
+    padding: 10px;
+  }
 }
 </style>

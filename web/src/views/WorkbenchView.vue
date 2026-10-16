@@ -702,11 +702,4 @@ onBeforeUnmount(() => {
     padding-bottom: calc(8px + env(safe-area-inset-bottom, 0));
   }
 }
-
-/* 平板：隐藏右侧客户资料栏（改为抽屉），给聊天区更多空间 */
-@media (max-width: 1200px) {
-  .workbench :deep(.customer-panel) {
-    display: none;
-  }
-}
 </style>

@@ -252,37 +252,34 @@
       </footer>
     </div>
 
-    <!-- 订单/商品卡片确认弹窗（拼多多式）：右下角，点击卡片发送，点 ✕ 取消，无操作说明文字 -->
-    <el-dialog
-      v-model="cardConfirmVisible"
-      width="320px"
-      append-to-body
-      :close-on-click-modal="false"
-      :show-close="true"
-      class="card-confirm-dialog"
-      @closed="onCardConfirmClosed"
-    >
-      <div class="card-confirm">
-        <div
-          v-if="ctxOrder"
-          class="card-confirm__item"
-          role="button"
-          :class="{ 'is-sending': sendingCard }"
-          @click="sendContextCards"
-        >
-          <OrderCard :order="ctxOrder" />
-        </div>
-        <div
-          v-if="ctxProduct"
-          class="card-confirm__item"
-          role="button"
-          :class="{ 'is-sending': sendingCard }"
-          @click="sendContextCards"
-        >
-          <ProductCard :product="ctxProduct" />
+    <!-- 订单/商品卡片气泡（拼多多客服式）：无遮罩，右下角浮层，点卡片发送，点 ✕ 取消 -->
+    <transition name="card-pop">
+      <div v-if="cardConfirmVisible" class="card-pop">
+        <button type="button" class="card-pop__close" aria-label="关闭" @click="dismissCard">
+          ✕
+        </button>
+        <div class="card-pop__body">
+          <div
+            v-if="ctxOrder"
+            class="card-confirm__item"
+            role="button"
+            :class="{ 'is-sending': sendingCard }"
+            @click="sendContextCards"
+          >
+            <OrderCard :order="ctxOrder" />
+          </div>
+          <div
+            v-if="ctxProduct"
+            class="card-confirm__item"
+            role="button"
+            :class="{ 'is-sending': sendingCard }"
+            @click="sendContextCards"
+          >
+            <ProductCard :product="ctxProduct" />
+          </div>
         </div>
       </div>
-    </el-dialog>
+    </transition>
   </div>
 </template>
 
@@ -1008,10 +1005,11 @@ async function sendContextCards(): Promise<void> {
   }
 }
 
-/** 弹窗关闭（点 X / 不需要）：不发卡片，清空上下文 */
-function onCardConfirmClosed(): void {
+/** 关闭卡片气泡（点 ✕）：不发卡片，清空上下文 */
+function dismissCard(): void {
   ctxOrder.value = null
   ctxProduct.value = null
+  cardConfirmVisible.value = false
 }
 
 /** 按 id 插入或替换消息：已存在则原地替换，杜绝重复气泡 */
@@ -1738,7 +1736,55 @@ onBeforeUnmount(stopPolling)
   }
 }
 
-/* 订单/商品卡片确认弹窗（拼多多式：点卡片发送，点 ✕ 取消） */
+/* 订单/商品卡片气泡（拼多多客服式）：无遮罩，右下角浮层 */
+.card-pop {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 2000;
+  width: 300px;
+  max-width: calc(100vw - 32px);
+}
+
+.card-pop__close {
+  position: absolute;
+  top: -10px;
+  right: -10px;
+  z-index: 1;
+  width: 26px;
+  height: 26px;
+  border: none;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.45);
+  color: #fff;
+  font-size: 13px;
+  line-height: 26px;
+  cursor: pointer;
+
+  &:hover {
+    background: rgba(0, 0, 0, 0.65);
+  }
+}
+
+.card-pop__body {
+  background: #fff;
+  border-radius: 8px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.16);
+  overflow: hidden;
+}
+
+/* 气泡弹入动画（右下角轻微上浮 + 淡入） */
+.card-pop-enter-active,
+.card-pop-leave-active {
+  transition: opacity 0.22s ease, transform 0.22s ease;
+}
+
+.card-pop-enter-from,
+.card-pop-leave-to {
+  opacity: 0;
+  transform: translateY(16px) scale(0.96);
+}
+
 .card-confirm {
   &__item {
     cursor: pointer;
@@ -1879,45 +1925,5 @@ onBeforeUnmount(stopPolling)
       color: #07c160;
     }
   }
-}
-</style>
-
-<style>
-/* 卡片确认弹窗（append-to-body，需全局样式）：隐藏空 header，只保留右上角 ✕ */
-.card-confirm-dialog {
-  /* 右下角定位，留 16px 边距（覆盖 el-dialog 默认的居中 + top） */
-  margin: 0 !important;
-  position: fixed !important;
-  top: auto !important;
-  right: 16px !important;
-  bottom: 16px !important;
-  left: auto !important;
-  padding: 0;
-}
-
-.card-confirm-dialog .el-dialog__header {
-  height: 0;
-  padding: 0;
-  margin: 0;
-  overflow: visible;
-}
-
-.card-confirm-dialog .el-dialog__headerbtn {
-  top: 10px;
-  right: 10px;
-  z-index: 10;
-  width: 28px;
-  height: 28px;
-  background: rgba(0, 0, 0, 0.35);
-  border-radius: 50%;
-  color: #fff;
-}
-
-.card-confirm-dialog .el-dialog__headerbtn:hover {
-  background: rgba(0, 0, 0, 0.5);
-}
-
-.card-confirm-dialog .el-dialog__body {
-  padding: 8px;
 }
 </style>

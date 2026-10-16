@@ -117,15 +117,10 @@ async function submit(): Promise<void> {
       return
     }
 
-    // 带了 redirect 且同端 → 优先跳回原页面
+    // 带了 redirect 且不是登录页 → 跳回原页面（redirect 是当前端内部的 hash 路径，直接同端跳转）
     const raw = route.query.redirect
     if (typeof raw === 'string' && raw.startsWith('/') && !raw.includes('/login')) {
-      const targetEnd = raw.startsWith('/admin') ? 'admin' : 'chat'
-      if (targetEnd === end) {
-        await router.replace(raw)
-        return
-      }
-      gotoEnd(targetEnd)
+      await router.replace(raw)
       return
     }
 

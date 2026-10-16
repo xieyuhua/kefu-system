@@ -189,3 +189,30 @@ a {
   color: var(--kf-text-weak);
   font-size: 13px;
 }
+
+/* ---------------- 后台管理移动端适配 ----------------
+   toolbar 样式散落在各 admin 页面的 scoped style 里（特异性高于全局），
+   此处用 !important 统一在窄屏下纵向堆叠，避免逐页重复修改。 */
+@media (max-width: 768px) {
+  .toolbar {
+    flex-direction: column !important;
+    align-items: stretch !important;
+    gap: 10px !important;
+  }
+
+  .toolbar__actions {
+    width: 100% !important;
+  }
+
+  /* 搜索框 / 下拉在窄屏占满整行，便于点按 */
+  .toolbar__actions .el-input,
+  .toolbar__actions .el-select {
+    width: 100% !important;
+  }
+
+  /* 分页在窄屏靠左，避免溢出 */
+  .pager {
+    justify-content: flex-start !important;
+    overflow-x: auto;
+  }
+}

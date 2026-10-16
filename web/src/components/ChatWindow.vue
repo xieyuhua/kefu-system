@@ -9,10 +9,20 @@
           <span class="title-name kf-ellipsis">{{
             conversation.user?.nickname || '匿名客户'
           }}</span>
-          <el-tag size="small" effect="light" :color="channelColor(conversation.channel?.type)">
+          <el-tag
+            size="small"
+            effect="light"
+            class="header-tag header-tag--channel"
+            :color="channelColor(conversation.channel?.type)"
+          >
             {{ conversation.channel?.name || channelLabel(conversation.channel?.type) }}
           </el-tag>
-          <el-tag size="small" :type="statusTagType(conversation.status)" effect="plain">
+          <el-tag
+            size="small"
+            class="header-tag header-tag--status"
+            :type="statusTagType(conversation.status)"
+            effect="plain"
+          >
             {{ statusLabel(conversation.status) }}
           </el-tag>
         </div>
@@ -578,12 +588,25 @@ const searchList = computed<Message[]>(() => props.searchResults || [])
   .chat-header {
     height: 48px;
     padding: 0 10px;
-    gap: 8px;
+    gap: 6px;
+  }
+
+  .header-info {
+    flex: 1;
   }
 
   .title-name {
-    max-width: 40vw;
+    max-width: 26vw;
     font-size: 14px;
+  }
+
+  /* 移动端隐藏渠道 tag（会话列表已标注来源），只保留状态 tag，给按钮腾空间 */
+  .header-tag--channel {
+    display: none;
+  }
+
+  .header-tag {
+    flex-shrink: 0;
   }
 
   /* 副标题在移动端隐藏，节省纵向空间 */
@@ -595,7 +618,7 @@ const searchList = computed<Message[]>(() => props.searchResults || [])
     gap: 4px;
 
     :deep(.el-button) {
-      padding: 5px 8px;
+      padding: 5px 7px;
     }
   }
 
