@@ -36,9 +36,10 @@
         <el-button
           size="small"
           :disabled="conversation.status === 'closed'"
+          :icon="Switch"
           @click="emit('transfer', conversation)"
         >
-          转接
+          <span v-if="!compactHeader">转接</span>
         </el-button>
         <el-button
           size="small"
@@ -158,7 +159,7 @@
 
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue'
-import { ArrowDown, ArrowUp, Search, User } from '@element-plus/icons-vue'
+import { ArrowDown, ArrowUp, Search, Switch, User } from '@element-plus/icons-vue'
 import type { Conversation, Message, MessageType } from '@/types'
 import {
   channelColor,

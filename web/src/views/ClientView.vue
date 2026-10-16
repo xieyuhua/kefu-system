@@ -252,33 +252,36 @@
       </footer>
     </div>
 
-    <!-- 订单/商品卡片确认弹窗：用户选择是否发送给客服，可叉掉（电商咨询效果） -->
+    <!-- 订单/商品卡片确认弹窗（拼多多式）：右下角，点击卡片发送，点 ✕ 取消，无操作说明文字 -->
     <el-dialog
       v-model="cardConfirmVisible"
-      title="发送给客服"
       width="320px"
       append-to-body
       :close-on-click-modal="false"
       :show-close="true"
+      class="card-confirm-dialog"
       @closed="onCardConfirmClosed"
     >
       <div class="card-confirm">
-        <div v-if="ctxOrder" class="card-confirm__item">
+        <div
+          v-if="ctxOrder"
+          class="card-confirm__item"
+          role="button"
+          :class="{ 'is-sending': sendingCard }"
+          @click="sendContextCards"
+        >
           <OrderCard :order="ctxOrder" />
         </div>
-        <div v-if="ctxProduct" class="card-confirm__item">
+        <div
+          v-if="ctxProduct"
+          class="card-confirm__item"
+          role="button"
+          :class="{ 'is-sending': sendingCard }"
+          @click="sendContextCards"
+        >
           <ProductCard :product="ctxProduct" />
         </div>
-        <div class="card-confirm__hint">
-          是否将该{{ ctxOrder && ctxProduct ? '订单与商品' : ctxOrder ? '订单' : '商品' }}发送给客服？
-        </div>
       </div>
-      <template #footer>
-        <el-button @click="cardConfirmVisible = false">不需要</el-button>
-        <el-button type="primary" :loading="sendingCard" @click="sendContextCards">
-          发送给客服
-        </el-button>
-      </template>
     </el-dialog>
   </div>
 </template>
@@ -1735,10 +1738,24 @@ onBeforeUnmount(stopPolling)
   }
 }
 
-/* 订单/商品卡片确认弹窗 */
+/* 订单/商品卡片确认弹窗（拼多多式：点卡片发送，点 ✕ 取消） */
 .card-confirm {
   &__item {
-    margin-bottom: 10px;
+    cursor: pointer;
+    transition: opacity 0.15s, transform 0.1s;
+
+    & + & {
+      margin-top: 10px;
+    }
+
+    &:active {
+      transform: scale(0.98);
+    }
+
+    &.is-sending {
+      opacity: 0.6;
+      pointer-events: none;
+    }
 
     :deep(.order-card),
     :deep(.product-card) {
@@ -1747,13 +1764,6 @@ onBeforeUnmount(stopPolling)
       border-radius: 8px;
       overflow: hidden;
     }
-  }
-
-  &__hint {
-    font-size: 13px;
-    line-height: 1.6;
-    color: #5f6b7a;
-    text-align: center;
   }
 }
 
@@ -1869,5 +1879,45 @@ onBeforeUnmount(stopPolling)
       color: #07c160;
     }
   }
+}
+</style>
+
+<style>
+/* 卡片确认弹窗（append-to-body，需全局样式）：隐藏空 header，只保留右上角 ✕ */
+.card-confirm-dialog {
+  /* 右下角定位，留 16px 边距（覆盖 el-dialog 默认的居中 + top） */
+  margin: 0 !important;
+  position: fixed !important;
+  top: auto !important;
+  right: 16px !important;
+  bottom: 16px !important;
+  left: auto !important;
+  padding: 0;
+}
+
+.card-confirm-dialog .el-dialog__header {
+  height: 0;
+  padding: 0;
+  margin: 0;
+  overflow: visible;
+}
+
+.card-confirm-dialog .el-dialog__headerbtn {
+  top: 10px;
+  right: 10px;
+  z-index: 10;
+  width: 28px;
+  height: 28px;
+  background: rgba(0, 0, 0, 0.35);
+  border-radius: 50%;
+  color: #fff;
+}
+
+.card-confirm-dialog .el-dialog__headerbtn:hover {
+  background: rgba(0, 0, 0, 0.5);
+}
+
+.card-confirm-dialog .el-dialog__body {
+  padding: 8px;
 }
 </style>

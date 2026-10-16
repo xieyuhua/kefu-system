@@ -15,31 +15,54 @@
         </el-button>
         <span v-else class="topbar-title">客服工作台</span>
         <el-tag size="small" effect="plain" :type="socketStatus === 'open' ? 'success' : 'info'">
-          {{ socketStatus === 'open' ? '实时连接正常' : '连接中…' }}
+          {{ socketStatus === 'open' ? (isMobile ? '在线' : '实时连接正常') : '连接中…' }}
         </el-tag>
       </div>
       <div class="topbar-right">
+        <!-- PC 端：完整统计与按钮 -->
         <template v-if="!isMobile">
           <span class="topbar-stat">待接待 {{ chat.stats.pending }}</span>
           <span class="topbar-stat">进行中 {{ chat.stats.open }}</span>
           <span class="topbar-stat">未读 {{ chat.stats.unread }}</span>
+          <DemoPanel />
+          <el-button
+            size="small"
+            :icon="Delete"
+            :loading="clearing"
+            :disabled="!chat.total"
+            @click="onClearAll"
+          >
+            一键清空
+          </el-button>
+          <!-- 仅管理员可见的后台入口（子账号无后台权限，不显示） -->
+          <el-button v-if="auth.isAdmin" size="small" :icon="Setting" @click="goAdmin">
+            管理后台
+          </el-button>
+          <el-button size="small" :icon="Refresh" @click="refresh">刷新</el-button>
         </template>
-        <DemoPanel />
-        <el-button
-          v-if="!isMobile"
-          size="small"
-          :icon="Delete"
-          :loading="clearing"
-          :disabled="!chat.total"
-          @click="onClearAll"
-        >
-          一键清空
-        </el-button>
-        <!-- 仅管理员可见的后台入口（子账号无后台权限，不显示） -->
-        <el-button v-if="auth.isAdmin" size="small" :icon="Setting" @click="goAdmin">
-          管理后台
-        </el-button>
-        <el-button size="small" :icon="Refresh" @click="refresh">刷新</el-button>
+
+        <!-- 移动端：未读角标 + 更多菜单（功能与 PC 端一致） -->
+        <template v-else>
+          <span v-if="chat.stats.unread > 0" class="mobile-unread">未读 {{ chat.stats.unread }}</span>
+          <DemoPanel compact />
+          <el-dropdown trigger="click" @command="onMobileMenu">
+            <el-button size="small" :icon="MoreFilled" circle title="更多" />
+            <template #dropdown>
+              <el-dropdown-menu>
+                <el-dropdown-item disabled>
+                  待接待 {{ chat.stats.pending }} · 进行中 {{ chat.stats.open }} · 未读 {{ chat.stats.unread }}
+                </el-dropdown-item>
+                <el-dropdown-item divided command="clear" :disabled="!chat.total">
+                  一键清空会话列表
+                </el-dropdown-item>
+                <el-dropdown-item v-if="auth.isAdmin" command="admin">管理后台</el-dropdown-item>
+                <el-dropdown-item command="profile">个人资料</el-dropdown-item>
+                <el-dropdown-item command="refresh">刷新</el-dropdown-item>
+                <el-dropdown-item divided command="logout">退出登录</el-dropdown-item>
+              </el-dropdown-menu>
+            </template>
+          </el-dropdown>
+        </template>
       </div>
     </header>
 
@@ -139,13 +162,16 @@
       :loading="transferring"
       @confirm="onTransferConfirm"
     />
+
+    <!-- 个人资料（移动端「更多」菜单入口；PC 端复用侧边栏） -->
+    <ProfileDialog v-model="profileOpen" />
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { ArrowLeft, Delete, Refresh, Setting } from '@element-plus/icons-vue'
+import { ArrowLeft, Delete, MoreFilled, Refresh, Setting } from '@element-plus/icons-vue'
 import ChannelSidebar from '@/components/ChannelSidebar.vue'
 import ConversationList from '@/components/ConversationList.vue'
 import ChatWindow from '@/components/ChatWindow.vue'
@@ -154,12 +180,15 @@ import DemoPanel from '@/components/DemoPanel.vue'
 import OrderPicker from '@/components/OrderPicker.vue'
 import ProductPicker from '@/components/ProductPicker.vue'
 import TransferPicker from '@/components/TransferPicker.vue'
+import ProfileDialog from '@/views/ProfileDialog.vue'
 import { useAuthStore } from '@/stores/auth'
 import { useChatStore } from '@/stores/chat'
 import { useSocket } from '@/composables/useSocket'
 import { useScreenTier } from '@/composables/useIsMobile'
 import { statusLabel } from '@/utils/format'
+import { initAudioUnlock, playMessageSound } from '@/utils/sound'
 import { getCustomer } from '@/api/users'
+import { listSettings } from '@/api/admin'
 import { listTransferAgents, type Agent } from '@/api/agents'
 import type {
   Conversation,
@@ -202,10 +231,23 @@ const customer = ref<Customer | null>(null)
 const customerOrders = ref<Order[]>([])
 const customerLoading = ref(false)
 const agents = ref<Agent[]>([])
+/** 新消息提示音配置：'on'（内置）/'off'（静音）/音频 URL，默认 on */
+const messageSound = ref('on')
 
 const canSend = computed(() => !!chat.current && chat.current.status !== 'closed')
 
 const offs: Array<() => void> = []
+
+/** 拉取提示音配置（客服工作台收到新消息时播放） */
+async function loadMessageSound(): Promise<void> {
+  try {
+    const list = await listSettings()
+    const item = list.find((s) => s.key === 'message_sound')
+    messageSound.value = item?.value || 'on'
+  } catch {
+    messageSound.value = 'on'
+  }
+}
 
 async function loadCustomer(userId: number | undefined): Promise<void> {
   customer.value = null
@@ -248,6 +290,45 @@ function refresh(): void {
   void chat.loadConversations()
   void chat.loadStats()
   void chat.loadChannels()
+}
+
+/** 个人资料弹窗（移动端「更多」菜单入口；PC 端在侧边栏底部） */
+const profileOpen = ref(false)
+
+/** 移动端「更多」菜单分发 */
+function onMobileMenu(command: string): void {
+  switch (command) {
+    case 'clear':
+      void onClearAll()
+      break
+    case 'admin':
+      goAdmin()
+      break
+    case 'profile':
+      profileOpen.value = true
+      break
+    case 'refresh':
+      refresh()
+      break
+    case 'logout':
+      void onLogout()
+      break
+  }
+}
+
+/** 退出登录：清空登录态并回登录页（移动端「更多」菜单入口） */
+async function onLogout(): Promise<void> {
+  try {
+    await ElMessageBox.confirm('确定退出登录吗？', '提示', {
+      type: 'warning',
+      confirmButtonText: '退出',
+      cancelButtonText: '取消',
+    })
+  } catch {
+    return
+  }
+  await auth.logout()
+  window.location.replace('/login')
 }
 
 let keywordTimer = 0
@@ -485,9 +566,18 @@ onMounted(() => {
   void chat.loadChannels()
   void chat.loadStats()
   void chat.loadConversations()
+  void loadMessageSound()
+  // 移动端：首次触摸/点击时解锁音频，否则浏览器会静默提示音
+  initAudioUnlock()
   if (auth.token) connect(auth.token)
 
-  offs.push(on<Message>('message.new', (msg) => chat.onMessage(msg)))
+  offs.push(
+    on<Message>('message.new', (msg) => {
+      chat.onMessage(msg)
+      // 客户发来的新消息（direction=in）时播提示音；自己发出的（out）不播
+      if (msg.direction === 'in') playMessageSound(messageSound.value)
+    }),
+  )
   offs.push(on<Conversation>('conversation.new', (conv) => chat.onConversation(conv)))
   offs.push(on<Conversation>('conversation.updated', (conv) => chat.onConversation(conv)))
   offs.push(on<NotificationPayload>('notification.new', notify))
@@ -566,6 +656,16 @@ onBeforeUnmount(() => {
 .topbar-back {
   padding-left: 0;
   font-weight: 600;
+}
+
+.mobile-unread {
+  padding: 1px 8px;
+  border-radius: 10px;
+  background: var(--kf-red);
+  color: #fff;
+  font-size: 12px;
+  line-height: 18px;
+  white-space: nowrap;
 }
 
 /* ---------------- 移动端 ---------------- */

@@ -13,6 +13,8 @@ import (
 const (
 	// SettingDefaultImage 统一默认图片：客户/商品/订单无图时使用
 	SettingDefaultImage = "default_image"
+	// SettingMessageSound 新消息提示音：on=内置提示音（默认），off=静音，或填音频 URL
+	SettingMessageSound = "message_sound"
 )
 
 // defaultImageFallback 前端未配置时使用的内置兜底图
@@ -25,6 +27,10 @@ var settingDefaults = map[string]struct {
 	SettingDefaultImage: {
 		Value:  defaultImageFallback,
 		Remark: "客户 / 商品 / 订单没有图片时展示的默认图片（留空则使用内置兜底图）",
+	},
+	SettingMessageSound: {
+		Value:  "on",
+		Remark: "新消息提示音：on=内置提示音（默认），off=静音，或填自定义音频 URL",
 	},
 }
 
@@ -110,4 +116,9 @@ func SaveSetting(tenantID uint, key, value string) error {
 // DefaultImageURL 默认图片地址（供前端兜底）
 func DefaultImageURL(tenantID uint) string {
 	return GetSetting(tenantID, SettingDefaultImage)
+}
+
+// MessageSound 新消息提示音配置（on / off / 自定义 URL）
+func MessageSound(tenantID uint) string {
+	return GetSetting(tenantID, SettingMessageSound)
 }

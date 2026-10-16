@@ -96,6 +96,14 @@ body {
   }
 }
 
+/* 平板（769-1200）：收窄会话列表与客户资料栏，给聊天区更多空间 */
+@media (min-width: 769px) and (max-width: 1200px) {
+  :root {
+    --kf-list-width: 260px;
+    --kf-panel-width: 240px;
+  }
+}
+
 /* 移动端底部安全区（iPhone 刘海屏手势条） */
 .kf-safe-bottom {
   padding-bottom: env(safe-area-inset-bottom, 0);

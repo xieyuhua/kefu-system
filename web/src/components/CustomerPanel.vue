@@ -399,19 +399,21 @@ watch(
   margin-top: 10px;
   padding: 8px 10px;
   border-radius: var(--kf-radius-sm);
-  background: var(--kf-bg);
+  background: #fff5f5;
+  border: 1px solid #ffd9d9;
   font-size: 12px;
   line-height: 1.6;
   text-align: left;
 
   &__label {
     margin-right: 6px;
-    color: var(--kf-primary);
+    color: #e6162d;
     font-weight: 600;
   }
 
   &__text {
-    color: var(--kf-text-sub);
+    color: #e6162d;
+    font-weight: 600;
     word-break: break-all;
   }
 }

@@ -7,6 +7,7 @@ import { ElMessage } from 'element-plus'
 import { Refresh, Upload } from '@element-plus/icons-vue'
 import { listSettings, saveSetting, type SettingItem } from '../../api/admin'
 import { uploadAttachment, validateFile } from '@/api/upload'
+import { playMessageSound } from '@/utils/sound'
 import ThumbImage from '@/components/ThumbImage.vue'
 
 const loading = ref(false)
@@ -105,6 +106,33 @@ async function resetDefault(): Promise<void> {
 
 const defaultImage = computed(() => settings.value.default_image || '')
 
+/** 提示音模式：on=内置 / off=静音 / custom=自定义 URL */
+const soundMode = computed({
+  get: () => {
+    const v = (settings.value.message_sound || '').trim().toLowerCase()
+    if (v === 'off') return 'off'
+    if (v === 'on' || !v) return 'on'
+    return 'custom'
+  },
+  set: (m: string) => {
+    if (m === 'off') {
+      settings.value.message_sound = 'off'
+      void save('message_sound')
+    } else if (m === 'on') {
+      settings.value.message_sound = 'on'
+      void save('message_sound')
+    } else {
+      // 切到自定义：清空等待输入，由「保存」按钮提交
+      settings.value.message_sound = ''
+    }
+  },
+})
+
+/** 试听当前配置的提示音 */
+function previewSound(): void {
+  playMessageSound(settings.value.message_sound)
+}
+
 onMounted(load)
 </script>
 
@@ -182,9 +210,48 @@ onMounted(load)
         @change="onPickFile"
       />
 
+      <!-- 消息提示音 -->
+      <div class="setting-item">
+        <div class="setting-item__label">
+          <div class="setting-item__name">消息提示音</div>
+          <div class="setting-item__remark">
+            客服工作台收到新消息时播放提示音（客户发来的消息，自己发出的不播）
+          </div>
+        </div>
+
+        <div class="setting-item__control">
+          <div class="sound-row">
+            <el-radio-group v-model="soundMode" size="small">
+              <el-radio value="on">内置提示音</el-radio>
+              <el-radio value="off">静音</el-radio>
+              <el-radio value="custom">自定义</el-radio>
+            </el-radio-group>
+            <el-button size="small" text type="primary" @click="previewSound">试听</el-button>
+          </div>
+
+          <div v-if="soundMode === 'custom'" class="sound-custom">
+            <el-input
+              v-model="settings.message_sound"
+              size="small"
+              placeholder="音频 URL，如 /uploads/20260101/xxx.mp3 或 https://..."
+              style="width: 360px"
+            />
+            <el-button
+              size="small"
+              type="primary"
+              plain
+              :loading="saving.message_sound"
+              @click="save('message_sound')"
+            >
+              保存
+            </el-button>
+          </div>
+        </div>
+      </div>
+
       <el-alert type="info" :closable="false" class="tip">
         说明：默认图片用于客户列表、订单管理、商品管理等页面的<b>图片兜底</b>；
-        聊天中的图片消息单独使用内置占位图，不受此项影响。
+        聊天中的图片消息单独使用内置占位图，不受此项影响。提示音「内置」无需上传音频文件，由浏览器直接合成。
       </el-alert>
     </div>
   </div>
@@ -262,5 +329,18 @@ onMounted(load)
 
 .tip {
   margin-top: 16px;
+}
+
+.sound-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.sound-custom {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
 }
 </style>

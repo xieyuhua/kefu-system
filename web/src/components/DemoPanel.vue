@@ -1,6 +1,8 @@
 <template>
   <div class="demo-panel">
-    <el-button size="small" :icon="MagicStick" @click="open = true">模拟新咨询</el-button>
+    <el-button size="small" :icon="MagicStick" @click="open = true">
+      <span v-if="!compact">模拟新咨询</span>
+    </el-button>
 
     <el-dialog v-model="open" title="模拟客户发起咨询" width="420px" append-to-body>
       <el-form :model="form" label-width="80px">
@@ -59,6 +61,11 @@ import { incoming } from '@/api/demo'
 import type { MessageType } from '@/types'
 
 const chat = useChatStore()
+
+const props = defineProps<{
+  /** 紧凑模式：只显示图标（移动端顶栏空间有限） */
+  compact?: boolean
+}>()
 
 const open = ref(false)
 const submitting = ref(false)

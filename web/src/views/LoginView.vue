@@ -67,6 +67,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, type FormInstance, type FormRules } from 'element-plus'
 import { Lock, User } from '@element-plus/icons-vue'
 import { useAuthStore } from '@/stores/auth'
+import { unlockAudio } from '@/utils/sound'
 
 const auth = useAuthStore()
 const router = useRouter()
@@ -103,6 +104,8 @@ async function submit(): Promise<void> {
   if (!valid) return
   try {
     await auth.login({ account: form.account, password: form.password })
+    // 登录点击即用户手势：顺手解锁音频，确保进入工作台后第一声提示音就能响（移动端尤其重要）
+    unlockAudio()
     ElMessage.success(`欢迎回来，${auth.userName}`)
 
     const end = currentEnd()
