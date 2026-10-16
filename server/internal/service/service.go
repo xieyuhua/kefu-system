@@ -519,6 +519,32 @@ func canServeChannel(userID, channelID uint) bool {
 	return n > 0
 }
 
+// countOpenConversations 统计某客服当前进行中的会话数（status=open）。
+func countOpenConversations(tenantID, agentID uint) int64 {
+	var n int64
+	gormDB().Model(&model.Conversation{}).
+		Where("tenant_id = ? AND agent_id = ? AND status = ?", tenantID, agentID, "open").
+		Count(&n)
+	return n
+}
+
+// checkConcurrentLimit 校验客服是否已达「最大同时接待数」上限。
+// 返回 nil 表示可继续接待；返回 error 表示已满。
+// 规则：MaxConcurrent <= 0 视为不限；查不到用户时放行（避免误伤）。
+func checkConcurrentLimit(tenantID, agentID uint) error {
+	var u model.User
+	if err := gormDB().Select("id", "max_concurrent").Where("id = ?", agentID).First(&u).Error; err != nil {
+		return nil
+	}
+	if u.MaxConcurrent <= 0 {
+		return nil
+	}
+	if active := countOpenConversations(tenantID, agentID); active >= int64(u.MaxConcurrent) {
+		return fmt.Errorf("已达最大同时接待数（%d），请先处理现有会话", u.MaxConcurrent)
+	}
+	return nil
+}
+
 func ClaimConversation(tenantID, id, agentID uint) (*dto.ConversationVO, error) {
 	var c model.Conversation
 	if err := gormDB().Where("tenant_id = ? AND id = ?", tenantID, id).First(&c).Error; err != nil {
@@ -536,6 +562,13 @@ func ClaimConversation(tenantID, id, agentID uint) (*dto.ConversationVO, error) 
 	// 管理员例外——可以接管任何会话（含其他客服正在接待的）。
 	if c.AgentID != 0 && c.AgentID != agentID && !isAdminUser(agentID) {
 		return nil, errors.New("会话已被其他客服接待")
+	}
+	// 并发上限校验：仅当本次领取会让该客服的 open 会话数 +1 时才校验。
+	// 自己已在 open 接待的会话重复领取属幂等操作，不拦截。
+	if !(c.AgentID == agentID && c.Status == "open") {
+		if err := checkConcurrentLimit(tenantID, agentID); err != nil {
+			return nil, err
+		}
 	}
 	now := time.Now()
 	c.AgentID = agentID
@@ -580,6 +613,12 @@ func TransferConversation(tenantID, id, fromAgentID, toAgentID uint) (*dto.Conve
 	// 转接目标必须配置了接待该渠道，否则转过去他根本看不到这个会话
 	if !isAdminUser(toAgentID) && !canServeChannel(toAgentID, c.ChannelID) {
 		return nil, errors.New("该客服未配置接待此渠道，无法转接")
+	}
+	// 目标客服并发上限校验（转给自己则无变化，跳过）
+	if toAgentID != fromAgentID {
+		if err := checkConcurrentLimit(tenantID, toAgentID); err != nil {
+			return nil, errors.New("转接失败：" + err.Error())
+		}
 	}
 	c.AgentID = toAgentID
 	c.Status = "open"
@@ -776,6 +815,10 @@ func SendMessage(tenantID, convID, senderID uint, req dto.SendMessageRequest) (*
 		// 否则未绑定的客服也能通过直接发消息「抢」走别人的待接待会话。
 		if !isAdminUser(senderID) && !canServeChannel(senderID, c.ChannelID) {
 			return nil, nil, errors.New("您未配置接待该渠道")
+		}
+		// 自动接管也受「最大同时接待数」限制
+		if err := checkConcurrentLimit(tenantID, senderID); err != nil {
+			return nil, nil, err
 		}
 		c.AgentID = senderID
 		c.Status = "open"

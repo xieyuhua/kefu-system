@@ -101,6 +101,7 @@
         :can-send="canSend"
         @close="panelOpen = false"
         @send-order="sendOrderCard"
+        @updated="onCustomerUpdated"
       />
 
       <!-- 平板 / 移动端：客户资料以抽屉形式弹出 -->
@@ -120,6 +121,7 @@
           :embedded="true"
           @close="mobileProfileOpen = false"
           @send-order="sendOrderCard"
+          @updated="onCustomerUpdated"
         />
       </el-drawer>
     </div>
@@ -158,7 +160,7 @@ import { useSocket } from '@/composables/useSocket'
 import { useScreenTier } from '@/composables/useIsMobile'
 import { statusLabel } from '@/utils/format'
 import { getCustomer } from '@/api/users'
-import { listAgents, type Agent } from '@/api/agents'
+import { listTransferAgents, type Agent } from '@/api/agents'
 import type {
   Conversation,
   Customer,
@@ -220,6 +222,11 @@ async function loadCustomer(userId: number | undefined): Promise<void> {
   } finally {
     customerLoading.value = false
   }
+}
+
+/** 标签 / 备注保存后，同步本地客户资料（供当前客服即时看到新标签） */
+function onCustomerUpdated(updated: Customer): void {
+  customer.value = updated
 }
 
 async function onSelect(conversation: Conversation): Promise<void> {
@@ -393,15 +400,16 @@ async function onClaim(conversation: Conversation): Promise<void> {
  * 候选客服按当前会话所属渠道过滤——渠道外的客服看不到这个会话，转过去等于丢单。
  */
 async function onTransfer(conversation: Conversation): Promise<void> {
+  transferTarget.value = conversation
+  transferVisible.value = true
+  // 懒加载候选客服（弹窗已打开，组件内可自行展示空状态兜底）
   if (!agents.value.length) {
     try {
-      agents.value = await listAgents()
+      agents.value = await listTransferAgents()
     } catch {
       agents.value = []
     }
   }
-  transferTarget.value = conversation
-  transferVisible.value = true
 }
 
 /** 确认转接 */

@@ -23,10 +23,30 @@
             </el-tag>
           </div>
 
-          <div v-if="tags.length" class="profile-tags">
-            <el-tag v-for="t in tags" :key="t" size="small" type="warning" effect="plain">
-              {{ t }}
+          <div class="profile-tags">
+            <el-tag
+              v-for="t in tags"
+              :key="t.id"
+              size="small"
+              :color="t.color || undefined"
+              effect="plain"
+            >
+              {{ t.name }}
             </el-tag>
+            <el-button
+              text
+              size="small"
+              class="tag-add"
+              title="编辑标签 / 备注"
+              @click="openTagEditor"
+            >
+              ＋ 标签备注
+            </el-button>
+          </div>
+
+          <div v-if="customer.remark" class="profile-remark">
+            <span class="profile-remark__label">备注</span>
+            <span class="profile-remark__text">{{ customer.remark }}</span>
           </div>
 
           <ul class="profile-meta">
@@ -68,14 +88,77 @@
         </div>
       </template>
     </div>
+
+    <!-- 标签 / 备注编辑弹窗 -->
+    <el-dialog
+      v-model="tagEditorVisible"
+      :title="`标签备注 · ${customer?.nickname || ''}`"
+      width="440px"
+      append-to-body
+      :close-on-click-modal="false"
+    >
+      <!-- 备注 -->
+      <div class="remark-editor">
+        <div class="remark-editor__head">
+          <span class="kf-section-title">客服备注</span>
+          <span class="remark-editor__hint">交接班后其他客服可见</span>
+        </div>
+        <el-input
+          v-model="remarkDraft"
+          type="textarea"
+          :rows="3"
+          maxlength="200"
+          show-word-limit
+          placeholder="记录客户情况，如：已退款、偏好顺丰、脾气较急…"
+        />
+      </div>
+
+      <!-- 标签选择 -->
+      <div class="tag-editor">
+        <div class="tag-editor__head">
+          <span class="kf-section-title">客户标签</span>
+          <el-input
+            v-model="newTagName"
+            size="small"
+            placeholder="新标签，回车添加"
+            class="tag-editor__new"
+            @keyup.enter="onCreateTag"
+          />
+        </div>
+
+        <div v-loading="tagLibLoading" class="tag-editor__list">
+          <el-check-tag
+            v-for="t in tagLib"
+            :key="t.id"
+            :checked="selectedTagIds.includes(t.id)"
+            class="tag-editor__item"
+            @change="toggleTag(t.id)"
+          >
+            {{ t.name }}
+          </el-check-tag>
+          <div v-if="!tagLibLoading && !tagLib.length" class="panel-empty">
+            暂无标签，可在上方输入新标签回车创建
+          </div>
+        </div>
+      </div>
+
+      <template #footer>
+        <el-button @click="tagEditorVisible = false">取消</el-button>
+        <el-button type="primary" :loading="saving" @click="saveTagsAndRemark">
+          保存
+        </el-button>
+      </template>
+    </el-dialog>
   </aside>
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref, watch } from 'vue'
+import { ElMessage } from 'element-plus'
 import { Close } from '@element-plus/icons-vue'
 import type { Customer, Order } from '@/types'
 import { channelColor, channelLabel, formatMoney } from '@/utils/format'
+import { createTag, listTags, setCustomerTags, updateCustomerRemark, type Tag } from '@/api/tags'
 
 const props = defineProps<{
   customer: Customer | null
@@ -89,16 +172,111 @@ const props = defineProps<{
 const emit = defineEmits<{
   close: []
   'send-order': [order: Order]
+  /** 标签/备注保存后通知父级刷新客户资料 */
+  updated: [customer: Customer]
 }>()
 
 const customer = computed(() => props.customer)
 const orders = computed(() => props.orders)
 const tags = computed(() => props.customer?.tags || [])
 
+/* ---------------- 标签 / 备注编辑 ---------------- */
+const tagEditorVisible = ref(false)
+const tagLibLoading = ref(false)
+const tagLib = ref<Tag[]>([])
+const selectedTagIds = ref<number[]>([])
+const remarkDraft = ref('')
+const newTagName = ref('')
+const saving = ref(false)
+
+async function openTagEditor(): Promise<void> {
+  if (!props.customer) return
+  tagEditorVisible.value = true
+  remarkDraft.value = props.customer.remark || ''
+  selectedTagIds.value = (props.customer.tags || []).map((t) => t.id)
+  newTagName.value = ''
+  // 懒加载标签库
+  if (!tagLib.value.length) {
+    tagLibLoading.value = true
+    try {
+      tagLib.value = await listTags()
+    } catch {
+      tagLib.value = []
+    } finally {
+      tagLibLoading.value = false
+    }
+  }
+}
+
+function toggleTag(id: number): void {
+  const i = selectedTagIds.value.indexOf(id)
+  if (i >= 0) selectedTagIds.value.splice(i, 1)
+  else selectedTagIds.value.push(id)
+}
+
+async function onCreateTag(): Promise<void> {
+  const name = newTagName.value.trim()
+  if (!name) return
+  if (tagLib.value.some((t) => t.name === name)) {
+    ElMessage.warning('标签已存在')
+    return
+  }
+  try {
+    const created = await createTag({ name })
+    tagLib.value.push(created)
+    selectedTagIds.value.push(created.id)
+    newTagName.value = ''
+    ElMessage.success(`已创建标签「${name}」`)
+  } catch {
+    // 错误已由拦截器提示
+  }
+}
+
+async function saveTagsAndRemark(): Promise<void> {
+  if (!props.customer) return
+  saving.value = true
+  try {
+    // 备注与标签分别保存（备注失败不阻塞标签）
+    const remarkChanged = remarkDraft.value !== (props.customer.remark || '')
+    const tagIdsChanged =
+      selectedTagIds.value.slice().sort().join(',') !==
+      (props.customer.tags || []).map((t) => t.id).slice().sort().join(',')
+
+    let newTags = props.customer.tags || []
+    if (tagIdsChanged) {
+      newTags = await setCustomerTags(props.customer.id, selectedTagIds.value)
+    }
+    if (remarkChanged) {
+      await updateCustomerRemark(props.customer.id, remarkDraft.value.trim())
+    }
+
+    const updated: Customer = {
+      ...props.customer,
+      tags: newTags,
+      remark: remarkDraft.value.trim(),
+    }
+    emit('updated', updated)
+    ElMessage.success('已保存，交接班后其他客服可见')
+    tagEditorVisible.value = false
+  } catch {
+    // 错误已由拦截器提示
+  } finally {
+    saving.value = false
+  }
+}
+
 function sendOrder(order: Order): void {
   if (!props.canSend) return
   emit('send-order', order)
 }
+
+// 切换客户时关闭弹窗，避免状态串到下一个客户
+watch(
+  () => props.customer?.id,
+  () => {
+    tagEditorVisible.value = false
+  },
+)
 </script>
 
 <style scoped lang="scss">
@@ -204,8 +382,38 @@ function sendOrder(order: Order): void {
   display: flex;
   flex-wrap: wrap;
   justify-content: center;
+  align-items: center;
   gap: 4px;
   margin-top: 8px;
+}
+
+.tag-add {
+  height: auto;
+  padding: 2px 6px;
+  font-size: 12px;
+  color: var(--kf-primary);
+}
+
+.profile-remark {
+  width: 100%;
+  margin-top: 10px;
+  padding: 8px 10px;
+  border-radius: var(--kf-radius-sm);
+  background: var(--kf-bg);
+  font-size: 12px;
+  line-height: 1.6;
+  text-align: left;
+
+  &__label {
+    margin-right: 6px;
+    color: var(--kf-primary);
+    font-weight: 600;
+  }
+
+  &__text {
+    color: var(--kf-text-sub);
+    word-break: break-all;
+  }
 }
 
 .profile-meta {
@@ -308,5 +516,47 @@ function sendOrder(order: Order): void {
   flex-shrink: 0;
   color: var(--kf-primary);
   font-size: 12px;
+}
+
+/* ---------------- 标签 / 备注编辑弹窗 ---------------- */
+.remark-editor {
+  margin-bottom: 16px;
+
+  &__head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 8px;
+  }
+
+  &__hint {
+    font-size: 11px;
+    color: var(--kf-text-weak);
+  }
+}
+
+.tag-editor {
+  &__head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 10px;
+  }
+
+  &__new {
+    width: 180px;
+  }
+
+  &__list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    min-height: 40px;
+  }
+
+  &__item {
+    margin-right: 0;
+  }
 }
 </style>

@@ -76,16 +76,12 @@ func GuestInit(c *gin.Context) {
 		service.RecordCustomerIP(cu.ID, cu.IP)
 	}
 
-	// 最近未结束的会话优先复用，否则新建
-	var conv model.Conversation
-	if err := gormDB().Where("tenant_id = ? AND customer_id = ? AND status != 'closed'",
-		tenantID, cu.ID).Order("id desc").First(&conv).Error; err != nil {
-		now := time.Now()
-		conv = model.Conversation{
-			TenantID: tenantID, ChannelID: ch.ID, CustomerID: cu.ID,
-			Status: "pending", LastMessageAt: now,
-		}
-		gormDB().Create(&conv)
+	// 定位或创建会话：同一客户始终复用最近一个会话（closed/archived 自动激活），
+	// 保证同一 uid + 渠道的聊天记录自然合并
+	conv, err := service.FindOrCreateConversation(tenantID, cu.ID, ch.ID)
+	if err != nil {
+		response.Server(c, err.Error())
+		return
 	}
 
 	// 上下文：订单 / 商品
@@ -158,10 +154,9 @@ func GuestSend(c *gin.Context) {
 		response.Param(c, "请先调用 /api/guest/init 初始化会话")
 		return
 	}
-	var conv model.Conversation
-	if err := gormDB().Where("tenant_id = ? AND customer_id = ? AND status != 'closed'",
-		tenantID, cu.ID).Order("id desc").First(&conv).Error; err != nil {
-		response.Param(c, "会话不存在")
+	conv, err := service.FindOrCreateConversation(tenantID, cu.ID, ch.ID)
+	if err != nil {
+		response.Server(c, err.Error())
 		return
 	}
 

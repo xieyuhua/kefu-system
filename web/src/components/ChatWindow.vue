@@ -90,30 +90,62 @@
         @toggle-search="toggleSearch"
       />
 
-      <!-- 会话内消息搜索面板：点击工具栏「搜索」按钮展开（微信式），选中结果后自动收起 -->
+      <!-- 搜索浮层（微信式）：点「搜索」按钮弹出，输入即搜，定位后保留结果可继续点 -->
       <div v-if="searchOpen" class="chat-search">
-        <div class="chat-search__head">
+        <div class="chat-search__bar">
           <el-input
+            ref="searchInputRef"
             v-model="searchKeyword"
             size="small"
-            placeholder="搜索该会话的历史消息"
+            placeholder="搜索聊天记录"
             clearable
             :prefix-icon="Search"
+            @input="onSearchInput"
             @keyup.enter="onSearch"
             @clear="onClearSearch"
           />
-          <el-button size="small" text @click="closeSearch">收起</el-button>
+          <span v-if="searchedKeyword" class="chat-search__count">
+            <template v-if="searching">搜索中…</template>
+            <template v-else-if="searchList.length">
+              {{ currentIndex + 1 }}/{{ searchList.length }}
+            </template>
+            <template v-else>无结果</template>
+          </span>
+          <!-- 上一个 / 下一个 -->
+          <template v-if="searchList.length > 1">
+            <el-button
+              size="small"
+              text
+              :icon="ArrowUp"
+              :disabled="currentIndex <= 0"
+              title="上一个"
+              @click="stepResult(-1)"
+            />
+            <el-button
+              size="small"
+              text
+              :icon="ArrowDown"
+              :disabled="currentIndex >= searchList.length - 1"
+              title="下一个"
+              @click="stepResult(1)"
+            />
+          </template>
+          <el-button size="small" text @click="closeSearch">关闭</el-button>
         </div>
 
-        <div v-if="searchKeyword.trim()" class="chat-search__panel kf-scroll">
+        <!-- 结果列表：点击定位并高亮，面板保持打开可连续查看 -->
+        <div v-if="searchedKeyword" class="chat-search__panel kf-scroll">
           <div v-if="searching" class="chat-search__tip">搜索中…</div>
-          <div v-else-if="!searchList.length" class="chat-search__tip">未找到匹配的消息</div>
+          <div v-else-if="!searchList.length" class="chat-search__tip">
+            未找到与「{{ searchedKeyword }}」相关的消息
+          </div>
           <button
-            v-for="r in searchList"
+            v-for="(r, i) in searchList"
             :key="r.id"
             type="button"
             class="chat-search__item"
-            @click="locate(r.id)"
+            :class="{ 'is-current': i === currentIndex }"
+            @click="gotoResult(i)"
           >
             <span class="chat-search__time">{{ formatMessageTime(r.created_at) }}</span>
             <span class="chat-search__text">{{ snippet(r.content) }}</span>
@@ -126,7 +158,7 @@
 
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue'
-import { Search, User } from '@element-plus/icons-vue'
+import { ArrowDown, ArrowUp, Search, User } from '@element-plus/icons-vue'
 import type { Conversation, Message, MessageType } from '@/types'
 import {
   channelColor,
@@ -174,8 +206,12 @@ const emit = defineEmits<{
 
 const scrollRef = ref<HTMLElement | null>(null)
 const searchKeyword = ref('')
-/** 搜索面板是否展开（由工具栏「搜索」按钮控制） */
+/** 已发起搜索的关键词（用于区分「未搜索」与「搜了但无结果」） */
+const searchedKeyword = ref('')
+/** 搜索浮层是否展开（由工具栏「搜索」按钮控制） */
 const searchOpen = ref(false)
+/** 当前定位到第几条结果（0 起），用于「上一个/下一个」与高亮 */
+const currentIndex = ref(0)
 /** 当前需要闪烁高亮的消息 id */
 const flashId = ref(0)
 /** 抑制 watch 里的自动滚底（向上翻页/定位时用） */
@@ -206,7 +242,9 @@ watch(
   () => {
     stickToBottom = true
     searchKeyword.value = ''
+    searchedKeyword.value = ''
     searchOpen.value = false
+    currentIndex.value = 0
     flashId.value = 0
     scrollToBottom()
   },
@@ -253,47 +291,119 @@ function toggleSearch(): void {
   if (!searchOpen.value) closeSearch()
 }
 
-/** 收起搜索面板并清空结果 */
+/** 收起搜索浮层并清空结果 */
 function closeSearch(): void {
   searchOpen.value = false
   searchKeyword.value = ''
+  searchedKeyword.value = ''
+  currentIndex.value = 0
   flashId.value = 0
   emit('clear-search')
 }
 
+/** 输入即搜（防抖 300ms，微信式手感） */
+let searchTimer: number | null = null
+function onSearchInput(): void {
+  if (searchTimer !== null) window.clearTimeout(searchTimer)
+  const kw = searchKeyword.value.trim()
+  if (!kw) {
+    searchedKeyword.value = ''
+    currentIndex.value = 0
+    emit('clear-search')
+    return
+  }
+  searchTimer = window.setTimeout(() => {
+    doSearch(kw)
+  }, 300)
+}
+
 function onSearch(): void {
-  emit('search', searchKeyword.value.trim())
+  if (searchTimer !== null) {
+    window.clearTimeout(searchTimer)
+    searchTimer = null
+  }
+  const kw = searchKeyword.value.trim()
+  if (!kw) return
+  doSearch(kw)
+}
+
+function doSearch(kw: string): void {
+  searchedKeyword.value = kw
+  currentIndex.value = 0
+  emit('search', kw)
 }
 
 function onClearSearch(): void {
+  if (searchTimer !== null) {
+    window.clearTimeout(searchTimer)
+    searchTimer = null
+  }
+  searchedKeyword.value = ''
+  currentIndex.value = 0
   flashId.value = 0
   emit('clear-search')
 }
 
 /**
- * 点击搜索结果：滚动定位并高亮该条消息，然后**自动收起搜索结果**（避免遮挡聊天）。
+ * 跳转到第 index 条搜索结果。
+ * 若该消息尚未加载到当前视图，会自动上翻分页直到找到为止（最多 5 轮），
+ * 避免出现「点了没反应」。
  */
-function locate(id: number): void {
-  nextTick(() => {
-    const el = scrollRef.value
-    if (!el) return
-    const target = el.querySelector<HTMLElement>(`[data-msg-id="${id}"]`)
-    if (!target) {
-      // 该消息尚未加载：先翻页加载更早消息
+async function gotoResult(index: number): Promise<void> {
+  const target = searchList.value[index]
+  if (!target) return
+  currentIndex.value = index
+  await locate(target.id)
+}
+
+/** 上一个 / 下一个结果 */
+async function stepResult(delta: number): Promise<void> {
+  const total = searchList.value.length
+  if (!total) return
+  const next = Math.min(Math.max(currentIndex.value + delta, 0), total - 1)
+  if (next === currentIndex.value) return
+  await gotoResult(next)
+}
+
+/**
+ * 滚动定位并高亮该条消息。
+ * 消息不在当前已加载范围内时，先加载更早的消息再定位（最多 5 轮）。
+ */
+async function locate(id: number): Promise<void> {
+  const el = scrollRef.value
+  if (!el) return
+
+  for (let attempt = 0; attempt < 5; attempt++) {
+    await nextTick()
+    const node = el.querySelector<HTMLElement>(`[data-msg-id="${id}"]`)
+    if (node) {
       stickToBottom = false
-      emit('load-more')
+      node.scrollIntoView({ block: 'center', behavior: 'smooth' })
+      // 高亮闪烁
+      flashId.value = 0
+      await nextTick()
+      flashId.value = id
+      window.setTimeout(() => {
+        if (flashId.value === id) flashId.value = 0
+      }, 2000)
       return
     }
+    // 还没加载出来 → 向上翻一页再试
+    if (props.loadingMore || !props.hasMore) break
     stickToBottom = false
-    target.scrollIntoView({ block: 'center', behavior: 'smooth' })
-    flashId.value = 0
-    nextTick(() => {
-      flashId.value = id
+    emit('load-more')
+    // 等待父组件把新消息推入 store（DOM 更新后继续下一轮查找）
+    await new Promise<void>((resolve) => {
+      let waited = 0
+      const timer = window.setInterval(() => {
+        waited += 80
+        if (!props.loadingMore || waited > 2000) {
+          window.clearInterval(timer)
+          resolve()
+        }
+      }, 80)
     })
-    // 定位后收起搜索面板，把聊天区让给客服
-    searchOpen.value = false
-    emit('clear-search')
-  })
+  }
 }
 
 /** 搜索结果摘要 */

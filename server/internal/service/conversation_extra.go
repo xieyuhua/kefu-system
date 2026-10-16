@@ -10,6 +10,50 @@ import (
 	"kefu-server/internal/model"
 )
 
+// FindOrCreateConversation 定位或创建会话。
+//
+// 核心约定：同一个 uid + 同一渠道 = 同一个客户，同一个客户 = **始终复用最近一个会话**。
+// 即使该会话已「结束」（closed）或被「归档」（archived），也会自动重新激活为「待接待」，
+// 从而保证聊天记录**自然合并**，不会因为客服关闭 / 归档而分裂成多个会话。
+//
+// 供 GuestInit / GuestSend / WebSocket 访客连接三处统一使用，避免各自写不一致的过滤条件。
+func FindOrCreateConversation(tenantID, customerID, channelID uint) (*model.Conversation, error) {
+	var conv model.Conversation
+	if err := gormDB().Where("tenant_id = ? AND customer_id = ?", tenantID, customerID).
+		Order("id desc").First(&conv).Error; err == nil {
+		// 复用最近一个会话；已关闭 / 已归档的重新激活
+		needSave := false
+		if conv.Status == "closed" {
+			conv.Status = "pending"
+			conv.ClosedAt = nil
+			needSave = true
+		}
+		if conv.Archived {
+			conv.Archived = false
+			conv.ArchivedAt = nil
+			conv.Status = "pending"
+			needSave = true
+		}
+		if needSave {
+			if err := gormDB().Save(&conv).Error; err != nil {
+				return nil, err
+			}
+		}
+		return &conv, nil
+	}
+
+	// 首次咨询：新建会话
+	now := time.Now()
+	conv = model.Conversation{
+		TenantID: tenantID, ChannelID: channelID, CustomerID: customerID,
+		Status: "pending", LastMessageAt: now,
+	}
+	if err := gormDB().Create(&conv).Error; err != nil {
+		return nil, err
+	}
+	return &conv, nil
+}
+
 // ---------------- 会话归档 / 删除 ----------------
 
 // ArchiveConversation 归档会话（客服主动清理工作台列表）。

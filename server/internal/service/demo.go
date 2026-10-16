@@ -217,19 +217,9 @@ func FindGuestConversation(tenantID, channelID uint, externalID string) (model.C
 		tenantID, channelID, externalID).First(&cu).Error; err != nil {
 		return cu, 0, errors.New("会话不存在，请先调用 /api/guest/init")
 	}
-	// 优先复用未结束的会话
-	var conv model.Conversation
-	if err := gormDB().Where("tenant_id = ? AND customer_id = ? AND status != 'closed'",
-		tenantID, cu.ID).Order("id desc").First(&conv).Error; err == nil {
-		return cu, conv.ID, nil
-	}
-	// 全部已结束则新建一个
-	now := time.Now()
-	conv = model.Conversation{
-		TenantID: tenantID, ChannelID: channelID, CustomerID: cu.ID,
-		Status: "pending", LastMessageAt: now,
-	}
-	if err := gormDB().Create(&conv).Error; err != nil {
+	// 复用最近一个会话（含 closed/archived，自动激活），保证聊天记录合并
+	conv, err := FindOrCreateConversation(tenantID, cu.ID, channelID)
+	if err != nil {
 		return cu, 0, err
 	}
 	return cu, conv.ID, nil

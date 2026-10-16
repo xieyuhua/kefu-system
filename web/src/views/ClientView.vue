@@ -128,24 +128,6 @@
             </div>
           </div>
 
-          <!-- 上下文卡片：order_no / pid 带入 -->
-          <div v-if="ctxOrder || ctxProduct" class="ctx-wrap">
-            <div v-if="ctxOrder" class="ctx-card">
-              <OrderCard :order="ctxOrder" />
-              <div class="ctx-card__foot" @click="openDetail(ctxOrder.url)">
-                <span>订单 {{ ctxOrder.order_no }}</span>
-                <span class="ctx-card__more">查看详情 ›</span>
-              </div>
-            </div>
-            <div v-if="ctxProduct" class="ctx-card">
-              <ProductCard :product="ctxProduct" />
-              <div class="ctx-card__foot" @click="openDetail(ctxProduct.url)">
-                <span>商品 {{ ctxProduct.id }}</span>
-                <span class="ctx-card__more">查看详情 ›</span>
-              </div>
-            </div>
-          </div>
-
           <!-- 历史消息上滑分页 -->
           <div v-if="loadingHistory" class="chat__pager">加载中…</div>
           <div v-else-if="!hasMoreHistory && stream.length" class="chat__pager">没有更多消息了</div>
@@ -269,6 +251,35 @@
         </div>
       </footer>
     </div>
+
+    <!-- 订单/商品卡片确认弹窗：用户选择是否发送给客服，可叉掉（电商咨询效果） -->
+    <el-dialog
+      v-model="cardConfirmVisible"
+      title="发送给客服"
+      width="320px"
+      append-to-body
+      :close-on-click-modal="false"
+      :show-close="true"
+      @closed="onCardConfirmClosed"
+    >
+      <div class="card-confirm">
+        <div v-if="ctxOrder" class="card-confirm__item">
+          <OrderCard :order="ctxOrder" />
+        </div>
+        <div v-if="ctxProduct" class="card-confirm__item">
+          <ProductCard :product="ctxProduct" />
+        </div>
+        <div class="card-confirm__hint">
+          是否将该{{ ctxOrder && ctxProduct ? '订单与商品' : ctxOrder ? '订单' : '商品' }}发送给客服？
+        </div>
+      </div>
+      <template #footer>
+        <el-button @click="cardConfirmVisible = false">不需要</el-button>
+        <el-button type="primary" :loading="sendingCard" @click="sendContextCards">
+          发送给客服
+        </el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -363,6 +374,10 @@ const convStatus = ref('')
 const greeting = ref('')
 const ctxOrder = ref<OrderCardPayload & { url?: string } | null>(null)
 const ctxProduct = ref<ProductCardPayload | null>(null)
+/** 进线带订单/商品卡片时的确认弹窗（电商咨询效果） */
+const cardConfirmVisible = ref(false)
+/** 正在发送卡片 */
+const sendingCard = ref(false)
 const messages = ref<Message[]>([])
 const customerAvatar = ref('')
 
@@ -795,6 +810,10 @@ async function init(): Promise<void> {
     greeting.value = res.greeting || '您好，我是智能客服助手，请问有什么可以帮您？'
     ctxOrder.value = res.order ?? null
     ctxProduct.value = res.product ?? null
+    // 进线带订单/商品卡片时，弹窗让用户确认是否发送给客服（电商咨询效果），可叉掉
+    if (ctxOrder.value || ctxProduct.value) {
+      cardConfirmVisible.value = true
+    }
     customerAvatar.value = res.customer?.avatar || params.value.avatar || ''
     serviceAvatar.value = ''
 
@@ -941,6 +960,57 @@ function removeLocal(id: number): void {
   if (idx >= 0) messages.value.splice(idx, 1)
 }
 
+/**
+ * 发送进线带入的订单/商品卡片给客服（用户点了「发送给客服」）。
+ * 卡片作为 type=order / type=product 的消息发送，发送成功后进入消息流。
+ */
+async function sendContextCards(): Promise<void> {
+  if (sendingCard.value) return
+  const order = ctxOrder.value
+  const product = ctxProduct.value
+  if (!order && !product) {
+    cardConfirmVisible.value = false
+    return
+  }
+  sendingCard.value = true
+  try {
+    const gs = (type: 'order' | 'product', payload: object) =>
+      guestSend(
+        { channel: params.value.channel, uid: params.value.uid, tenant: params.value.tenant },
+        { type, content: JSON.stringify(payload) },
+      )
+
+    // 依次发送订单与商品卡片（一般只带其一）
+    const sent: Message[] = []
+    if (order) {
+      const r = await gs('order', order)
+      if (r?.message) sent.push(r.message)
+      if (r?.reply) appendMany([r.reply])
+    }
+    if (product) {
+      const r = await gs('product', product)
+      if (r?.message) sent.push(r.message)
+      if (r?.reply) appendMany([r.reply])
+    }
+    sent.forEach((m) => upsertById(m))
+    messages.value = sortMessages(messages.value)
+    ctxOrder.value = null
+    ctxProduct.value = null
+    cardConfirmVisible.value = false
+    await scrollToBottom()
+  } catch {
+    ElMessage.error('发送失败，请重试')
+  } finally {
+    sendingCard.value = false
+  }
+}
+
+/** 弹窗关闭（点 X / 不需要）：不发卡片，清空上下文 */
+function onCardConfirmClosed(): void {
+  ctxOrder.value = null
+  ctxProduct.value = null
+}
+
 /** 按 id 插入或替换消息：已存在则原地替换，杜绝重复气泡 */
 function upsertById(m: Message): void {
   const idx = messages.value.findIndex((x) => x.id === m.id)
@@ -972,10 +1042,6 @@ function insert(text: string): void {
 
 function togglePanel(name: 'emoji'): void {
   panel.value = panel.value === name ? '' : name
-}
-
-function openDetail(url?: string): void {
-  if (url) window.open(url, '_blank')
 }
 
 function toggleDebug(): void {
@@ -1666,6 +1732,28 @@ onBeforeUnmount(stopPolling)
 
   &__more {
     color: #07c160;
+  }
+}
+
+/* 订单/商品卡片确认弹窗 */
+.card-confirm {
+  &__item {
+    margin-bottom: 10px;
+
+    :deep(.order-card),
+    :deep(.product-card) {
+      width: 100%;
+      border: 1px solid #e5e5e5;
+      border-radius: 8px;
+      overflow: hidden;
+    }
+  }
+
+  &__hint {
+    font-size: 13px;
+    line-height: 1.6;
+    color: #5f6b7a;
+    text-align: center;
   }
 }
 

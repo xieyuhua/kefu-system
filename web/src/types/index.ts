@@ -280,7 +280,10 @@ export interface Customer {
   conversation_count: number
   last_seen_at: string
   created_at: string
-  tags?: string[]
+  /** 客户标签（后端返回 {id,name,color} 对象数组，跨客服可见） */
+  tags?: TagRef[]
+  /** 客服备注（跨客服可见） */
+  remark?: string
   /** 客户最近一次访问 IP */
   ip?: string
   /** IP 归属城市 */
