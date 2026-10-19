@@ -13,16 +13,16 @@ server:
 
 database:
   # sqlite：零依赖，开箱即用（默认）
-  driver: sqlite
-  dsn: data/kefu.db
+  # driver: sqlite
+  # dsn: data/kefu.db
 
   # 生产切换 MySQL：把 driver 改成 mysql 并填下面的连接信息
-  # driver: mysql
-  # host: 127.0.0.1
-  # port: 3306
-  # user: root
-  # password: root
-  # name: kefu
+  driver: mysql
+  host: 192.168.2.6
+  port: 3308
+  user: root
+  password: root
+  name: kefu
 
 jwt:
   secret: kefu-saas-secret-change-me

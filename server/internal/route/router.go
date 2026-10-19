@@ -172,7 +172,9 @@ func Setup() *gin.Engine {
 	// 其它未知路径回退到用户端首页
 	r.NoRoute(func(c *gin.Context) {
 		if len(c.Request.URL.Path) >= len("/api") && c.Request.URL.Path[:len("/api")] == "/api" {
-			c.JSON(http.StatusNotFound, gin.H{"code": 404, "message": "接口不存在"})
+			// 项目约定「HTTP 恒 200，错误看 body.code」：未匹配的 /api 路径也返回 200，
+			// 由响应体里的 code=404 表达「接口不存在」，前端统一按 code 处理。
+			c.JSON(http.StatusOK, gin.H{"code": 404, "message": "接口不存在"})
 			return
 		}
 		c.File(filepath.Join(webDir, "index.html"))

@@ -11,11 +11,13 @@ package notify
 // 说明：repository 的方法都通过 pkg/storage 的全局连接取库，所以每个测试都用 storage.SetDB 注入。
 
 import (
+	"errors"
 	"fmt"
 	"reflect"
 	"sync/atomic"
 	"testing"
 
+	"kefu-server/internal/platform/dto"
 	"kefu-server/internal/platform/model"
 	"kefu-server/pkg/storage"
 
@@ -311,6 +313,282 @@ func TestRepository_DeleteDeviceOfUser(t *testing.T) {
 	}
 }
 
+// ---------------- 设备注册幂等（应用层 upsert，不建唯一索引） ----------------
+
+// registerDevice 调 Service.RegisterDevice，失败即中止（装配阶段，不代表断言）。
+func registerDevice(t *testing.T, s *Service, tenantID, userID uint, req dto.DeviceRequest) *dto.DeviceVO {
+	t.Helper()
+	vo, err := s.RegisterDevice(tenantID, userID, req)
+	if err != nil {
+		t.Fatalf("RegisterDevice(tenant=%d, user=%d, %+v) 失败: %v", tenantID, userID, req, err)
+	}
+	if vo == nil {
+		t.Fatalf("RegisterDevice(tenant=%d, user=%d, %+v) 返回 nil", tenantID, userID, req)
+	}
+	if vo.ID == 0 {
+		t.Fatalf("RegisterDevice(tenant=%d, user=%d, %+v) 返回的 VO 主键为 0", tenantID, userID, req)
+	}
+	return vo
+}
+
+// TestServiceRegisterDeviceDedupByToken 同一个 push_token 重复注册（APP 每次启动都会调）
+// 只能保留 1 行：主键复用、device / platform / name 被更新。
+func TestServiceRegisterDeviceDedupByToken(t *testing.T) {
+	db := newTestDB(t)
+	svc := NewService()
+	r := NewRepository()
+
+	first := registerDevice(t, svc, 1, 7, dto.DeviceRequest{
+		Device: "app", Platform: "ios", PushToken: "tok-7-ios", Name: "我的 iPhone",
+	})
+
+	list := mustListDevices(t, r, 1, 7)
+	if len(list) != 1 {
+		t.Fatalf("首次注册后设备条数 = %d, 期望 1", len(list))
+	}
+	if list[0].ID != first.ID {
+		t.Fatalf("首次注册返回的主键 = %d, 库内主键 = %d", first.ID, list[0].ID)
+	}
+	if list[0].PushToken != "tok-7-ios" || list[0].Name != "我的 iPhone" ||
+		list[0].Device != "app" || list[0].Platform != "ios" {
+		t.Fatalf("首次注册落库字段不正确: %+v", list[0])
+	}
+
+	// 同一个 token 再注册两次：不新增行，只更新可变字段
+	second := registerDevice(t, svc, 1, 7, dto.DeviceRequest{
+		Device: "app", Platform: "android", PushToken: "tok-7-ios", Name: "换机后改名",
+	})
+	if second.ID != first.ID {
+		t.Errorf("重复注册返回的主键 = %d, 期望复用原主键 %d", second.ID, first.ID)
+	}
+	registerDevice(t, svc, 1, 7, dto.DeviceRequest{
+		Device: "desktop", Platform: "windows", PushToken: "tok-7-ios", Name: "最后的名字",
+	})
+
+	list = mustListDevices(t, r, 1, 7)
+	if len(list) != 1 {
+		t.Fatalf("同 token 重复注册后设备条数 = %d, 期望仍为 1（不能堆积重复行）", len(list))
+	}
+	got := list[0]
+	if got.ID != first.ID {
+		t.Errorf("库内主键 = %d, 期望复用原主键 %d", got.ID, first.ID)
+	}
+	if got.Device != "desktop" || got.Platform != "windows" || got.Name != "最后的名字" {
+		t.Errorf("重复注册后的字段 = (device=%q, platform=%q, name=%q), 期望 (desktop, windows, 最后的名字)",
+			got.Device, got.Platform, got.Name)
+	}
+	if got.PushToken != "tok-7-ios" {
+		t.Errorf("push_token = %q, 期望保持 tok-7-ios", got.PushToken)
+	}
+
+	// 全表条数也必须是 1（确认没有在别的维度偷偷新增）
+	var total int64
+	if err := db.Model(&model.Device{}).Count(&total).Error; err != nil {
+		t.Fatalf("统计设备总数失败: %v", err)
+	}
+	if total != 1 {
+		t.Errorf("devices 表总行数 = %d, 期望 1", total)
+	}
+}
+
+// TestServiceRegisterDeviceDifferentTokens 不同 token 是不同设备，各自一行。
+func TestServiceRegisterDeviceDifferentTokens(t *testing.T) {
+	newTestDB(t)
+	svc := NewService()
+	r := NewRepository()
+
+	ios := registerDevice(t, svc, 1, 7, dto.DeviceRequest{
+		Device: "app", Platform: "ios", PushToken: "tok-ios", Name: "iPhone",
+	})
+	android := registerDevice(t, svc, 1, 7, dto.DeviceRequest{
+		Device: "app", Platform: "android", PushToken: "tok-android", Name: "Android",
+	})
+	desktop := registerDevice(t, svc, 1, 7, dto.DeviceRequest{
+		Device: "desktop", Platform: "windows", PushToken: "tok-desktop", Name: "工作电脑",
+	})
+
+	ids := map[uint]bool{ios.ID: true, android.ID: true, desktop.ID: true}
+	if len(ids) != 3 {
+		t.Fatalf("三台设备的主键出现重复：%d, %d, %d", ios.ID, android.ID, desktop.ID)
+	}
+
+	list := mustListDevices(t, r, 1, 7)
+	if len(list) != 3 {
+		t.Fatalf("设备条数 = %d, 期望 3", len(list))
+	}
+	// 按 id 倒序返回：最后注册的排在最前
+	if got, want := deviceNames(list), []string{"工作电脑", "Android", "iPhone"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("设备名列表 = %v, 期望 %v", got, want)
+	}
+	tokens := map[string]bool{}
+	for _, d := range list {
+		tokens[d.PushToken] = true
+	}
+	for _, want := range []string{"tok-ios", "tok-android", "tok-desktop"} {
+		if !tokens[want] {
+			t.Errorf("token %q 未落库，实际 tokens=%v", want, tokens)
+		}
+	}
+}
+
+// TestServiceRegisterDeviceEmptyTokenDedupByKind push_token 为空（PC / Web 端常见）时
+// 按 (tenant, user, device, platform) 去重：同一台机器重复注册只保留 1 行、只更新 name，
+// 且 push_token 保持为空。
+func TestServiceRegisterDeviceEmptyTokenDedupByKind(t *testing.T) {
+	newTestDB(t)
+	svc := NewService()
+	r := NewRepository()
+
+	first := registerDevice(t, svc, 1, 7, dto.DeviceRequest{
+		Device: "web", Platform: "mac", PushToken: "", Name: "浏览器-旧名字",
+	})
+	if first.PushToken != "" {
+		t.Errorf("空 token 注册后 VO 的 push_token = %q, 期望空串", first.PushToken)
+	}
+
+	second := registerDevice(t, svc, 1, 7, dto.DeviceRequest{
+		Device: "web", Platform: "mac", PushToken: "", Name: "浏览器-新名字",
+	})
+	if second.ID != first.ID {
+		t.Errorf("重复注册返回的主键 = %d, 期望复用原主键 %d", second.ID, first.ID)
+	}
+
+	list := mustListDevices(t, r, 1, 7)
+	if len(list) != 1 {
+		t.Fatalf("同 device+platform 重复注册后设备条数 = %d, 期望 1", len(list))
+	}
+	if list[0].Name != "浏览器-新名字" {
+		t.Errorf("name = %q, 期望被更新为「浏览器-新名字」", list[0].Name)
+	}
+	if list[0].PushToken != "" {
+		t.Errorf("push_token = %q, 期望保持为空", list[0].PushToken)
+	}
+
+	// 不同平台 / 不同端不算同一台设备，各自新增一行
+	registerDevice(t, svc, 1, 7, dto.DeviceRequest{Device: "web", Platform: "windows", Name: "Windows 浏览器"})
+	registerDevice(t, svc, 1, 7, dto.DeviceRequest{Device: "desktop", Platform: "mac", Name: "桌面端"})
+	if got := len(mustListDevices(t, r, 1, 7)); got != 3 {
+		t.Errorf("不同 device/platform 的设备条数 = %d, 期望 3", got)
+	}
+
+	// token 非空的注册不受「设备 + 平台」去重影响，走自己的 token 维度
+	registerDevice(t, svc, 1, 7, dto.DeviceRequest{
+		Device: "web", Platform: "mac", PushToken: "tok-web", Name: "带 token 的浏览器",
+	})
+	if got := len(mustListDevices(t, r, 1, 7)); got != 4 {
+		t.Errorf("带 token 的设备条数 = %d, 期望 4（与空 token 那台不是同一维度）", got)
+	}
+}
+
+// TestServiceRegisterDeviceIsolatedPerUser 去重维度必须带上 tenant_id / user_id：
+// 同一个 token 被不同用户注册时互不影响，各自一行。
+func TestServiceRegisterDeviceIsolatedPerUser(t *testing.T) {
+	newTestDB(t)
+	svc := NewService()
+	r := NewRepository()
+
+	u7 := registerDevice(t, svc, 1, 7, dto.DeviceRequest{
+		Device: "app", Platform: "ios", PushToken: "shared-token", Name: "用户7的手机",
+	})
+	u8 := registerDevice(t, svc, 1, 8, dto.DeviceRequest{
+		Device: "app", Platform: "ios", PushToken: "shared-token", Name: "用户8的手机",
+	})
+	t2u7 := registerDevice(t, svc, 2, 7, dto.DeviceRequest{
+		Device: "app", Platform: "ios", PushToken: "shared-token", Name: "另一个租户的手机",
+	})
+
+	if u7.ID == u8.ID || u7.ID == t2u7.ID || u8.ID == t2u7.ID {
+		t.Fatalf("不同用户/租户注册到了同一行：%d, %d, %d", u7.ID, u8.ID, t2u7.ID)
+	}
+
+	if got := deviceNames(mustListDevices(t, r, 1, 7)); !reflect.DeepEqual(got, []string{"用户7的手机"}) {
+		t.Errorf("用户 7 的设备 = %v, 期望 [用户7的手机]", got)
+	}
+	if got := deviceNames(mustListDevices(t, r, 1, 8)); !reflect.DeepEqual(got, []string{"用户8的手机"}) {
+		t.Errorf("用户 8 的设备 = %v, 期望 [用户8的手机]", got)
+	}
+	if got := deviceNames(mustListDevices(t, r, 2, 7)); !reflect.DeepEqual(got, []string{"另一个租户的手机"}) {
+		t.Errorf("租户 2 用户 7 的设备 = %v, 期望 [另一个租户的手机]", got)
+	}
+
+	// 各自再注册一次：只更新自己那一行，别人的行不受影响
+	registerDevice(t, svc, 1, 8, dto.DeviceRequest{
+		Device: "app", Platform: "ios", PushToken: "shared-token", Name: "用户8改名",
+	})
+	if got := deviceNames(mustListDevices(t, r, 1, 7)); !reflect.DeepEqual(got, []string{"用户7的手机"}) {
+		t.Errorf("用户 8 重复注册后，用户 7 的设备被改动: %v", got)
+	}
+	if got := deviceNames(mustListDevices(t, r, 1, 8)); !reflect.DeepEqual(got, []string{"用户8改名"}) {
+		t.Errorf("用户 8 的设备 = %v, 期望 [用户8改名]", got)
+	}
+}
+
+// TestRepository_FindDeviceByTokenAndKind 固定两个查询方法的语义：
+// 命中返回对应设备，未命中返回 ErrRecordNotFound；SaveDevice 走主键整体更新。
+func TestRepository_FindDeviceByTokenAndKind(t *testing.T) {
+	newTestDB(t)
+	r := NewRepository()
+
+	target := createDevice(t, r, 1, 7, "u7-ios", "app", "ios")
+
+	byToken, err := r.FindDeviceByToken(1, 7, target.PushToken)
+	if err != nil {
+		t.Fatalf("FindDeviceByToken 命中失败: %v", err)
+	}
+	if byToken.ID != target.ID {
+		t.Errorf("FindDeviceByToken 返回 id=%d, 期望 %d", byToken.ID, target.ID)
+	}
+
+	byKind, err := r.FindDeviceByKind(1, 7, "app", "ios")
+	if err != nil {
+		t.Fatalf("FindDeviceByKind 命中失败: %v", err)
+	}
+	if byKind.ID != target.ID {
+		t.Errorf("FindDeviceByKind 返回 id=%d, 期望 %d", byKind.ID, target.ID)
+	}
+
+	// 未命中：token / kind / 越界的 user 与 tenant 都必须报错（调用方据此新建）
+	misses := []struct {
+		name string
+		call func() (*model.Device, error)
+	}{
+		{name: "token 不存在", call: func() (*model.Device, error) { return r.FindDeviceByToken(1, 7, "no-such-token") }},
+		{name: "platform 不匹配", call: func() (*model.Device, error) { return r.FindDeviceByKind(1, 7, "app", "android") }},
+		{name: "device 不匹配", call: func() (*model.Device, error) { return r.FindDeviceByKind(1, 7, "desktop", "ios") }},
+		{name: "别的用户", call: func() (*model.Device, error) { return r.FindDeviceByToken(1, 8, target.PushToken) }},
+		{name: "别的租户", call: func() (*model.Device, error) { return r.FindDeviceByKind(2, 7, "app", "ios") }},
+	}
+	for _, m := range misses {
+		t.Run("未命中："+m.name, func(t *testing.T) {
+			d, err := m.call()
+			if err == nil {
+				t.Fatalf("期望返回错误（未命中），实际拿到 id=%d", d.ID)
+			}
+			if !errors.Is(err, gorm.ErrRecordNotFound) {
+				t.Errorf("错误 = %v, 期望 gorm.ErrRecordNotFound", err)
+			}
+		})
+	}
+
+	// SaveDevice：整体更新后能按主键读回
+	target.Name = "改名后的设备"
+	target.Platform = "android"
+	if err := r.SaveDevice(target); err != nil {
+		t.Fatalf("SaveDevice 失败: %v", err)
+	}
+	after, err := r.FindDeviceByToken(1, 7, target.PushToken)
+	if err != nil {
+		t.Fatalf("更新后 FindDeviceByToken 失败: %v", err)
+	}
+	if after.ID != target.ID || after.Name != "改名后的设备" || after.Platform != "android" {
+		t.Errorf("更新后的设备 = (id=%d, name=%q, platform=%q), 期望 (%d, 改名后的设备, android)",
+			after.ID, after.Name, after.Platform, target.ID)
+	}
+	if got := len(mustListDevices(t, r, 1, 7)); got != 1 {
+		t.Errorf("SaveDevice 不应新增行，设备条数 = %d, 期望 1", got)
+	}
+}
+
 // ---------------- 站内提醒增量语义 ----------------
 
 func TestRepository_ListNotificationsAfter(t *testing.T) {
@@ -508,6 +786,48 @@ func TestRepository_SetNotificationsReadEmptyIDsMarksAll(t *testing.T) {
 	// 全部已读只作用在 (1, 7) 范围内
 	if got := readFlags(mustListNotifications(t, r, 1, 8, 0, 10)); got[other.ID] {
 		t.Errorf("ids 为空时把别的用户（1,8）的提醒也标记成已读了")
+	}
+}
+
+// TestRepository_ListNotificationsAfterLimitFallback limit <= 0 时必须按默认上限兜底：
+// gorm 的 Limit(0) 会生成 LIMIT 0（永远查不到数据），负数等于不写 LIMIT（全表拉取），
+// 两者都不是「断线重连后增量补拉」的语义。
+func TestRepository_ListNotificationsAfterLimitFallback(t *testing.T) {
+	newTestDB(t)
+	r := NewRepository()
+
+	// 造 205 条，足以区分「默认上限 200」与「全量 / 空结果」
+	const total = defaultNotificationLimit + 5
+	for i := 0; i < total; i++ {
+		createNotification(t, r, 1, 7, fmt.Sprintf("提醒-%03d", i))
+	}
+
+	full := mustListNotifications(t, r, 1, 7, 0, total)
+	if len(full) != total {
+		t.Fatalf("全量拉取条数 = %d, 期望 %d", len(full), total)
+	}
+	wantIDs := notificationIDs(full[:defaultNotificationLimit])
+
+	for _, limit := range []int{0, -1, -200} {
+		t.Run(fmt.Sprintf("limit=%d 按默认上限 %d 处理", limit, defaultNotificationLimit), func(t *testing.T) {
+			list := mustListNotifications(t, r, 1, 7, 0, limit)
+			if len(list) != defaultNotificationLimit {
+				t.Fatalf("返回条数 = %d, 期望 %d（既不能是 0，也不能是全量 %d）",
+					len(list), defaultNotificationLimit, total)
+			}
+			if got := notificationIDs(list); !reflect.DeepEqual(got, wantIDs) {
+				t.Errorf("返回的提醒 id 列表与「最早的 %d 条」不一致", defaultNotificationLimit)
+			}
+		})
+	}
+
+	// 正数 limit 仍然照常生效（兜底不影响正常调用）
+	if got := len(mustListNotifications(t, r, 1, 7, 0, 3)); got != 3 {
+		t.Errorf("limit=3 时返回条数 = %d, 期望 3", got)
+	}
+	if got := len(mustListNotifications(t, r, 1, 7, 0, defaultNotificationLimit+1)); got != defaultNotificationLimit+1 {
+		t.Errorf("limit=%d 时返回条数 = %d, 期望 %d",
+			defaultNotificationLimit+1, got, defaultNotificationLimit+1)
 	}
 }
 

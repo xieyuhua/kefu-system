@@ -305,6 +305,40 @@ func TestJWTAuthorizedPasses(t *testing.T) {
 	}
 }
 
+// TestUnknownAPIPathReturns200 项目约定「HTTP 恒 200，错误看 body.code」：
+// 未注册的 /api 路径也返回 HTTP 200，响应体为 {"code":404,"message":"接口不存在"}，
+// 不能因为路由不存在就返回 HTTP 404（前端统一按 body.code 判断）。
+func TestUnknownAPIPathReturns200(t *testing.T) {
+	r := newTestEngine(t)
+
+	targets := []string{
+		"/api",
+		"/api/not-exist",
+		"/api/conversations/999999/unknown-action",
+		"/api/devices/1/unknown",
+	}
+
+	for _, target := range targets {
+		t.Run(target, func(t *testing.T) {
+			w, res := doJSON(t, r, http.MethodGet, target, nil)
+
+			if w.Code != http.StatusOK {
+				t.Fatalf("GET %s 状态码 = %d, 期望 %d（HTTP 恒 200，业务码在 body 里）",
+					target, w.Code, http.StatusOK)
+			}
+			if res.Code != 404 {
+				t.Errorf("GET %s 业务码 = %d, 期望 404, body=%s", target, res.Code, w.Body.String())
+			}
+			if res.Message != "接口不存在" {
+				t.Errorf("GET %s 提示语 = %q, 期望 %q", target, res.Message, "接口不存在")
+			}
+			if ct := w.Header().Get("Content-Type"); !strings.HasPrefix(ct, "application/json") {
+				t.Errorf("GET %s Content-Type = %q, 期望 application/json", target, ct)
+			}
+		})
+	}
+}
+
 // tamperedToken 用错误的密钥签发一个「结构合法但验签失败」的 token。
 // 这里直接调 jwt 签发而不用 auth.GenerateToken：后者会把 token 写进缓存，
 // 而 ParseToken 的缓存分支不验签，那样就测不出签名错误了。

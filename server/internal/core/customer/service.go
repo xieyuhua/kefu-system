@@ -17,6 +17,7 @@ import (
 	"kefu-server/internal/platform/ipinfo"
 	"kefu-server/internal/platform/model"
 	"kefu-server/pkg/response"
+	"kefu-server/pkg/storage"
 	"kefu-server/pkg/util"
 )
 
@@ -31,12 +32,8 @@ func NewService() *Service { return &Service{repo: NewRepository()} }
 // ---------------- Customer / 历史档案 ----------------
 
 func (s *Service) ListCustomers(tenantID uint, keyword string, channelID uint, page, pageSize int) (*response.Paged, error) {
-	if page <= 0 {
-		page = 1
-	}
-	if pageSize <= 0 {
-		pageSize = 20
-	}
+	// 统一夹取到合法区间，并回显夹取后的值（否则 page_size=100000000 会原样出现在响应里）
+	page, pageSize = storage.ClampPage(page, pageSize)
 	list, total, err := s.repo.ListCustomersPaged(tenantID, keyword, channelID, page, pageSize)
 	if err != nil {
 		return nil, err
@@ -117,12 +114,8 @@ func (s *Service) GetCustomerDetail(tenantID, id uint) (*dto.CustomerDetail, err
 // ---------------- Order ----------------
 
 func (s *Service) ListOrders(tenantID uint, customerID uint, keyword string, page, pageSize int) (*response.Paged, error) {
-	if page <= 0 {
-		page = 1
-	}
-	if pageSize <= 0 {
-		pageSize = 20
-	}
+	// 统一夹取到合法区间，并回显夹取后的值（否则 page_size=100000000 会原样出现在响应里）
+	page, pageSize = storage.ClampPage(page, pageSize)
 	list, total, err := s.repo.ListOrdersPaged(tenantID, customerID, keyword, page, pageSize)
 	if err != nil {
 		return nil, err
@@ -141,12 +134,8 @@ func (s *Service) ListOrders(tenantID uint, customerID uint, keyword string, pag
 // ---------------- Product ----------------
 
 func (s *Service) ListProducts(tenantID uint, keyword string, page, pageSize int) (*response.Paged, error) {
-	if page <= 0 {
-		page = 1
-	}
-	if pageSize <= 0 {
-		pageSize = 20
-	}
+	// 统一夹取到合法区间，并回显夹取后的值（否则 page_size=100000000 会原样出现在响应里）
+	page, pageSize = storage.ClampPage(page, pageSize)
 	list, total, err := s.repo.ListProductsPaged(tenantID, keyword, page, pageSize)
 	if err != nil {
 		return nil, err

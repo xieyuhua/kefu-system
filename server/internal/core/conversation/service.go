@@ -24,6 +24,7 @@ import (
 	"log"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"kefu-server/internal/core/account"
 	"kefu-server/internal/core/channel"
@@ -33,6 +34,7 @@ import (
 	"kefu-server/internal/platform/model"
 	"kefu-server/internal/platform/realtime"
 	"kefu-server/pkg/response"
+	"kefu-server/pkg/storage"
 	"kefu-server/pkg/util"
 )
 
@@ -411,41 +413,57 @@ func (s *Service) ArchiveConversation(tenantID, convID, operatorID uint) error {
 // 复用单条归档语义：仅隐藏不删数据，客户再次咨询会自动恢复。
 // q 使用与列表查询完全相同的过滤条件，保证「所见即所清」。
 func (s *Service) ArchiveConversationsBulk(tenantID, userID uint, isAdmin bool, q ConvQuery) (int, error) {
-	if q.Page <= 0 {
+	// 分批归档：单页上限受 storage.MaxPageSize 约束（防 DoS 的全局夹取），
+	// 归档后的会话不再出现在可见列表里，因此每批都从第 1 页取，直到取空或达到批数上限，
+	// 避免「一键清空」在大数据量下只处理第一批就返回。
+	const maxBatches = 100 // 单次最多处理 100*MaxPageSize 条，防止误操作无限循环
+	total := 0
+	for batch := 0; batch < maxBatches; batch++ {
 		q.Page = 1
-	}
-	// 清空时不按分页截断，但设上限防止误操作拖垮服务
-	q.PageSize = 500
+		q.PageSize = storage.MaxPageSize
 
-	paged, err := s.ListConversations(tenantID, userID, isAdmin, q)
-	if err != nil {
-		return 0, err
-	}
-	// ListConversations 返回的 List 是 []interface{}，逐项取出会话 ID。
-	items, ok := paged.List.([]interface{})
-	if !ok || len(items) == 0 {
-		return 0, nil
-	}
+		paged, err := s.ListConversations(tenantID, userID, isAdmin, q)
+		if err != nil {
+			return total, err
+		}
+		// ListConversations 返回的 List 是 []interface{}，逐项取出会话 ID。
+		items, ok := paged.List.([]interface{})
+		if !ok || len(items) == 0 {
+			break
+		}
 
-	ids := make([]uint, 0, len(items))
-	for _, it := range items {
-		switch v := it.(type) {
-		case map[string]interface{}:
-			// VO 以 map 形态进入（JSON 往返）
-			if f, ok := v["id"].(float64); ok {
-				ids = append(ids, uint(f))
+		ids := make([]uint, 0, len(items))
+		for _, it := range items {
+			switch v := it.(type) {
+			case map[string]interface{}:
+				// VO 以 map 形态进入（JSON 往返）
+				if f, ok := v["id"].(float64); ok {
+					ids = append(ids, uint(f))
+				}
+			case dto.ConversationVO:
+				ids = append(ids, v.ID)
 			}
-		case dto.ConversationVO:
-			ids = append(ids, v.ID)
+		}
+		if len(ids) == 0 {
+			log.Printf("[bulk] 未从列表解析出会话 id，items=%d", len(items))
+			break
+		}
+
+		n, err := s.archiveConversationIDs(tenantID, userID, ids)
+		total += n
+		if err != nil {
+			return total, err
+		}
+		if len(items) < q.PageSize {
+			break // 已取到最后一页
 		}
 	}
-	if len(ids) == 0 {
-		log.Printf("[bulk] 未从列表解析出会话 id，items=%d", len(items))
-		return 0, nil
-	}
+	return total, nil
+}
 
+// archiveConversationIDs 归档一批会话：先查归属以判断是否需要释放回待接待池。
+func (s *Service) archiveConversationIDs(tenantID, userID uint, ids []uint) (int, error) {
 	now := time.Now()
-	// 先查出归属，用于判断哪些需要释放回待接待池
 	rows, err := s.repo.ListConversationAgentRefs(tenantID, ids)
 	if err != nil {
 		return 0, err
@@ -745,7 +763,27 @@ func (s *Service) SendMessage(tenantID, convID, senderID uint, req dto.SendMessa
 	return &mvo, &cvo, nil
 }
 
+// previewMaxRunes 会话摘要的最大字符数（按 rune 计）。
+//
+// 背景：conversations.last_message 字段是 varchar(512)，而客户消息本身没有长度限制。
+// 若不截断，客户发一条 >512 字节的消息后 SaveConversation 会在 MySQL 严格模式下
+// 报 1406（Data too long），接口 500 —— 此时消息已经入库，用户重发就产生重复消息。
+// 100 个中文约 300 字节、100 个 emoji 约 400 字节，加上省略号（3 字节）都远小于 512 字节。
+const previewMaxRunes = 100
+
+// previewEllipsis 超长预览的截断标记（U+2026，UTF-8 编码 3 字节）。
+const previewEllipsis = "…"
+
+// messagePreview 生成会话摘要（last_message）的展示文案，并按 rune 截断到 previewMaxRunes。
+//
+// 所有消息类型都必须走同一条出口：非文本类型先取占位文案，文本 / 系统消息取 Content，
+// 最后统一截断，避免任何一类消息绕过长度限制。
 func messagePreview(m *model.Message) string {
+	return truncatePreview(previewContent(m))
+}
+
+// previewContent 按消息类型取原始预览文案（不含截断逻辑）。
+func previewContent(m *model.Message) string {
 	switch m.Type {
 	case "image":
 		return "[图片]"
@@ -762,6 +800,17 @@ func messagePreview(m *model.Message) string {
 	default:
 		return m.Content
 	}
+}
+
+// truncatePreview 把预览文案按 rune 截断到 previewMaxRunes，
+// 超出部分丢弃并以 previewEllipsis 结尾；未超长时原样返回（不追加省略号）。
+func truncatePreview(s string) string {
+	if utf8.RuneCountInString(s) <= previewMaxRunes {
+		return s
+	}
+	// 先转 []rune 再切片，保证不会把一个多字节字符切成半个（中文 / emoji 都安全）。
+	runes := []rune(s)
+	return string(runes[:previewMaxRunes]) + previewEllipsis
 }
 
 func (s *Service) addSystemMessage(tenantID, convID uint, content string) *model.Message {

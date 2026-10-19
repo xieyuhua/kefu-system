@@ -1,12 +1,16 @@
 package automation
 
-// 自动回复关键词判定（matchKeywords / defaultMatchType）是包内私有函数，
+// 自动回复关键词判定（matchKeywords / splitKeywords / defaultMatchType）是包内私有函数，
 // 因此用同包测试直接调用。
 //
 // 调用约定（与 ReplyNow 一致）：matchKeywords 收到的 lowerQ 已经是小写化的客户问题，
 // 关键词在函数内部做 TrimSpace + ToLower，因此「大小写不敏感」只对关键词一侧生效。
+//
+// 关键词分隔符：半角/全角逗号、半角/全角分号与换行都算分隔符（兼容中文输入法）。
 
 import (
+	"reflect"
+	"strings"
 	"testing"
 
 	"kefu-server/internal/platform/model"
@@ -80,6 +84,57 @@ func TestMatchKeywords(t *testing.T) {
 		{
 			name:     "关键词两侧空白与空段被忽略",
 			keywords: " , 退货 ,, ", matchType: "contain", query: "我要申请退货", want: true,
+		},
+
+		// ---------- 中文输入法分隔符（全角逗号 / 分号 / 换行） ----------
+		{
+			// 修复点：中文输入法的「，」不是半角逗号，以前整串会被当成一个关键词。
+			name:     "中文逗号分隔：命中第一个关键词",
+			keywords: "你好，在吗", matchType: "contain", query: "你好", want: true,
+		},
+		{
+			name:     "中文逗号分隔：命中第二个关键词",
+			keywords: "你好，在吗", matchType: "contain", query: "在吗", want: true,
+		},
+		{
+			name:     "中文逗号分隔：都不命中",
+			keywords: "你好，在吗", matchType: "contain", query: "我要退款", want: false,
+		},
+		{
+			name:     "中文逗号分隔 + 精确匹配：命中其中一个关键词",
+			keywords: "你好，在吗", matchType: "equal", query: "在吗", want: true,
+		},
+		{
+			name:     "中文分号分隔：命中第二个关键词",
+			keywords: "退款；退货", matchType: "contain", query: "我要退货", want: true,
+		},
+		{
+			name:     "中文分号分隔 + 前缀匹配",
+			keywords: "物流；退", matchType: "prefix", query: "退款流程", want: true,
+		},
+		{
+			name:     "换行分隔：命中第二行的关键词",
+			keywords: "发票\n退款", matchType: "contain", query: "我要退款", want: true,
+		},
+		{
+			name:     "混合分隔符（半角逗号 / 中文逗号 / 半角分号 / 中文分号 / 换行）：命中最后一个",
+			keywords: "a,b，c;d；e\nf", matchType: "contain", query: "问题里含 f", want: true,
+		},
+		{
+			name:     "混合分隔符：全都不命中",
+			keywords: "a,b，c;d；e\nf", matchType: "contain", query: "完全无关的提问", want: false,
+		},
+		{
+			name:     "中文分隔符 + 两侧空白 + 空段被忽略",
+			keywords: "  ，退货；；\n ", matchType: "contain", query: "我要申请退货", want: true,
+		},
+		{
+			name:     "只有中文分隔符与空段：不命中",
+			keywords: " ，；\n ；， ", matchType: "contain", query: "随便问问", want: false,
+		},
+		{
+			name:     "中文分隔符 + 大小写策略不变（关键词小写化后比较）",
+			keywords: "你好，REFUND", matchType: "contain", query: "i want refund now", want: true,
 		},
 		{
 			name:     "空关键词串：不命中",
@@ -195,5 +250,42 @@ func TestDefaultMatchTypeIdempotent(t *testing.T) {
 		if once != twice {
 			t.Errorf("defaultMatchType 不幂等：in=%q once=%q twice=%q", in, once, twice)
 		}
+	}
+}
+
+// TestSplitKeywords 固定关键词切分的分隔符集合：
+// 半角逗号 `,`、中文逗号 `，`、半角分号 `;`、中文分号 `；` 与换行都算分隔符；
+// 连续分隔符产生的空段由 FieldsFunc 丢弃，首尾空白由调用方的 TrimSpace 处理。
+func TestSplitKeywords(t *testing.T) {
+	tests := []struct {
+		name string
+		raw  string
+		want []string
+	}{
+		{name: "半角逗号", raw: "物流,发货,快递", want: []string{"物流", "发货", "快递"}},
+		{name: "中文逗号", raw: "你好，在吗", want: []string{"你好", "在吗"}},
+		{name: "半角分号", raw: "退款;退货", want: []string{"退款", "退货"}},
+		{name: "中文分号", raw: "退款；退货", want: []string{"退款", "退货"}},
+		{name: "换行（含 \\r\\n）", raw: "a\nb\r\nc", want: []string{"a", "b", "c"}},
+		{name: "混合分隔符", raw: "a,b，c;d；e\nf", want: []string{"a", "b", "c", "d", "e", "f"}},
+		{name: "连续分隔符与首尾空白", raw: " , a ，， b ;; ", want: []string{"a", "b"}},
+		{name: "单个关键词无分隔符", raw: "退款", want: []string{"退款"}},
+		{name: "空串", raw: "", want: []string{}},
+		{name: "只有分隔符", raw: "，；,;\n\r", want: []string{}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := make([]string, 0, len(tt.want))
+			for _, seg := range splitKeywords(tt.raw) {
+				// 与 matchKeywords 保持同一规整口径：TrimSpace + 跳过空段
+				if seg = strings.TrimSpace(seg); seg != "" {
+					got = append(got, seg)
+				}
+			}
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("splitKeywords(%q) = %v, 期望 %v", tt.raw, got, tt.want)
+			}
+		})
 	}
 }

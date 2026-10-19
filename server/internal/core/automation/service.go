@@ -5,7 +5,7 @@
 // 内核间调用：全部走 conversation 的 Service 方法，不直接读写对方的表。
 //
 // 形态约定：业务编排都是 Service 的方法（指针接收者），跨内核依赖在构造时建好；
-// 只有无状态的纯函数（matchKeywords / defaultMatchType / orDefaultStr / robotAnswer）保留为包级函数。
+// 只有无状态的纯函数（matchKeywords / splitKeywords / defaultMatchType / orDefaultStr / robotAnswer）保留为包级函数。
 package automation
 
 import (
@@ -243,8 +243,23 @@ func (s *Service) ReplyNow(tenantID, convID, customerID, channelID uint, questio
 	return &ReplyResult{Transferred: false, Message: vo}
 }
 
+// keywordSeparators 关键词分隔符集合：半角/全角逗号、半角/全角分号与换行。
+//
+// 后台的关键词输入框是自由文本，中文输入法打出来的是全角「，」「；」，
+// 只按半角逗号切分会把整串当成一个关键词（配置「你好，在吗」永远匹配不到），
+// 这里统一把四种分隔符 + 换行都当作切分点。
+const keywordSeparators = ",，;；\n\r"
+
+// splitKeywords 按 keywordSeparators 把关键词配置切成独立关键词：
+// 连续分隔符产生的空段由 strings.FieldsFunc 自动丢弃，每段再做 TrimSpace（由调用方执行）。
+func splitKeywords(raw string) []string {
+	return strings.FieldsFunc(raw, func(r rune) bool {
+		return strings.ContainsRune(keywordSeparators, r)
+	})
+}
+
 func matchKeywords(r *model.AutoReply, lowerQ string) bool {
-	for _, kw := range strings.Split(r.Keywords, ",") {
+	for _, kw := range splitKeywords(r.Keywords) {
 		kw = strings.ToLower(strings.TrimSpace(kw))
 		if kw == "" {
 			continue

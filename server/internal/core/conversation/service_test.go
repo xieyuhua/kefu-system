@@ -4,7 +4,9 @@ package conversation
 //
 // 契约：不同类型的消息在会话摘要里展示不同的占位文案；
 // 图片 / 视频 / 文件 / 订单 / 商品 这些「非文本内容」统一显示中文标签，不把原始 JSON 塞进摘要；
-// 文本与系统消息、未知类型则原样返回 Content。
+// 文本与系统消息、未知类型则取 Content。
+// 所有类型最后都走同一条出口 truncatePreview：超过 100 个字符时截断到 100 个字符 + 「…」，
+// 保证写进 conversations.last_message（varchar(512)）时不会超长。
 
 import (
 	"strings"
@@ -73,10 +75,11 @@ func TestMessagePreview(t *testing.T) {
 			want: "语音内容",
 		},
 		{
-			// 注意：当前实现没有截断逻辑，超长内容会原样写入 last_message（见汇报）。
-			name: "超长文本：当前实现不截断，原样返回",
+			// 修复点：超长内容必须截断到 100 个字符 + 「…」，
+			// 否则 SaveConversation 写 varchar(512) 的 last_message 会 1406 报错。
+			name: "超长文本：截断到 100 个字符 + …",
 			msg:  &model.Message{Type: "text", Content: longText},
-			want: longText,
+			want: strings.Repeat("客服您好，", 20) + "…",
 		},
 		{
 			name: "多行文本：保留换行，不做压缩",
@@ -112,21 +115,109 @@ func TestMessagePreview(t *testing.T) {
 	}
 }
 
-// TestMessagePreviewLongTextRunes 单独固定「超长内容」的现状：
-// 当前实现原样返回，字符数与输入完全一致（不是按字节截断，也没有省略号）。
+// TestMessagePreviewLongTextRunes 固定「超长内容」的行为：
+// 按 rune 截断到 100 个字符，再追加省略号「…」，总长 101 个字符。
+// 重点是不能按字节截断——500 个中文若按字节切会把最后一个字切成半个非法 UTF-8。
 func TestMessagePreviewLongTextRunes(t *testing.T) {
 	const wantRunes = 500
 	content := strings.Repeat("退", wantRunes)
 	got := messagePreview(&model.Message{Type: "text", Content: content})
 
-	if got != content {
-		t.Fatalf("messagePreview 长文本 = %q（len=%d），期望与输入完全一致（len=%d）",
-			got, len(got), len(content))
+	if n := utf8.RuneCountInString(got); n != previewMaxRunes+1 {
+		t.Fatalf("摘要字符数 = %d, 期望 %d（%d 个字符 + 1 个省略号）",
+			n, previewMaxRunes+1, previewMaxRunes)
 	}
-	if n := utf8.RuneCountInString(got); n != wantRunes {
-		t.Errorf("摘要字符数 = %d, 期望 %d", n, wantRunes)
+	if !strings.HasSuffix(got, "…") {
+		t.Errorf("摘要 %q 未以省略号结尾", got)
 	}
-	if strings.Contains(got, "…") || strings.Contains(got, "...") {
-		t.Errorf("摘要 %q 含省略号，与当前实现（不截断）不符", got)
+	if want := strings.Repeat("退", previewMaxRunes) + "…"; got != want {
+		t.Errorf("摘要 = %q, 期望 %q", got, want)
+	}
+	if !utf8.ValidString(got) {
+		t.Errorf("截断后的摘要不是合法 UTF-8: %q", got)
+	}
+	// 落库安全：截断后的字节数必须远小于 conversations.last_message 的 512 字节
+	if len(got) > 512 {
+		t.Errorf("摘要字节数 = %d, 超过 last_message 的 512 字节上限", len(got))
+	}
+}
+
+// TestMessagePreviewTruncateBoundary 边界：正好 100 个字符不截断、101 个字符截断到 100 +「…」。
+func TestMessagePreviewTruncateBoundary(t *testing.T) {
+	tests := []struct {
+		name       string
+		content    string
+		want       string
+		wantRunes  int
+		wantSuffix bool // 是否应以省略号结尾
+	}{
+		{
+			name:       "正好 100 个字符：原样返回，不加省略号",
+			content:    strings.Repeat("好", previewMaxRunes),
+			want:       strings.Repeat("好", previewMaxRunes),
+			wantRunes:  previewMaxRunes,
+			wantSuffix: false,
+		},
+		{
+			name:       "101 个字符：截断到 100 + 省略号",
+			content:    strings.Repeat("好", previewMaxRunes) + "多",
+			want:       strings.Repeat("好", previewMaxRunes) + "…",
+			wantRunes:  previewMaxRunes + 1,
+			wantSuffix: true,
+		},
+		{
+			name:       "99 个字符：原样返回，不加省略号",
+			content:    strings.Repeat("好", previewMaxRunes-1),
+			want:       strings.Repeat("好", previewMaxRunes-1),
+			wantRunes:  previewMaxRunes - 1,
+			wantSuffix: false,
+		},
+		{
+			name:       "emoji（4 字节 / 字符）101 个：同样按 rune 截断，字节数不超过 512",
+			content:    strings.Repeat("😀", previewMaxRunes) + "😀",
+			want:       strings.Repeat("😀", previewMaxRunes) + "…",
+			wantRunes:  previewMaxRunes + 1,
+			wantSuffix: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := messagePreview(&model.Message{Type: "text", Content: tt.content})
+			if got != tt.want {
+				t.Fatalf("messagePreview = %q, 期望 %q", got, tt.want)
+			}
+			if n := utf8.RuneCountInString(got); n != tt.wantRunes {
+				t.Errorf("摘要字符数 = %d, 期望 %d", n, tt.wantRunes)
+			}
+			if suffix := strings.HasSuffix(got, "…"); suffix != tt.wantSuffix {
+				t.Errorf("摘要以省略号结尾 = %v, 期望 %v", suffix, tt.wantSuffix)
+			}
+			if !utf8.ValidString(got) {
+				t.Errorf("摘要不是合法 UTF-8: %q", got)
+			}
+			if len(got) > 512 {
+				t.Errorf("摘要字节数 = %d, 超过 512 字节上限", len(got))
+			}
+		})
+	}
+}
+
+// TestMessagePreviewAllTypesTruncated 所有消息类型都必须走同一条截断出口：
+// 占位文案本身很短（不受影响），但任何类型都不允许把超长原文塞进 last_message。
+func TestMessagePreviewAllTypesTruncated(t *testing.T) {
+	long := strings.Repeat("很长的内容", 200) // 1000 个字符
+	for _, typ := range []string{"", "text", "system", "voice", "image", "video", "file", "order", "product"} {
+		m := &model.Message{Type: typ, Content: long}
+		got := messagePreview(m)
+		if n := utf8.RuneCountInString(got); n > previewMaxRunes+1 {
+			t.Errorf("type=%q 的摘要字符数 = %d, 超过上限 %d", typ, n, previewMaxRunes+1)
+		}
+		if len(got) > 512 {
+			t.Errorf("type=%q 的摘要字节数 = %d, 超过 512 字节上限", typ, len(got))
+		}
+		if got == "" {
+			t.Errorf("type=%q 的摘要为空", typ)
+		}
 	}
 }

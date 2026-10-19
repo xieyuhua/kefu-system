@@ -29,8 +29,16 @@ func (r *Repository) CreateNotification(n *model.Notification) error {
 	return storage.DB().Create(n).Error
 }
 
+// defaultNotificationLimit 增量拉取提醒的默认条数上限，与唯一调用方 OfflineNotifications 保持一致。
+const defaultNotificationLimit = 200
+
 // ListNotificationsAfter 取用户在 sinceID 之后新增的系统提醒（最多 limit 条，升序）。
 func (r *Repository) ListNotificationsAfter(tenantID, userID, sinceID uint, limit int) ([]*model.Notification, error) {
+	// gorm 对 limit=0 会生成 LIMIT 0（永远查不到数据）、对负数等于不写 LIMIT（全表拉取），
+	// 两者都不是调用方想要的结果，这里统一按默认上限兜底。
+	if limit <= 0 {
+		limit = defaultNotificationLimit
+	}
 	var list []*model.Notification
 	if err := storage.DB().Where("tenant_id = ? AND user_id = ? AND id > ?", tenantID, userID, sinceID).
 		Order("id asc").Limit(limit).Find(&list).Error; err != nil {
@@ -53,6 +61,38 @@ func (r *Repository) SetNotificationsRead(tenantID, userID uint, ids []uint) err
 // CreateDevice 登记一台推送设备。
 func (r *Repository) CreateDevice(d *model.Device) error {
 	return storage.DB().Create(d).Error
+}
+
+// FindDeviceByToken 按 (tenant_id, user_id, push_token) 查一台已登记的设备。
+//
+// 未命中返回 gorm.ErrRecordNotFound（与其它 Find* 一致）。
+// 排序取 id 最小的那条：线上若已存在历史重复行，也总是复用最早的一行，不让重复继续放大。
+func (r *Repository) FindDeviceByToken(tenantID, userID uint, token string) (*model.Device, error) {
+	d := &model.Device{}
+	if err := storage.DB().
+		Where("tenant_id = ? AND user_id = ? AND push_token = ?", tenantID, userID, token).
+		Order("id asc").First(d).Error; err != nil {
+		return nil, err
+	}
+	return d, nil
+}
+
+// FindDeviceByKind 按 (tenant_id, user_id, device, platform) 查一台已登记的设备。
+// 用于 push_token 为空的端（PC / Web）：同一台机器同一平台只保留一行。
+// 未命中同样返回 gorm.ErrRecordNotFound。
+func (r *Repository) FindDeviceByKind(tenantID, userID uint, device, platform string) (*model.Device, error) {
+	d := &model.Device{}
+	if err := storage.DB().
+		Where("tenant_id = ? AND user_id = ? AND device = ? AND platform = ?", tenantID, userID, device, platform).
+		Order("id asc").First(d).Error; err != nil {
+		return nil, err
+	}
+	return d, nil
+}
+
+// SaveDevice 按主键整体更新一台设备（应用层 upsert 的更新分支）。
+func (r *Repository) SaveDevice(d *model.Device) error {
+	return storage.DB().Save(d).Error
 }
 
 // ListDevicesOfUser 列出某用户已登记的推送设备（按 id 倒序）。

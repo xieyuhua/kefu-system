@@ -35,13 +35,41 @@ func Tx(fn func(tx *gorm.DB) error) error {
 	return db.Transaction(fn)
 }
 
-// Paginate 按页码/页大小计算 offset，供各仓储复用。
-func Paginate(page, pageSize int) (offset, limit int) {
+// 分页上限常量。handler 会把 query 里的 page / page_size 直接透传进来，
+// 必须在这里夹取：否则 ?page_size=100000000 会生成巨大的 LIMIT，形成 DoS 入口。
+const (
+	// DefaultPageSize 未指定（或非法）页大小时的默认每页条数。
+	DefaultPageSize = 20
+	// MaxPageSize 单页条数上限：现有前端最大用 200，保持兼容。
+	MaxPageSize = 200
+	// MaxPage 页码上限：避免 page 极大时 offset 过大拖垮数据库。
+	MaxPage = 10000
+)
+
+// ClampPage 把页码/页大小夹取到合法区间，返回实际生效的值。
+// 用于「响应里回显 page / page_size」的场景：回显原始 query 值会让调用方
+// 误以为 100000000 生效了，必须回显夹取后的值。
+func ClampPage(page, pageSize int) (int, int) {
 	if page <= 0 {
 		page = 1
 	}
-	if pageSize <= 0 {
-		pageSize = 20
+	if page > MaxPage {
+		page = MaxPage
 	}
+	if pageSize <= 0 {
+		pageSize = DefaultPageSize
+	}
+	if pageSize > MaxPageSize {
+		pageSize = MaxPageSize
+	}
+	return page, pageSize
+}
+
+// Paginate 按页码/页大小计算 offset，供各仓储复用。
+//
+// 传入值一律先夹取到合法区间：page ∈ [1, MaxPage]，pageSize ∈ [1, MaxPageSize]；
+// page <= 0 视为第 1 页，pageSize <= 0 视为 DefaultPageSize。
+func Paginate(page, pageSize int) (offset, limit int) {
+	page, pageSize = ClampPage(page, pageSize)
 	return (page - 1) * pageSize, pageSize
 }
