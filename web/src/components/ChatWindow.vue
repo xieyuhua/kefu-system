@@ -95,6 +95,7 @@
         :conversation-id="conversation.id"
         :search-active="searchOpen"
         :sending="props.sending"
+        :compact="compactHeader"
         @send="onSend"
         @pick-order="emit('pick-order')"
         @pick-product="emit('pick-product')"

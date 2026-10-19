@@ -17,35 +17,55 @@
       </el-popover>
 
       <el-button text size="small" title="发送图片 / 视频 / 文件" :icon="Paperclip" @click="pickMedia" />
-      <el-button text size="small" title="订单" @click="emit('pick-order')">🧾 订单</el-button>
-      <el-button text size="small" title="商品" @click="emit('pick-product')">🛍 商品</el-button>
 
-      <el-popover placement="top-start" trigger="click" width="260">
-        <template #reference>
-          <el-button text size="small" title="快捷回复">⚡ 快捷回复</el-button>
-        </template>
-        <div class="quick-list">
-          <div v-for="q in QUICK_REPLIES" :key="q" class="quick-item" @click="useQuick(q)">
-            {{ q }}
+      <!-- PC 端：订单 / 商品 / 快捷回复 / 搜索 平铺展示 -->
+      <template v-if="!compact">
+        <el-button text size="small" title="订单" @click="emit('pick-order')">🧾 订单</el-button>
+        <el-button text size="small" title="商品" @click="emit('pick-product')">🛍 商品</el-button>
+
+        <el-popover placement="top-start" trigger="click" width="260">
+          <template #reference>
+            <el-button text size="small" title="快捷回复">⚡ 快捷回复</el-button>
+          </template>
+          <div class="quick-list">
+            <div v-for="q in QUICK_REPLIES" :key="q" class="quick-item" @click="useQuick(q)">
+              {{ q }}
+            </div>
           </div>
-        </div>
-      </el-popover>
+        </el-popover>
 
-      <!-- 搜索历史消息（微信式，放在快捷回复旁） -->
-      <el-button
-        text
-        size="small"
-        :class="{ 'is-on': searchActive }"
-        title="搜索该会话的历史消息"
-        :icon="Search"
-        @click="emit('toggle-search')"
-      >
-        搜索
-      </el-button>
+        <!-- 搜索历史消息（微信式，放在快捷回复旁） -->
+        <el-button
+          text
+          size="small"
+          :class="{ 'is-on': searchActive }"
+          title="搜索该会话的历史消息"
+          :icon="Search"
+          @click="emit('toggle-search')"
+        >
+          搜索
+        </el-button>
+      </template>
 
-      <span class="toolbar-tip">
+      <!-- 移动端：次要功能收进「更多」下拉，避免按钮挤不下没法点 -->
+      <el-dropdown v-else trigger="click" @command="onMore">
+        <el-button text size="small" title="更多" :icon="MoreFilled" />
+        <template #dropdown>
+          <el-dropdown-menu>
+            <el-dropdown-item command="order">🧾 发送订单</el-dropdown-item>
+            <el-dropdown-item command="product">🛍 发送商品</el-dropdown-item>
+            <el-dropdown-item command="quick">⚡ 快捷回复</el-dropdown-item>
+            <el-dropdown-item command="search">🔍 搜索聊天记录</el-dropdown-item>
+          </el-dropdown-menu>
+        </template>
+      </el-dropdown>
+
+      <span v-if="!compact" class="toolbar-tip">
         <span v-if="uploading" class="toolbar-uploading">上传中…</span>
         <span v-else>Ctrl + Enter 发送</span>
+      </span>
+      <span v-else class="toolbar-tip">
+        <span v-if="uploading" class="toolbar-uploading">上传中…</span>
       </span>
     </div>
 
@@ -73,13 +93,28 @@
     </div>
 
     <input ref="fileRef" type="file" hidden accept="image/*,video/*,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv,.zip,.rar,.7z,.json,.log" @change="onFile" />
+
+    <!-- 移动端快捷回复弹层 -->
+    <el-dialog v-model="quickOpen" title="快捷回复" width="86%" append-to-body>
+      <div class="quick-list quick-list--dialog">
+        <button
+          v-for="q in QUICK_REPLIES"
+          :key="q"
+          type="button"
+          class="quick-item"
+          @click="useQuickFromDialog(q)"
+        >
+          {{ q }}
+        </button>
+      </div>
+    </el-dialog>
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
-import { Paperclip, Search } from '@element-plus/icons-vue'
+import { MoreFilled, Paperclip, Search } from '@element-plus/icons-vue'
 import { uploadAttachment, validateFile } from '@/api/upload'
 import type { MessageType } from '@/types'
 
@@ -90,6 +125,8 @@ const props = defineProps<{
   searchActive?: boolean
   /** 本会话是否有消息正在发送（用于禁用发送按钮、防止重复提交） */
   sending?: boolean
+  /** 紧凑模式（移动端）：次要按钮收进「更多」下拉 */
+  compact?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -98,6 +135,31 @@ const emit = defineEmits<{
   'pick-product': []
   'toggle-search': []
 }>()
+
+/** 移动端「更多」菜单分发 */
+function onMore(command: string): void {
+  switch (command) {
+    case 'order':
+      emit('pick-order')
+      break
+    case 'product':
+      emit('pick-product')
+      break
+    case 'quick':
+      showQuick()
+      break
+    case 'search':
+      emit('toggle-search')
+      break
+  }
+}
+
+/** 移动端快捷回复（不用 popover，用轻量弹层） */
+const quickOpen = ref(false)
+
+function showQuick(): void {
+  quickOpen.value = true
+}
 
 const searchActive = computed(() => props.searchActive === true)
 /** 发送中（props 变化会触发重渲染，这里转成 ref 便于 submit 内读取最新值） */
@@ -155,6 +217,13 @@ function insert(text: string): void {
 
 function useQuick(text: string): void {
   draft.value = text
+  focus()
+}
+
+/** 移动端弹层里选用快捷回复：填充草稿、关弹层并聚焦输入框 */
+function useQuickFromDialog(text: string): void {
+  draft.value = text
+  quickOpen.value = false
   focus()
 }
 
@@ -282,14 +351,28 @@ defineExpose({ focus, insert })
   gap: 2px;
 }
 
+.quick-list--dialog {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
 .quick-item {
-  padding: 6px 8px;
+  padding: 10px 12px;
+  border: none;
+  background: transparent;
   border-radius: var(--kf-radius-sm);
-  font-size: 13px;
+  font-size: 14px;
+  text-align: left;
+  color: var(--kf-text);
   cursor: pointer;
 
   &:hover {
     background: var(--kf-bg-hover);
+  }
+
+  &:active {
+    background: var(--kf-bg-active);
   }
 }
 </style>

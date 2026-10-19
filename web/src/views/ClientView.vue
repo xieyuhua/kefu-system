@@ -186,6 +186,35 @@
         </template>
       </div>
 
+      <!-- 订单/商品卡片气泡（拼多多客服式）：无遮罩，悬于输入栏上方，点卡片发送，点 ✕ 取消 -->
+      <transition name="card-pop">
+        <div v-if="cardConfirmVisible" class="card-pop">
+          <button type="button" class="card-pop__close" aria-label="关闭" @click="dismissCard">
+            ✕
+          </button>
+          <div class="card-pop__body">
+            <div
+              v-if="ctxOrder"
+              class="card-confirm__item"
+              role="button"
+              :class="{ 'is-sending': sendingCard }"
+              @click="sendContextCards"
+            >
+              <OrderCard :order="ctxOrder" />
+            </div>
+            <div
+              v-if="ctxProduct"
+              class="card-confirm__item"
+              role="button"
+              :class="{ 'is-sending': sendingCard }"
+              @click="sendContextCards"
+            >
+              <ProductCard :product="ctxProduct" />
+            </div>
+          </div>
+        </div>
+      </transition>
+
       <!-- 底部输入栏 -->
       <footer class="composer">
         <div class="composer__bar">
@@ -251,35 +280,6 @@
         </div>
       </footer>
     </div>
-
-    <!-- 订单/商品卡片气泡（拼多多客服式）：无遮罩，右下角浮层，点卡片发送，点 ✕ 取消 -->
-    <transition name="card-pop">
-      <div v-if="cardConfirmVisible" class="card-pop">
-        <button type="button" class="card-pop__close" aria-label="关闭" @click="dismissCard">
-          ✕
-        </button>
-        <div class="card-pop__body">
-          <div
-            v-if="ctxOrder"
-            class="card-confirm__item"
-            role="button"
-            :class="{ 'is-sending': sendingCard }"
-            @click="sendContextCards"
-          >
-            <OrderCard :order="ctxOrder" />
-          </div>
-          <div
-            v-if="ctxProduct"
-            class="card-confirm__item"
-            role="button"
-            :class="{ 'is-sending': sendingCard }"
-            @click="sendContextCards"
-          >
-            <ProductCard :product="ctxProduct" />
-          </div>
-        </div>
-      </div>
-    </transition>
   </div>
 </template>
 
@@ -1736,14 +1736,15 @@ onBeforeUnmount(stopPolling)
   }
 }
 
-/* 订单/商品卡片气泡（拼多多客服式）：无遮罩，右下角浮层 */
+/* 订单/商品卡片气泡（拼多多客服式）：无遮罩，悬在输入栏上方，不遮挡输入按钮 */
 .card-pop {
-  position: fixed;
-  right: 16px;
-  bottom: 16px;
-  z-index: 2000;
-  width: 300px;
-  max-width: calc(100vw - 32px);
+  position: absolute;
+  right: 12px;
+  /* 悬在输入栏上方：底部预留约 64px（输入栏高度），不压住表情/附件/发送按钮 */
+  bottom: 72px;
+  z-index: 30;
+  width: 260px;
+  max-width: calc(100% - 24px);
 }
 
 .card-pop__close {

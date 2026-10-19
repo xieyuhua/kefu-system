@@ -11,10 +11,10 @@
         <span class="order-amount">{{ formatMoney(order.amount) }}</span>
         <span class="order-qty">×{{ order.quantity ?? 1 }}</span>
       </div>
-      <div class="order-foot">
+      <div class="order-status-row">
         <span class="order-status">{{ order.status || '未知状态' }}</span>
-        <span class="order-no">订单号 {{ order.order_no }}</span>
       </div>
+      <div class="order-no kf-ellipsis">订单号 {{ order.order_no }}</div>
     </div>
   </div>
 </template>
@@ -97,11 +97,7 @@ defineProps<{ order: OrderCardPayload }>()
   color: var(--kf-text-sub);
 }
 
-.order-foot {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
+.order-status-row {
   margin-top: 4px;
   font-size: 12px;
 }
@@ -110,10 +106,9 @@ defineProps<{ order: OrderCardPayload }>()
   color: var(--kf-primary);
 }
 
+/* 订单号独占一行，超长省略 */
 .order-no {
+  margin-top: 3px;
   color: var(--kf-text-weak);
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
 }
 </style>
