@@ -83,5 +83,5 @@ kefu/
 ## 后端约定
 - 统一响应 `{code, message, data}`，HTTP 恒 200
 - 鉴权 `Authorization: Bearer <token>`
-- SQLite 默认，MySQL 可切（改 config.yaml）
+- SQLite 默认，MySQL 可切（改 config.yaml）；MySQL 必须 utf8mb4 —— 启动时会自动把库与既有表转为 utf8mb4（否则 emoji 等 4 字节字符报 Error 1366）
 - 种子数据：`POST /api/seed` 或启动时自动初始化演示数据
