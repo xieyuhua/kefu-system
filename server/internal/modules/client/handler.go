@@ -2,6 +2,7 @@ package client
 
 // 本文件是用户端（modules/client）的 HTTP 层。
 // handler 只做参数解析与响应包装：客户识别、会话定位、订单 / 商品卡片查询都在 service 层。
+// 所有处理器都是 *Handler 的方法（指针接收者），实例由 route 在 Setup 里创建一次。
 //
 // 用户端接口：所有参数通过 GET query 传递，便于运营直接拼链接投放。
 //
@@ -14,7 +15,6 @@ import (
 	"net/http"
 	"strings"
 
-	"kefu-server/internal/core/automation"
 	"kefu-server/internal/core/conversation"
 	"kefu-server/internal/platform/dto"
 	"kefu-server/internal/platform/ipinfo"
@@ -28,9 +28,17 @@ import (
 
 var errNoChannel = errors.New("渠道不存在")
 
+// Handler 用户端的 HTTP 层，持有本模块 service。
+type Handler struct {
+	svc *Service
+}
+
+// NewHandler 创建 HTTP 层实例（自带 service 依赖）。
+func NewHandler() *Handler { return &Handler{svc: NewService()} }
+
 // resolveChannel 解析用户端接入参数 channel（用户端页面与 WebSocket 共用）。
-func resolveChannel(c *gin.Context, tenantID uint) (*model.Channel, error) {
-	ch, err := ResolveGuestChannel(tenantID, c.Query("channel"))
+func (h *Handler) resolveChannel(c *gin.Context, tenantID uint) (*model.Channel, error) {
+	ch, err := h.svc.ResolveGuestChannel(tenantID, c.Query("channel"))
 	if err != nil {
 		return nil, errNoChannel
 	}
@@ -38,22 +46,22 @@ func resolveChannel(c *gin.Context, tenantID uint) (*model.Channel, error) {
 }
 
 // guestTenantID 用户端未登录，租户由 ?tenant= 指定（缺省取第一个租户，便于演示）。
-// 端内私有：其它端与内核的游客态租户口径见 core/customer.DefaultTenantID。
-func guestTenantID(c *gin.Context) uint {
+// 端内私有：其它端与内核的游客态租户口径见 core/customer 的 DefaultTenantID。
+func (h *Handler) guestTenantID(c *gin.Context) uint {
 	if t := httpx.QueryUint(c, "tenant"); t > 0 {
 		return t
 	}
-	return DefaultTenantID()
+	return h.svc.DefaultTenantID()
 }
 
 // GuestInitHandler 用户端页面初始化：拿到渠道、客户、会话、欢迎语、上下文卡片
-func GuestInitHandler(c *gin.Context) {
-	tenantID := guestTenantID(c)
+func (h *Handler) GuestInitHandler(c *gin.Context) {
+	tenantID := h.guestTenantID(c)
 	if tenantID == 0 {
 		response.Param(c, "缺少租户参数 tenant")
 		return
 	}
-	ch, err := resolveChannel(c, tenantID)
+	ch, err := h.resolveChannel(c, tenantID)
 	if err != nil {
 		response.Param(c, "渠道不存在或未启用：channel="+c.Query("channel"))
 		return
@@ -65,7 +73,7 @@ func GuestInitHandler(c *gin.Context) {
 
 	// 找到或创建客户
 	ip := ipinfo.ClientIP(c.Request.RemoteAddr, c.Request.Header)
-	cu, err := EnsureGuestCustomer(tenantID, ch, uid,
+	cu, err := h.svc.EnsureGuestCustomer(tenantID, ch, uid,
 		c.Query("nickname"), c.Query("avatar"), c.Query("phone"), ip)
 	if err != nil {
 		response.Server(c, err.Error())
@@ -74,17 +82,17 @@ func GuestInitHandler(c *gin.Context) {
 
 	// 定位或创建会话：同一客户始终复用最近一个会话（closed/archived 自动激活），
 	// 保证同一 uid + 渠道的聊天记录自然合并
-	conv, err := conversation.FindOrCreateConversation(tenantID, cu.ID, ch.ID)
+	conv, err := h.svc.conv.FindOrCreateConversation(tenantID, cu.ID, ch.ID)
 	if err != nil {
 		response.Server(c, err.Error())
 		return
 	}
 
 	// 上下文卡片：订单 / 商品
-	orderCard := LookupOrderCard(tenantID, strings.TrimSpace(c.Query("order_no")))
-	productCard := LookupProductCard(tenantID, strings.TrimSpace(c.Query("pid")))
+	orderCard := h.svc.LookupOrderCard(tenantID, strings.TrimSpace(c.Query("order_no")))
+	productCard := h.svc.LookupProductCard(tenantID, strings.TrimSpace(c.Query("pid")))
 
-	history, _ := conversation.ListMessages(tenantID, conv.ID, 0, 20)
+	history, _ := h.svc.conv.ListMessages(tenantID, conv.ID, 0, 20)
 
 	// 每次访问都刷新 IP 与归属城市（展示在客服工作台的会话列表）
 	ipinfo.RecordCustomerIP(cu.ID, ip)
@@ -108,13 +116,13 @@ func GuestInitHandler(c *gin.Context) {
 }
 
 // GuestSendHandler 用户端发消息：走自动回复/转人工引擎
-func GuestSendHandler(c *gin.Context) {
-	tenantID := guestTenantID(c)
+func (h *Handler) GuestSendHandler(c *gin.Context) {
+	tenantID := h.guestTenantID(c)
 	if tenantID == 0 {
 		response.Param(c, "缺少租户参数 tenant")
 		return
 	}
-	ch, err := resolveChannel(c, tenantID)
+	ch, err := h.resolveChannel(c, tenantID)
 	if err != nil {
 		response.Param(c, "渠道不存在")
 		return
@@ -131,18 +139,18 @@ func GuestSendHandler(c *gin.Context) {
 		return
 	}
 
-	cu, err := FindGuestCustomer(tenantID, ch.ID, strings.TrimSpace(c.Query("uid")))
+	cu, err := h.svc.FindGuestCustomer(tenantID, ch.ID, strings.TrimSpace(c.Query("uid")))
 	if err != nil {
 		response.Param(c, "请先调用 /api/guest/init 初始化会话")
 		return
 	}
-	conv, err := conversation.FindOrCreateConversation(tenantID, cu.ID, ch.ID)
+	conv, err := h.svc.conv.FindOrCreateConversation(tenantID, cu.ID, ch.ID)
 	if err != nil {
 		response.Server(c, err.Error())
 		return
 	}
 
-	mvo, cvo, err := conversation.ReceiveMessage(tenantID, conv.ID, cu.ID, req.Type, req.Content)
+	mvo, cvo, err := h.svc.conv.ReceiveMessage(tenantID, conv.ID, cu.ID, req.Type, req.Content)
 	if err != nil {
 		response.Server(c, err.Error())
 		return
@@ -152,7 +160,7 @@ func GuestSendHandler(c *gin.Context) {
 
 	// 同步判定自动回复 / 转人工（供接口直接返回）
 	transferred := false
-	reply := automation.ReplyNow(tenantID, conv.ID, cu.ID, ch.ID, req.Content)
+	reply := h.svc.auto.ReplyNow(tenantID, conv.ID, cu.ID, ch.ID, req.Content)
 	if reply != nil {
 		transferred = reply.Transferred
 	}
@@ -165,18 +173,18 @@ func GuestSendHandler(c *gin.Context) {
 }
 
 // GuestMessagesHandler 无 WebSocket 环境的降级轮询
-func GuestMessagesHandler(c *gin.Context) {
-	tenantID := guestTenantID(c)
+func (h *Handler) GuestMessagesHandler(c *gin.Context) {
+	tenantID := h.guestTenantID(c)
 	if tenantID == 0 {
 		response.Param(c, "缺少租户参数 tenant")
 		return
 	}
-	cu, err := FindGuestCustomerByExternalID(tenantID, c.Query("uid"))
+	cu, err := h.svc.FindGuestCustomerByExternalID(tenantID, c.Query("uid"))
 	if err != nil {
 		response.OK(c, []interface{}{})
 		return
 	}
-	conv, err := LatestConversationOfCustomer(tenantID, cu.ID)
+	conv, err := h.svc.LatestConversationOfCustomer(tenantID, cu.ID)
 	if err != nil {
 		response.OK(c, []interface{}{})
 		return
@@ -192,12 +200,12 @@ func GuestMessagesHandler(c *gin.Context) {
 	var list []dto.MessageVO
 	switch {
 	case beforeID > 0:
-		list, err = conversation.ListMessages(tenantID, conv.ID, beforeID, limit)
+		list, err = h.svc.conv.ListMessages(tenantID, conv.ID, beforeID, limit)
 	case sinceID > 0:
-		list, err = conversation.ListMessagesSince(tenantID, conv.ID, sinceID, limit)
+		list, err = h.svc.conv.ListMessagesSince(tenantID, conv.ID, sinceID, limit)
 	default:
 		// 首屏：取最新的 limit 条（beforeID 传 0 即不带 id < 条件）
-		list, err = conversation.ListMessages(tenantID, conv.ID, 0, limit)
+		list, err = h.svc.conv.ListMessages(tenantID, conv.ID, 0, limit)
 	}
 	if err != nil {
 		response.Server(c, err.Error())
@@ -210,13 +218,13 @@ func GuestMessagesHandler(c *gin.Context) {
 // 连接后立即回放「离线期间累积的消息」（since_id 之后），保证不在线也不丢消息。
 //
 //	GET /ws/guest?channel=web&uid=u_10001&since_id=0&tenant=1
-func GuestWSHandler(c *gin.Context) {
-	tenantID := guestTenantID(c)
+func (h *Handler) GuestWSHandler(c *gin.Context) {
+	tenantID := h.guestTenantID(c)
 	if tenantID == 0 {
 		c.JSON(http.StatusBadRequest, gin.H{"code": 400, "message": "缺少租户参数 tenant"})
 		return
 	}
-	ch, err := resolveChannel(c, tenantID)
+	ch, err := h.resolveChannel(c, tenantID)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"code": 400, "message": "渠道不存在"})
 		return
@@ -228,7 +236,7 @@ func GuestWSHandler(c *gin.Context) {
 	}
 
 	// 定位客户与会话（复用 GuestInit 的查找逻辑）
-	cu, convID, err := FindGuestConversation(tenantID, ch.ID, uid)
+	cu, convID, err := h.svc.FindGuestConversation(tenantID, ch.ID, uid)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"code": 404, "message": err.Error()})
 		return
@@ -252,7 +260,7 @@ func GuestWSHandler(c *gin.Context) {
 	})
 
 	// ② 离线消息回放：把 since_id 之后的消息一次性推给该端
-	if msgs, err := conversation.ListMessagesSince(tenantID, convID, httpx.QueryUint(c, "since_id"), 200); err == nil && len(msgs) > 0 {
+	if msgs, err := h.svc.conv.ListMessagesSince(tenantID, convID, httpx.QueryUint(c, "since_id"), 200); err == nil && len(msgs) > 0 {
 		for _, m := range msgs {
 			client.SendEvent("message.new", m)
 		}

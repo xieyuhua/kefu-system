@@ -2,6 +2,9 @@
 // 渠道 ↔ 接待账号分配。模块内按 service / repository 分层，HTTP 层在各端模块。
 //
 // 依赖方向：core/channel → platform → pkg（不依赖任何业务端模块，也不依赖其它内核包）。
+//
+// 形态约定：业务编排都是 Service 的方法（指针接收者），Service 在构造时建好自己的
+// Repository 依赖；只有无状态的纯函数（AccessPath / ChannelKey / AccessURL）保留为包级函数。
 package channel
 
 import (
@@ -21,18 +24,26 @@ import (
 	qrcode "github.com/skip2/go-qrcode"
 )
 
+// Service 渠道内核的业务编排层。
+type Service struct {
+	repo *Repository
+}
+
+// NewService 创建业务层实例（自带数据访问层依赖）。
+func NewService() *Service { return &Service{repo: NewRepository()} }
+
 // ---------------- Channel ----------------
 
-func ListChannels(tenantID uint, agentID uint, isAdmin bool) ([]dto.ChannelVO, error) {
-	list, err := ListChannelsByTenant(tenantID, agentID, isAdmin)
+func (s *Service) ListChannels(tenantID uint, agentID uint, isAdmin bool) ([]dto.ChannelVO, error) {
+	list, err := s.repo.ListChannelsByTenant(tenantID, agentID, isAdmin)
 	if err != nil {
 		return nil, err
 	}
 	out := make([]dto.ChannelVO, 0, len(list))
 	for _, c := range list {
 		// 角标统计失败不阻断列表展示，与原逻辑一致
-		agentCount, _ := CountAgentsOfChannel(c.ID)
-		pending, _ := CountPendingByChannel(tenantID, c.ID)
+		agentCount, _ := s.repo.CountAgentsOfChannel(c.ID)
+		pending, _ := s.repo.CountPendingByChannel(tenantID, c.ID)
 		out = append(out, dto.ChannelVO{
 			ID: c.ID, Type: c.Type, Name: c.Name, AppID: c.AppID,
 			Enabled: c.Enabled, RobotEnabled: c.RobotEnabled,
@@ -63,7 +74,7 @@ func ChannelKey(c *model.Channel) string {
 	return strconv.FormatUint(uint64(c.ID), 10)
 }
 
-func CreateChannel(tenantID uint, req dto.ChannelRequest) (*dto.ChannelVO, error) {
+func (s *Service) CreateChannel(tenantID uint, req dto.ChannelRequest) (*dto.ChannelVO, error) {
 	if req.Name == "" {
 		return nil, errors.New("渠道名称不能为空")
 	}
@@ -85,13 +96,13 @@ func CreateChannel(tenantID uint, req dto.ChannelRequest) (*dto.ChannelVO, error
 	// app_id 未指定时自动生成一个随机标识（可在渠道管理里重置）
 	if c.AppID == "" {
 		c.AppID = idgen.GenerateAppID(tenantID)
-	} else if err := ensureAppIDUnique(tenantID, c.AppID, 0); err != nil {
+	} else if err := s.ensureAppIDUnique(tenantID, c.AppID, 0); err != nil {
 		return nil, err
 	}
 	if req.Enabled != nil {
 		c.Enabled = *req.Enabled
 	}
-	if err := InsertChannel(c); err != nil {
+	if err := s.repo.InsertChannel(c); err != nil {
 		return nil, err
 	}
 	return &dto.ChannelVO{
@@ -103,9 +114,9 @@ func CreateChannel(tenantID uint, req dto.ChannelRequest) (*dto.ChannelVO, error
 }
 
 // ensureAppIDUnique 保证同一租户内 app_id 唯一（excludeID 用于更新场景排除自身）
-func ensureAppIDUnique(tenantID uint, appID string, excludeID uint) error {
+func (s *Service) ensureAppIDUnique(tenantID uint, appID string, excludeID uint) error {
 	// 统计失败按「未被占用」处理，与原逻辑一致
-	cnt, _ := CountChannelByAppID(tenantID, appID, excludeID)
+	cnt, _ := s.repo.CountChannelByAppID(tenantID, appID, excludeID)
 	if cnt > 0 {
 		return errors.New("该渠道标识（app_id）已被占用")
 	}
@@ -114,8 +125,8 @@ func ensureAppIDUnique(tenantID uint, appID string, excludeID uint) error {
 
 // ResetChannelAppID 重置渠道的 app_id（生成新的随机标识）
 // 注意：重置后旧链接会失效，需要重新分发二维码/链接。
-func ResetChannelAppID(tenantID, id uint) (string, error) {
-	c, err := FindChannelByID(tenantID, id)
+func (s *Service) ResetChannelAppID(tenantID, id uint) (string, error) {
+	c, err := s.repo.FindChannelByID(tenantID, id)
 	if err != nil {
 		return "", errors.New("渠道不存在")
 	}
@@ -125,7 +136,7 @@ func ResetChannelAppID(tenantID, id uint) (string, error) {
 			continue
 		}
 		c.AppID = newID
-		if err := SaveChannel(c); err != nil {
+		if err := s.repo.SaveChannel(c); err != nil {
 			return "", err
 		}
 		return newID, nil
@@ -133,8 +144,8 @@ func ResetChannelAppID(tenantID, id uint) (string, error) {
 	return "", errors.New("生成渠道标识失败，请重试")
 }
 
-func UpdateChannel(tenantID, id uint, req dto.ChannelRequest) error {
-	c, err := FindChannelByID(tenantID, id)
+func (s *Service) UpdateChannel(tenantID, id uint, req dto.ChannelRequest) error {
+	c, err := s.repo.FindChannelByID(tenantID, id)
 	if err != nil {
 		return errors.New("渠道不存在")
 	}
@@ -147,7 +158,7 @@ func UpdateChannel(tenantID, id uint, req dto.ChannelRequest) error {
 	if req.AppID != "" {
 		appID := strings.TrimSpace(req.AppID)
 		if appID != c.AppID {
-			if err := ensureAppIDUnique(tenantID, appID, c.ID); err != nil {
+			if err := s.ensureAppIDUnique(tenantID, appID, c.ID); err != nil {
 				return err
 			}
 			c.AppID = appID
@@ -169,11 +180,11 @@ func UpdateChannel(tenantID, id uint, req dto.ChannelRequest) error {
 	if req.HideMoreMenu != nil {
 		c.HideMoreMenu = *req.HideMoreMenu
 	}
-	return SaveChannel(c)
+	return s.repo.SaveChannel(c)
 }
 
-func DeleteChannel(tenantID, id uint) error {
-	return DeleteChannelWithBindings(tenantID, id)
+func (s *Service) DeleteChannel(tenantID, id uint) error {
+	return s.repo.DeleteChannelWithBindings(tenantID, id)
 }
 
 // ---------------- 渠道接入地址与二维码 ----------------
@@ -192,8 +203,8 @@ func AccessURL(c *model.Channel, publicBase string) string {
 }
 
 // AccessURLByAppID 按渠道 ID 取完整接入地址（重置 app_id 后返回新地址）
-func AccessURLByAppID(tenantID, channelID uint, publicBase string) string {
-	c, err := FindChannelByID(tenantID, channelID)
+func (s *Service) AccessURLByAppID(tenantID, channelID uint, publicBase string) string {
+	c, err := s.repo.FindChannelByID(tenantID, channelID)
 	if err != nil {
 		return ""
 	}
@@ -202,8 +213,8 @@ func AccessURLByAppID(tenantID, channelID uint, publicBase string) string {
 
 // ChannelQR 生成渠道接入二维码（PNG bytes / base64）。
 // size 为图片边长像素，建议 256~512。
-func ChannelQR(tenantID, channelID uint, publicBase string, size int) (*ChannelQRVO, error) {
-	c, err := FindChannelByID(tenantID, channelID)
+func (s *Service) ChannelQR(tenantID, channelID uint, publicBase string, size int) (*ChannelQRVO, error) {
+	c, err := s.repo.FindChannelByID(tenantID, channelID)
 	if err != nil {
 		return nil, errors.New("渠道不存在")
 	}
@@ -246,16 +257,16 @@ type ChannelQRVO struct {
 // ---------------- 渠道 ↔ 接待账号快速设置 ----------------
 
 // ListChannelAgents 列出某渠道可分配的客服账号及当前是否已分配
-func ListChannelAgents(tenantID, channelID uint) ([]dto.ChannelAgentVO, error) {
-	if _, err := FindChannelByID(tenantID, channelID); err != nil {
+func (s *Service) ListChannelAgents(tenantID, channelID uint) ([]dto.ChannelAgentVO, error) {
+	if _, err := s.repo.FindChannelByID(tenantID, channelID); err != nil {
 		return nil, errors.New("渠道不存在")
 	}
-	users, err := ListTenantAgents(tenantID)
+	users, err := s.repo.ListTenantAgents(tenantID)
 	if err != nil {
 		return nil, err
 	}
 	selected := map[uint]bool{}
-	acs, _ := ListAgentChannelsByChannel(channelID)
+	acs, _ := s.repo.ListAgentChannelsByChannel(channelID)
 	for _, ac := range acs {
 		selected[ac.UserID] = true
 	}
@@ -270,28 +281,28 @@ func ListChannelAgents(tenantID, channelID uint) ([]dto.ChannelAgentVO, error) {
 }
 
 // SetChannelAgents 批量设置某渠道的接待账号（全量覆盖）
-func SetChannelAgents(tenantID, channelID uint, userIDs []uint) ([]dto.ChannelAgentVO, error) {
-	if _, err := FindChannelByID(tenantID, channelID); err != nil {
+func (s *Service) SetChannelAgents(tenantID, channelID uint, userIDs []uint) ([]dto.ChannelAgentVO, error) {
+	if _, err := s.repo.FindChannelByID(tenantID, channelID); err != nil {
 		return nil, errors.New("渠道不存在")
 	}
 	// 校验账号归属本租户
 	valid := map[uint]bool{}
 	if len(userIDs) > 0 {
 		// 校验失败按「无账号通过校验」处理，与原逻辑一致
-		users, _ := FindAgentUsersByIDs(tenantID, userIDs)
+		users, _ := s.repo.FindAgentUsersByIDs(tenantID, userIDs)
 		for _, u := range users {
 			valid[u.ID] = true
 		}
 	}
 	// 覆盖式写入：清空旧分配后逐个重建（写入失败由后续列表查询体现，与原逻辑一致）
-	_ = DeleteAgentChannels(channelID)
+	_ = s.repo.DeleteAgentChannels(channelID)
 	for _, id := range userIDs {
 		if !valid[id] {
 			continue
 		}
-		_ = CreateAgentChannel(&model.AgentChannel{UserID: id, ChannelID: channelID})
+		_ = s.repo.CreateAgentChannel(&model.AgentChannel{UserID: id, ChannelID: channelID})
 	}
-	return ListChannelAgents(tenantID, channelID)
+	return s.ListChannelAgents(tenantID, channelID)
 }
 
 // ---------------- 渠道类型库 ----------------
@@ -335,28 +346,28 @@ var builtinChannelTypes = []struct {
 }
 
 // EnsureBuiltinChannelTypes 为租户补齐内置类型（幂等）
-func EnsureBuiltinChannelTypes(tenantID uint) {
+func (s *Service) EnsureBuiltinChannelTypes(tenantID uint) {
 	for _, b := range builtinChannelTypes {
-		if _, err := FindChannelTypeByCode(tenantID, b.Code); err == nil {
+		if _, err := s.repo.FindChannelTypeByCode(tenantID, b.Code); err == nil {
 			continue
 		}
-		InsertChannelType(&model.ChannelType{
+		s.repo.InsertChannelType(&model.ChannelType{
 			TenantID: tenantID, Code: b.Code, Name: b.Name,
 			Color: b.Color, Icon: b.Icon, Sort: b.Sort, BuiltIn: true,
 		})
 	}
 }
 
-func ListChannelTypes(tenantID uint) ([]ChannelTypeVO, error) {
-	EnsureBuiltinChannelTypes(tenantID)
-	list, err := ListChannelTypesByTenant(tenantID)
+func (s *Service) ListChannelTypes(tenantID uint) ([]ChannelTypeVO, error) {
+	s.EnsureBuiltinChannelTypes(tenantID)
+	list, err := s.repo.ListChannelTypesByTenant(tenantID)
 	if err != nil {
 		return nil, err
 	}
 	out := make([]ChannelTypeVO, 0, len(list))
 	for _, t := range list {
 		// 使用数统计失败不阻断列表展示，与原逻辑一致
-		used, _ := CountChannelsOfType(tenantID, t.Code)
+		used, _ := s.repo.CountChannelsOfType(tenantID, t.Code)
 		out = append(out, ChannelTypeVO{
 			ID: t.ID, Code: t.Code, Name: t.Name, Color: t.Color,
 			Icon: t.Icon, Sort: t.Sort, BuiltIn: t.BuiltIn,
@@ -366,7 +377,7 @@ func ListChannelTypes(tenantID uint) ([]ChannelTypeVO, error) {
 	return out, nil
 }
 
-func CreateChannelType(tenantID uint, req ChannelTypeRequest) (*ChannelTypeVO, error) {
+func (s *Service) CreateChannelType(tenantID uint, req ChannelTypeRequest) (*ChannelTypeVO, error) {
 	code := strings.TrimSpace(req.Code)
 	name := strings.TrimSpace(req.Name)
 	if code == "" {
@@ -379,7 +390,7 @@ func CreateChannelType(tenantID uint, req ChannelTypeRequest) (*ChannelTypeVO, e
 	if code == "" {
 		return nil, errors.New("渠道类型不能为空")
 	}
-	if _, err := FindChannelTypeByCode(tenantID, code); err == nil {
+	if _, err := s.repo.FindChannelTypeByCode(tenantID, code); err == nil {
 		return nil, errors.New("该渠道类型已存在")
 	}
 	color := req.Color
@@ -390,7 +401,7 @@ func CreateChannelType(tenantID uint, req ChannelTypeRequest) (*ChannelTypeVO, e
 		TenantID: tenantID, Code: code, Name: name,
 		Color: color, Icon: req.Icon, Sort: req.Sort,
 	}
-	if err := InsertChannelType(t); err != nil {
+	if err := s.repo.InsertChannelType(t); err != nil {
 		return nil, err
 	}
 	return &ChannelTypeVO{
@@ -399,8 +410,8 @@ func CreateChannelType(tenantID uint, req ChannelTypeRequest) (*ChannelTypeVO, e
 	}, nil
 }
 
-func UpdateChannelType(tenantID, id uint, req ChannelTypeRequest) error {
-	t, err := FindChannelTypeByID(tenantID, id)
+func (s *Service) UpdateChannelType(tenantID, id uint, req ChannelTypeRequest) error {
+	t, err := s.repo.FindChannelTypeByID(tenantID, id)
 	if err != nil {
 		return errors.New("渠道类型不存在")
 	}
@@ -417,18 +428,42 @@ func UpdateChannelType(tenantID, id uint, req ChannelTypeRequest) error {
 		t.Icon = req.Icon
 	}
 	t.Sort = req.Sort
-	return SaveChannelType(t)
+	return s.repo.SaveChannelType(t)
 }
 
-func DeleteChannelType(tenantID, id uint) error {
-	t, err := FindChannelTypeByID(tenantID, id)
+func (s *Service) DeleteChannelType(tenantID, id uint) error {
+	t, err := s.repo.FindChannelTypeByID(tenantID, id)
 	if err != nil {
 		return errors.New("渠道类型不存在")
 	}
 	// 使用数统计失败按「未被引用」处理，与原逻辑一致
-	used, _ := CountChannelsOfType(tenantID, t.Code)
+	used, _ := s.repo.CountChannelsOfType(tenantID, t.Code)
 	if used > 0 {
 		return errors.New("该类型下还有渠道，无法删除")
 	}
-	return RemoveChannelType(tenantID, id)
+	return s.repo.RemoveChannelType(tenantID, id)
+}
+
+// ---------------- 供其它内核 / 端复用的只读门面 ----------------
+// core/conversation 与 modules/client、modules/agent 需要「按主键取一条渠道 / 判断接待绑定」这类单表读取，
+// 跨包只能走 Service：这里的每个方法都只是把调用转给本包 repository，SQL 与原来逐字一致。
+
+// FindChannelByID 按租户 + 主键取渠道（跨包只读门面）。
+func (s *Service) FindChannelByID(tenantID, id uint) (*model.Channel, error) {
+	return s.repo.FindChannelByID(tenantID, id)
+}
+
+// ListChannelsByTenant 列出租户的渠道（跨包只读门面）。
+func (s *Service) ListChannelsByTenant(tenantID, agentID uint, isAdmin bool) ([]*model.Channel, error) {
+	return s.repo.ListChannelsByTenant(tenantID, agentID, isAdmin)
+}
+
+// HasAgentChannel 判断客服是否配置了接待该渠道（跨包只读门面）。
+func (s *Service) HasAgentChannel(userID, channelID uint) (bool, error) {
+	return s.repo.HasAgentChannel(userID, channelID)
+}
+
+// ListAgentChannelsByChannel 列出某渠道已分配的账号关联（跨包只读门面）。
+func (s *Service) ListAgentChannelsByChannel(channelID uint) ([]*model.AgentChannel, error) {
+	return s.repo.ListAgentChannelsByChannel(channelID)
 }

@@ -5,8 +5,11 @@
 // 本包只做用户端自己的编排（解析接入参数、找人或建人、定位会话、拼装初始化响应），
 // 可复用的业务能力一律放在 core/*，不向 core/main.go 之外暴露给其它端。
 // 跨内核写入说明：访客首次进入要新建客户（customers 表属 core/customer），
-// 这里直接调用其导出的仓储函数 CreateCustomer —— 该逻辑原就写在访客域内，
+// 这里调用客户内核导出的 Service.CreateCustomer —— 该逻辑原就写在访客域内，
 // 拆成两个 service 只会让「找到或创建客户」的原子流程变得难读。
+//
+// 形态约定：端内编排都是 Service 的方法（指针接收者），跨内核依赖在构造时建好；
+// 只有 ErrChannelNotFound 这种无状态哨兵值保留为包级变量。
 package client
 
 import (
@@ -16,6 +19,7 @@ import (
 	"strings"
 	"time"
 
+	"kefu-server/internal/core/automation"
 	"kefu-server/internal/core/channel"
 	"kefu-server/internal/core/conversation"
 	"kefu-server/internal/core/customer"
@@ -23,6 +27,24 @@ import (
 	"kefu-server/internal/platform/ipinfo"
 	"kefu-server/internal/platform/model"
 )
+
+// Service 用户端（访客）的端内编排层，持有四个跨内核依赖。
+type Service struct {
+	conv *conversation.Service
+	cust *customer.Service
+	ch   *channel.Service
+	auto *automation.Service
+}
+
+// NewService 创建端内业务层实例（自带跨内核依赖）。
+func NewService() *Service {
+	return &Service{
+		conv: conversation.NewService(),
+		cust: customer.NewService(),
+		ch:   channel.NewService(),
+		auto: automation.NewService(),
+	}
+}
 
 // ---------------- 用户端（访客 / Guest）业务编排 ----------------
 // handler 只负责解析 query 参数与包装响应，
@@ -36,12 +58,12 @@ var ErrChannelNotFound = errors.New("渠道不存在")
 // 优先按 app_id 匹配 —— 这是渠道的业务唯一标识（同一类型可配多个渠道，只有它能区分）。
 // 同时兼容历史写法：渠道类型（wechat / web / ...）与数字渠道 ID。
 // 匹配不到时返回 ErrChannelNotFound，由 handler 决定提示文案。
-func ResolveGuestChannel(tenantID uint, key string) (*model.Channel, error) {
+func (s *Service) ResolveGuestChannel(tenantID uint, key string) (*model.Channel, error) {
 	key = strings.TrimSpace(key)
 	if key == "" {
 		return nil, ErrChannelNotFound
 	}
-	list, err := channel.ListChannelsByTenant(tenantID, 0, true)
+	list, err := s.ch.ListChannelsByTenant(tenantID, 0, true)
 	if err != nil {
 		return nil, ErrChannelNotFound
 	}
@@ -62,8 +84,8 @@ func ResolveGuestChannel(tenantID uint, key string) (*model.Channel, error) {
 
 // EnsureGuestCustomer 定位客户，不存在则创建（用户端页面初始化的第一条入口）。
 // uid 为该渠道下的外部用户标识：同一渠道下同一个 uid 视为同一个客户。
-func EnsureGuestCustomer(tenantID uint, ch *model.Channel, uid, nickname, avatar, phone, ip string) (*model.Customer, error) {
-	if cu, err := customer.FindCustomerByChannelExternalID(tenantID, ch.ID, uid); err == nil {
+func (s *Service) EnsureGuestCustomer(tenantID uint, ch *model.Channel, uid, nickname, avatar, phone, ip string) (*model.Customer, error) {
+	if cu, err := s.cust.FindCustomerByChannelExternalID(tenantID, ch.ID, uid); err == nil {
 		return cu, nil
 	}
 	nickname = strings.TrimSpace(nickname)
@@ -82,7 +104,7 @@ func EnsureGuestCustomer(tenantID uint, ch *model.Channel, uid, nickname, avatar
 		IP:         ip,
 		LastSeenAt: &now,
 	}
-	if err := customer.CreateCustomer(cu); err != nil {
+	if err := s.cust.CreateCustomer(cu); err != nil {
 		return nil, err
 	}
 	ipinfo.RecordCustomerIP(cu.ID, cu.IP)
@@ -91,30 +113,30 @@ func EnsureGuestCustomer(tenantID uint, ch *model.Channel, uid, nickname, avatar
 
 // FindGuestCustomer 按「租户 + 渠道 + 外部用户标识」定位客户。
 // 未命中说明用户还没走过 /api/guest/init，由 handler 给出初始化提示。
-func FindGuestCustomer(tenantID, channelID uint, externalID string) (*model.Customer, error) {
-	return customer.FindCustomerByChannelExternalID(tenantID, channelID, externalID)
+func (s *Service) FindGuestCustomer(tenantID, channelID uint, externalID string) (*model.Customer, error) {
+	return s.cust.FindCustomerByChannelExternalID(tenantID, channelID, externalID)
 }
 
 // FindGuestCustomerByExternalID 按「租户 + 外部用户标识」定位客户（不限渠道）。
 // 用户端无 WebSocket 时的轮询降级接口只带 uid，用它定位。
-func FindGuestCustomerByExternalID(tenantID uint, externalID string) (*model.Customer, error) {
-	return customer.FindCustomerByExternalID(tenantID, externalID)
+func (s *Service) FindGuestCustomerByExternalID(tenantID uint, externalID string) (*model.Customer, error) {
+	return s.cust.FindCustomerByExternalID(tenantID, externalID)
 }
 
 // LatestConversationOfCustomer 取客户最近一个会话（轮询降级接口定位「当前该看哪个会话」）。
-func LatestConversationOfCustomer(tenantID, customerID uint) (*model.Conversation, error) {
-	return conversation.FindLatestConversationByCustomer(tenantID, customerID)
+func (s *Service) LatestConversationOfCustomer(tenantID, customerID uint) (*model.Conversation, error) {
+	return s.conv.FindLatestConversationByCustomer(tenantID, customerID)
 }
 
 // FindGuestConversation 定位（或创建）某渠道下某个外部用户的客户与会话。
 // 用户端 WebSocket 与 guest/init 共用，保证两端拿到的是同一个会话。
-func FindGuestConversation(tenantID, channelID uint, externalID string) (*model.Customer, uint, error) {
-	cu, err := customer.FindCustomerByChannelExternalID(tenantID, channelID, externalID)
+func (s *Service) FindGuestConversation(tenantID, channelID uint, externalID string) (*model.Customer, uint, error) {
+	cu, err := s.cust.FindCustomerByChannelExternalID(tenantID, channelID, externalID)
 	if err != nil {
 		return nil, 0, errors.New("会话不存在，请先调用 /api/guest/init")
 	}
 	// 复用最近一个会话（含 closed/archived，自动激活），保证聊天记录合并
-	conv, err := conversation.FindOrCreateConversation(tenantID, cu.ID, channelID)
+	conv, err := s.conv.FindOrCreateConversation(tenantID, cu.ID, channelID)
 	if err != nil {
 		return cu, 0, err
 	}
@@ -122,8 +144,8 @@ func FindGuestConversation(tenantID, channelID uint, externalID string) (*model.
 }
 
 // LookupOrderCard 按订单号取订单并转成聊天订单卡片；找不到返回 nil（响应里表现为 null）。
-func LookupOrderCard(tenantID uint, orderNo string) map[string]interface{} {
-	o, err := customer.FindOrderByNo(tenantID, orderNo)
+func (s *Service) LookupOrderCard(tenantID uint, orderNo string) map[string]interface{} {
+	o, err := s.cust.FindOrderByNo(tenantID, orderNo)
 	if err != nil {
 		return nil
 	}
@@ -133,8 +155,8 @@ func LookupOrderCard(tenantID uint, orderNo string) map[string]interface{} {
 }
 
 // LookupProductCard 按对外商品 ID 取商品并转成聊天商品卡片；找不到返回 nil。
-func LookupProductCard(tenantID uint, pid string) map[string]interface{} {
-	p, err := customer.FindProductByPID(tenantID, pid)
+func (s *Service) LookupProductCard(tenantID uint, pid string) map[string]interface{} {
+	p, err := s.cust.FindProductByPID(tenantID, pid)
 	if err != nil {
 		return nil
 	}
@@ -146,6 +168,6 @@ func LookupProductCard(tenantID uint, pid string) map[string]interface{} {
 // DefaultTenantID 用户端未显式传 ?tenant= 时的兜底租户（便于演示）；取不到返回 0。
 // 口径已下沉到 core/customer：core/upload 的游客态上传也要用同一份 tenants 查询，
 // 这里只保留端内入口，避免两处各写一遍「取第一个租户」。
-func DefaultTenantID() uint {
-	return customer.DefaultTenantID()
+func (s *Service) DefaultTenantID() uint {
+	return s.cust.DefaultTenantID()
 }

@@ -2,7 +2,8 @@ package account
 
 // 本文件是 core/account 的 HTTP 层。
 // handler 层不持有数据库连接：参数绑定 → 调本模块 service → 写响应。
-// 命名约定：同包内 service 与 handler 会重名（如 Login），因此所有 HTTP 处理器统一带 Handler 后缀。
+// 命名约定：同包内 service 与 handler 会重名（如 Login），因此所有 HTTP 处理器统一带 Handler 后缀，
+// 并且全部是 *Handler 的方法（指针接收者），实例由 route 在 Setup 里创建一次。
 //
 // 跨端端点（客服端 modules/agent 与后台端 modules/admin 各自登录页/资料弹窗都调）：
 // LoginHandler / MeHandler / LogoutHandler / UpdateProfileHandler / ChangePasswordHandler
@@ -19,16 +20,24 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// Handler 账号内核的 HTTP 层，持有本模块 service。
+type Handler struct {
+	svc *Service
+}
+
+// NewHandler 创建 HTTP 层实例（自带 service 依赖）。
+func NewHandler() *Handler { return &Handler{svc: NewService()} }
+
 // ---------------- 认证 ----------------
 
 // LoginHandler 登录：鉴权与用户信息组装都在 service 层，这里只负责参数绑定与响应映射。
-func LoginHandler(c *gin.Context) {
+func (h *Handler) LoginHandler(c *gin.Context) {
 	var req dto.LoginRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		response.Param(c, "请输入账号和密码")
 		return
 	}
-	res, aerr := Login(req)
+	res, aerr := h.svc.Login(req)
 	if aerr != nil {
 		switch aerr.Status {
 		case "param":
@@ -46,12 +55,12 @@ func LoginHandler(c *gin.Context) {
 }
 
 // MeHandler 当前登录用户信息（前端刷新后恢复登录态用）。
-func MeHandler(c *gin.Context) {
+func (h *Handler) MeHandler(c *gin.Context) {
 	u := authctx.CurrentUser(c)
 	if u == nil {
 		return
 	}
-	cur, err := BuildCurrentUser(u)
+	cur, err := h.svc.BuildCurrentUser(u)
 	if err != nil {
 		response.Server(c, err.Error())
 		return
@@ -60,7 +69,7 @@ func MeHandler(c *gin.Context) {
 }
 
 // LogoutHandler 退出登录：吊销 token 并置离线。
-func LogoutHandler(c *gin.Context) {
+func (h *Handler) LogoutHandler(c *gin.Context) {
 	token := c.GetHeader("Authorization")
 	if len(token) > 7 {
 		token = token[7:]
@@ -69,7 +78,7 @@ func LogoutHandler(c *gin.Context) {
 		auth.RevokeToken(token)
 	}
 	if u := authctx.CurrentUser(c); u != nil {
-		_ = SetOnline(u.TenantID, u.ID, false)
+		_ = h.svc.SetOnline(u.TenantID, u.ID, false)
 		cache.Get().Del(cache.OnlineKey(u.TenantID, u.ID))
 	}
 	response.OK(c, true)
@@ -89,7 +98,7 @@ type ChangePasswordRequest struct {
 	NewPassword string `json:"new_password"`
 }
 
-// authFail 把 service 返回的鉴权错误映射为响应
+// authFail 把 service 返回的鉴权错误映射为响应（纯工具函数，无状态）
 func authFail(c *gin.Context, e *AuthError) {
 	switch e.Status {
 	case "param":
@@ -104,7 +113,7 @@ func authFail(c *gin.Context, e *AuthError) {
 }
 
 // UpdateProfileHandler 修改当前登录账号的昵称与头像
-func UpdateProfileHandler(c *gin.Context) {
+func (h *Handler) UpdateProfileHandler(c *gin.Context) {
 	u := authctx.CurrentUser(c)
 	if u == nil {
 		response.Unauth(c, "未登录")
@@ -114,7 +123,7 @@ func UpdateProfileHandler(c *gin.Context) {
 	if !httpx.BindJSON(c, &req) {
 		return
 	}
-	fresh, aerr := UpdateProfile(u.TenantID, u.ID, req.Name, req.Avatar)
+	fresh, aerr := h.svc.UpdateProfile(u.TenantID, u.ID, req.Name, req.Avatar)
 	if aerr != nil {
 		authFail(c, aerr)
 		return
@@ -129,7 +138,7 @@ func UpdateProfileHandler(c *gin.Context) {
 }
 
 // ChangePasswordHandler 修改当前登录账号的密码
-func ChangePasswordHandler(c *gin.Context) {
+func (h *Handler) ChangePasswordHandler(c *gin.Context) {
 	u := authctx.CurrentUser(c)
 	if u == nil {
 		response.Unauth(c, "未登录")
@@ -139,7 +148,7 @@ func ChangePasswordHandler(c *gin.Context) {
 	if !httpx.BindJSON(c, &req) {
 		return
 	}
-	if aerr := ChangePassword(u.TenantID, u.ID, req.OldPassword, req.NewPassword); aerr != nil {
+	if aerr := h.svc.ChangePassword(u.TenantID, u.ID, req.OldPassword, req.NewPassword); aerr != nil {
 		authFail(c, aerr)
 		return
 	}

@@ -4,6 +4,9 @@
 // 依赖方向：core/account → platform → pkg（不依赖任何业务端模块）。
 // 端侧（modules/client、modules/agent、modules/admin）都可以依赖本包，
 // 本包不得反向 import 端侧模块。
+//
+// 形态约定：业务编排都是 Service 的方法（指针接收者），Service 在构造时建好自己的
+// Repository 依赖；只有无状态的纯工具函数（authErr / hashPwd / orDefault）保留为包级函数。
 package account
 
 import (
@@ -18,11 +21,19 @@ import (
 	"kefu-server/internal/platform/setting"
 )
 
+// Service 账号内核的业务编排层。
+type Service struct {
+	repo *Repository
+}
+
+// NewService 创建业务层实例（自带数据访问层依赖）。
+func NewService() *Service { return &Service{repo: NewRepository()} }
+
 // init 把「按租户 + 账号 ID 载入账号」的能力注入 platform/authctx。
 // platform 不反向依赖业务内核，authctx.CurrentUser 只能靠这个回调拿到账号实体，
 // 因此注册点落在账号内核自己的 init 里（route 会 import 本包，保证注册被执行）。
 func init() {
-	authctx.SetUserLoader(LoadUser)
+	authctx.SetUserLoader(NewService().LoadUser)
 }
 
 // ---------------- 鉴权错误 ----------------
@@ -52,11 +63,11 @@ func orDefault(s, d string) string {
 
 // Login 校验账号密码并签发 token。
 // 返回的 *AuthError 由 handler 按 Status 映射响应（账号或密码错误 → 401，停用 → 403）。
-func Login(req dto.LoginRequest) (*dto.LoginResponse, *AuthError) {
+func (s *Service) Login(req dto.LoginRequest) (*dto.LoginResponse, *AuthError) {
 	if req.Account == "" {
 		return nil, authErr("param", "请输入账号和密码")
 	}
-	u, err := FindUserByAccount(req.Account)
+	u, err := s.repo.FindUserByAccount(req.Account)
 	if err != nil {
 		return nil, authErr("unauth", "账号或密码错误")
 	}
@@ -72,9 +83,9 @@ func Login(req dto.LoginRequest) (*dto.LoginResponse, *AuthError) {
 		return nil, authErr("server", "签发 token 失败")
 	}
 	// 登录成功即标记在线（离线状态由 WS 断开或退出登录时翻转）
-	_ = SetOnline(u.TenantID, u.ID, true)
+	_ = s.SetOnline(u.TenantID, u.ID, true)
 
-	cur, err := BuildCurrentUser(u)
+	cur, err := s.BuildCurrentUser(u)
 	if err != nil {
 		return nil, authErr("server", err.Error())
 	}
@@ -83,16 +94,16 @@ func Login(req dto.LoginRequest) (*dto.LoginResponse, *AuthError) {
 }
 
 // LoadUser 按租户 + 主键取账号（鉴权中间件、个人资料读取用）。
-func LoadUser(tenantID, userID uint) (*model.User, error) {
-	return FindUserByID(tenantID, userID)
+func (s *Service) LoadUser(tenantID, userID uint) (*model.User, error) {
+	return s.repo.FindUserByID(tenantID, userID)
 }
 
 // UserChannels 返回账号可见的渠道 ID：
 // 管理员 = 租户全部渠道；普通客服 = 自己被分配的渠道。
-func UserChannels(u *model.User) []uint {
+func (s *Service) UserChannels(u *model.User) []uint {
 	var ids []uint
 	if u.Role == "admin" {
-		chs, err := listChannelsByTenant(u.TenantID, u.ID, true)
+		chs, err := s.repo.listChannelsByTenant(u.TenantID, u.ID, true)
 		if err == nil {
 			ids = make([]uint, 0, len(chs))
 			for _, ch := range chs {
@@ -100,7 +111,7 @@ func UserChannels(u *model.User) []uint {
 			}
 		}
 	} else {
-		ids, _ = ListAgentChannelIDsByUser(u.ID)
+		ids, _ = s.repo.ListAgentChannelIDsByUser(u.ID)
 	}
 	if ids == nil {
 		ids = []uint{}
@@ -109,15 +120,15 @@ func UserChannels(u *model.User) []uint {
 }
 
 // BuildCurrentUser 组装当前登录用户信息（含租户名/Logo 与可见渠道）。
-func BuildCurrentUser(u *model.User) (*dto.CurrentUser, error) {
+func (s *Service) BuildCurrentUser(u *model.User) (*dto.CurrentUser, error) {
 	tenant := &model.Tenant{}
-	if t, err := FindTenantByID(u.TenantID); err == nil {
+	if t, err := s.repo.FindTenantByID(u.TenantID); err == nil {
 		tenant = t
 	}
 	return &dto.CurrentUser{
 		ID: u.ID, TenantID: u.TenantID, Role: u.Role, Name: u.Name,
 		Account: u.Account, Avatar: u.Avatar, Online: u.Online,
-		MaxConcurrent: u.MaxConcurrent, Channels: UserChannels(u),
+		MaxConcurrent: u.MaxConcurrent, Channels: s.UserChannels(u),
 		Tenant: dto.TenantBrief{
 			ID: tenant.ID, Name: tenant.Name, Logo: tenant.Logo,
 			DefaultImage: setting.DefaultImageURL(tenant.ID),
@@ -127,8 +138,8 @@ func BuildCurrentUser(u *model.User) (*dto.CurrentUser, error) {
 
 // ---------------- 子账号（Agent） ----------------
 
-func ListAgents(tenantID uint) ([]dto.AgentVO, error) {
-	users, err := ListUsersByTenant(tenantID)
+func (s *Service) ListAgents(tenantID uint) ([]dto.AgentVO, error) {
+	users, err := s.repo.ListUsersByTenant(tenantID)
 	if err != nil {
 		return nil, err
 	}
@@ -144,13 +155,13 @@ func ListAgents(tenantID uint) ([]dto.AgentVO, error) {
 			vo.Status = "online"
 		}
 		// 该账号可接待的渠道；查询失败不阻断列表展示，保持空渠道列表（与原逻辑一致）
-		if chs, err := listChannelsByTenant(tenantID, u.ID, false); err == nil {
+		if chs, err := s.repo.listChannelsByTenant(tenantID, u.ID, false); err == nil {
 			for _, ch := range chs {
 				vo.Channels = append(vo.Channels, dto.ChannelSimple{ID: ch.ID, Type: ch.Type, Name: ch.Name})
 			}
 		}
 		// 进行中会话数；统计失败按 0 处理（与原逻辑一致）
-		if active, err := CountOpenConversations(tenantID, u.ID); err == nil {
+		if active, err := s.repo.CountOpenConversations(tenantID, u.ID); err == nil {
 			vo.ActiveCount = active
 		}
 		out = append(out, vo)
@@ -158,12 +169,12 @@ func ListAgents(tenantID uint) ([]dto.AgentVO, error) {
 	return out, nil
 }
 
-func CreateAgent(tenantID uint, req dto.AgentRequest) (*dto.AgentVO, error) {
+func (s *Service) CreateAgent(tenantID uint, req dto.AgentRequest) (*dto.AgentVO, error) {
 	if req.Account == "" || req.Password == "" {
 		return nil, errors.New("账号与密码不能为空")
 	}
 	// 账号全局唯一；统计失败按「未被占用」处理（与原逻辑一致）
-	if cnt, _ := CountUsersByAccount(req.Account, 0); cnt > 0 {
+	if cnt, _ := s.repo.CountUsersByAccount(req.Account, 0); cnt > 0 {
 		return nil, errors.New("账号已存在")
 	}
 	hash, err := hashPwd(req.Password)
@@ -191,15 +202,15 @@ func CreateAgent(tenantID uint, req dto.AgentRequest) (*dto.AgentVO, error) {
 	if req.Enabled != nil {
 		u.Enabled = *req.Enabled
 	}
-	if err := CreateUser(u); err != nil {
+	if err := s.repo.CreateUser(u); err != nil {
 		return nil, err
 	}
-	setAgentChannels(tenantID, u.ID, req.ChannelIDs)
-	return getAgentVO(tenantID, u.ID)
+	s.setAgentChannels(tenantID, u.ID, req.ChannelIDs)
+	return s.getAgentVO(tenantID, u.ID)
 }
 
-func UpdateAgent(tenantID, id uint, req dto.AgentRequest) error {
-	u, err := FindUserByID(tenantID, id)
+func (s *Service) UpdateAgent(tenantID, id uint, req dto.AgentRequest) error {
+	u, err := s.repo.FindUserByID(tenantID, id)
 	if err != nil {
 		return errors.New("账号不存在")
 	}
@@ -222,29 +233,29 @@ func UpdateAgent(tenantID, id uint, req dto.AgentRequest) error {
 	if req.Enabled != nil {
 		u.Enabled = *req.Enabled
 	}
-	if err := SaveUser(u); err != nil {
+	if err := s.repo.SaveUser(u); err != nil {
 		return err
 	}
 	if req.ChannelIDs != nil {
-		setAgentChannels(tenantID, id, req.ChannelIDs)
+		s.setAgentChannels(tenantID, id, req.ChannelIDs)
 	}
 	return nil
 }
 
-func DeleteAgent(tenantID, id uint) error {
+func (s *Service) DeleteAgent(tenantID, id uint) error {
 	// 账号删除与渠道分配清理放在同一事务里，避免残留孤儿关联
-	return DeleteUserWithBindings(tenantID, id)
+	return s.repo.DeleteUserWithBindings(tenantID, id)
 }
 
-func SetOnline(tenantID, id uint, online bool) error {
-	return UpdateUserOnline(tenantID, id, online)
+func (s *Service) SetOnline(tenantID, id uint, online bool) error {
+	return s.repo.UpdateUserOnline(tenantID, id, online)
 }
 
-func setAgentChannels(tenantID, userID uint, ids []uint) {
+func (s *Service) setAgentChannels(tenantID, userID uint, ids []uint) {
 	// 先清空该账号的渠道分配；删除失败不阻断主流程（与原逻辑一致）
-	_ = DeleteAgentChannelsByUser(userID)
+	_ = s.repo.DeleteAgentChannelsByUser(userID)
 	// 只允许分配到本租户自己的渠道：isAdmin 传 true 表示取租户全部渠道
-	valid, _ := listChannelsByTenant(tenantID, 0, true)
+	valid, _ := s.repo.listChannelsByTenant(tenantID, 0, true)
 	allowed := map[uint]bool{}
 	for _, c := range valid {
 		allowed[c.ID] = true
@@ -253,12 +264,12 @@ func setAgentChannels(tenantID, userID uint, ids []uint) {
 		if !allowed[id] {
 			continue
 		}
-		_ = createAgentChannel(&model.AgentChannel{UserID: userID, ChannelID: id})
+		_ = s.repo.createAgentChannel(&model.AgentChannel{UserID: userID, ChannelID: id})
 	}
 }
 
-func getAgentVO(tenantID, id uint) (*dto.AgentVO, error) {
-	u, err := FindUserByID(tenantID, id)
+func (s *Service) getAgentVO(tenantID, id uint) (*dto.AgentVO, error) {
+	u, err := s.repo.FindUserByID(tenantID, id)
 	if err != nil {
 		return nil, err
 	}
@@ -272,7 +283,7 @@ func getAgentVO(tenantID, id uint) (*dto.AgentVO, error) {
 		vo.Status = "online"
 	}
 	// 该账号可接待的渠道；查询失败保持空列表（与原逻辑一致）
-	if chs, err := listChannelsByTenant(tenantID, id, false); err == nil {
+	if chs, err := s.repo.listChannelsByTenant(tenantID, id, false); err == nil {
 		for _, ch := range chs {
 			vo.Channels = append(vo.Channels, dto.ChannelSimple{ID: ch.ID, Type: ch.Type, Name: ch.Name})
 		}
@@ -284,7 +295,7 @@ func getAgentVO(tenantID, id uint) (*dto.AgentVO, error) {
 
 // UpdateProfile 修改当前登录账号的昵称与头像，并向该账号的所有端广播 profile.updated。
 // 返回更新后的账号（供 handler 直接回包）。
-func UpdateProfile(tenantID, userID uint, name, avatar string) (*model.User, *AuthError) {
+func (s *Service) UpdateProfile(tenantID, userID uint, name, avatar string) (*model.User, *AuthError) {
 	name = strings.TrimSpace(name)
 	if name == "" {
 		return nil, authErr("param", "昵称不能为空")
@@ -294,18 +305,18 @@ func UpdateProfile(tenantID, userID uint, name, avatar string) (*model.User, *Au
 	}
 	avatar = strings.TrimSpace(avatar)
 
-	if err := UpdateUserProfile(userID, name, avatar); err != nil {
+	if err := s.repo.UpdateUserProfile(userID, name, avatar); err != nil {
 		return nil, authErr("server", "保存失败")
 	}
 
-	fresh, err := FindUserByID(tenantID, userID)
+	fresh, err := s.repo.FindUserByID(tenantID, userID)
 	if err != nil {
 		return nil, authErr("server", "保存失败")
 	}
 
 	// 广播资料变更，工作台/后台的头像与昵称即时刷新
 	tenant := &model.Tenant{}
-	if t, terr := FindTenantByID(fresh.TenantID); terr == nil {
+	if t, terr := s.repo.FindTenantByID(fresh.TenantID); terr == nil {
 		tenant = t
 	}
 	realtime.HubInstance().Publish(tenantID, []uint{fresh.ID}, realtime.Event{
@@ -322,8 +333,33 @@ func UpdateProfile(tenantID, userID uint, name, avatar string) (*model.User, *Au
 	return fresh, nil
 }
 
+// ---------------- 供其它内核 / 端复用的只读门面 ----------------
+// core/conversation 等内核与端模块需要「按主键取一条账号 / 统计某客服 open 会话数」这类单表读取，
+// 跨包只能走 Service：这里的每个方法都只是把调用转给本包 repository，SQL 与原来逐字一致。
+
+// FindUserByID 按租户 + 主键取账号（跨包只读门面）。
+func (s *Service) FindUserByID(tenantID, id uint) (*model.User, error) {
+	return s.repo.FindUserByID(tenantID, id)
+}
+
+// FindUserBriefByID 按主键取账号的接待相关字段（跨包只读门面）。
+func (s *Service) FindUserBriefByID(userID uint) (*model.User, error) {
+	return s.repo.FindUserBriefByID(userID)
+}
+
+// CountOpenConversations 统计某客服名下 open 状态的会话数（跨包只读门面）。
+func (s *Service) CountOpenConversations(tenantID, agentID uint) (int64, error) {
+	return s.repo.CountOpenConversations(tenantID, agentID)
+}
+
+// ResetAllOnline 把全平台账号置为离线（进程启动时调用一次）。
+// 放在 Service 上：main 只与各内核的 Service 打交道，不直接触碰 repository。
+func (s *Service) ResetAllOnline() error {
+	return s.repo.ResetAllOnline()
+}
+
 // ChangePassword 修改当前登录账号的密码：校验原密码 → 写新哈希。
-func ChangePassword(tenantID, userID uint, oldPassword, newPassword string) *AuthError {
+func (s *Service) ChangePassword(tenantID, userID uint, oldPassword, newPassword string) *AuthError {
 	if oldPassword == "" || newPassword == "" {
 		return authErr("param", "请填写原密码与新密码")
 	}
@@ -334,7 +370,7 @@ func ChangePassword(tenantID, userID uint, oldPassword, newPassword string) *Aut
 		return authErr("param", "新密码不能与原密码相同")
 	}
 
-	fresh, err := FindUserByID(tenantID, userID)
+	fresh, err := s.repo.FindUserByID(tenantID, userID)
 	if err != nil {
 		return authErr("unauth", "账号不存在")
 	}
@@ -345,7 +381,7 @@ func ChangePassword(tenantID, userID uint, oldPassword, newPassword string) *Aut
 	if err != nil {
 		return authErr("server", "密码加密失败")
 	}
-	if err := UpdateUserPassword(userID, hash); err != nil {
+	if err := s.repo.UpdateUserPassword(userID, hash); err != nil {
 		return authErr("server", "密码修改失败")
 	}
 	return nil

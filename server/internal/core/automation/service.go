@@ -2,7 +2,10 @@
 // 模块内按 service / repository 分层，HTTP 层在后台端 modules/admin。
 //
 // 依赖方向：core/automation → core/conversation（落系统提示语、通知渠道客服、广播会话）→ platform → pkg。
-// 内核间调用：全部走 conversation / channel 导出的函数，不直接读写对方的表。
+// 内核间调用：全部走 conversation 的 Service 方法，不直接读写对方的表。
+//
+// 形态约定：业务编排都是 Service 的方法（指针接收者），跨内核依赖在构造时建好；
+// 只有无状态的纯函数（matchKeywords / defaultMatchType / orDefaultStr / robotAnswer）保留为包级函数。
 package automation
 
 import (
@@ -16,6 +19,17 @@ import (
 	"kefu-server/internal/platform/realtime"
 	"kefu-server/pkg/util"
 )
+
+// Service 自动回复内核的业务编排层，持有本模块仓储与会话内核依赖。
+type Service struct {
+	repo *Repository
+	conv *conversation.Service
+}
+
+// NewService 创建业务层实例（自带数据访问层与会话内核依赖）。
+func NewService() *Service {
+	return &Service{repo: NewRepository(), conv: conversation.NewService()}
+}
 
 // ---------------- 自动回复规则 ----------------
 // 关键词命中 → 机器人自动回复；若该规则标记为"转人工"，则直接把会话转为待人工接待。
@@ -39,19 +53,19 @@ type AutoReplyVO struct {
 // AutoReplyRequest 复用 dto 定义（含 HasTransfer 判定）
 type AutoReplyRequest = dto.AutoReplyRequest
 
-func ListAutoReplies(tenantID uint) ([]AutoReplyVO, error) {
-	list, err := ListAutoRepliesByTenant(tenantID)
+func (s *Service) ListAutoReplies(tenantID uint) ([]AutoReplyVO, error) {
+	list, err := s.repo.ListAutoRepliesByTenant(tenantID)
 	if err != nil {
 		return nil, err
 	}
 	out := make([]AutoReplyVO, 0, len(list))
 	for _, r := range list {
-		out = append(out, toAutoReplyVO(r))
+		out = append(out, s.toAutoReplyVO(r))
 	}
 	return out, nil
 }
 
-func toAutoReplyVO(r *model.AutoReply) AutoReplyVO {
+func (s *Service) toAutoReplyVO(r *model.AutoReply) AutoReplyVO {
 	vo := AutoReplyVO{
 		ID: r.ID, Name: r.Name, ChannelID: r.ChannelID,
 		MatchType: r.MatchType, Keywords: r.Keywords, Reply: r.Reply,
@@ -61,7 +75,7 @@ func toAutoReplyVO(r *model.AutoReply) AutoReplyVO {
 	}
 	if r.ChannelID > 0 {
 		// 渠道名查不到时保留"全渠道"兜底文案，不影响规则列表展示（与原逻辑一致）
-		if ch, err := FindAutoReplyChannel(r.ChannelID); err == nil {
+		if ch, err := s.repo.FindAutoReplyChannel(r.ChannelID); err == nil {
 			vo.ChannelName = ch.Name
 		}
 	}
@@ -74,7 +88,7 @@ func toAutoReplyVO(r *model.AutoReply) AutoReplyVO {
 	return vo
 }
 
-func CreateAutoReply(tenantID uint, req AutoReplyRequest) (*AutoReplyVO, error) {
+func (s *Service) CreateAutoReply(tenantID uint, req AutoReplyRequest) (*AutoReplyVO, error) {
 	if strings.TrimSpace(req.Keywords) == "" {
 		return nil, errors.New("关键词不能为空")
 	}
@@ -93,15 +107,15 @@ func CreateAutoReply(tenantID uint, req AutoReplyRequest) (*AutoReplyVO, error) 
 	if req.Enabled != nil {
 		r.Enabled = *req.Enabled
 	}
-	if err := InsertAutoReply(r); err != nil {
+	if err := s.repo.InsertAutoReply(r); err != nil {
 		return nil, err
 	}
-	vo := toAutoReplyVO(r)
+	vo := s.toAutoReplyVO(r)
 	return &vo, nil
 }
 
-func UpdateAutoReply(tenantID, id uint, req AutoReplyRequest) error {
-	r, err := FindAutoReplyByID(tenantID, id)
+func (s *Service) UpdateAutoReply(tenantID, id uint, req AutoReplyRequest) error {
+	r, err := s.repo.FindAutoReplyByID(tenantID, id)
 	if err != nil {
 		return errors.New("规则不存在")
 	}
@@ -130,20 +144,20 @@ func UpdateAutoReply(tenantID, id uint, req AutoReplyRequest) error {
 		r.Enabled = *req.Enabled
 	}
 	r.Priority = req.Priority
-	return SaveAutoReply(r)
+	return s.repo.SaveAutoReply(r)
 }
 
-func DeleteAutoReply(tenantID, id uint) error {
-	return RemoveAutoReply(tenantID, id)
+func (s *Service) DeleteAutoReply(tenantID, id uint) error {
+	return s.repo.RemoveAutoReply(tenantID, id)
 }
 
 // MatchRule 按优先级找出命中的规则（优先匹配指定渠道的规则，其次全渠道规则）
-func MatchRule(tenantID, channelID uint, question string) (*model.AutoReply, bool) {
+func (s *Service) MatchRule(tenantID, channelID uint, question string) (*model.AutoReply, bool) {
 	if strings.TrimSpace(question) == "" {
 		return nil, false
 	}
 	// 规则读取失败按「没有规则」处理，不影响消息主流程（与原逻辑一致）
-	rules, _ := ListEnabledAutoReplies(tenantID)
+	rules, _ := s.repo.ListEnabledAutoReplies(tenantID)
 	q := strings.ToLower(strings.TrimSpace(question))
 
 	// 先渠道专属，再全渠道
@@ -155,7 +169,7 @@ func MatchRule(tenantID, channelID uint, question string) (*model.AutoReply, boo
 			if matchKeywords(r, q) {
 				r.HitCount++
 				// 命中次数回写失败不阻断自动回复（与原逻辑一致）
-				_ = UpdateAutoReplyHitCount(r.ID, r.HitCount)
+				_ = s.repo.UpdateAutoReplyHitCount(r.ID, r.HitCount)
 				return r, true
 			}
 		}
@@ -170,8 +184,8 @@ type ReplyResult struct {
 }
 
 // ReplyNow 同步执行一次自动回复判定（用户端接口即时返回用）
-func ReplyNow(tenantID, convID, customerID, channelID uint, question string) *ReplyResult {
-	conv, err := FindAutoReplyConversation(tenantID, convID)
+func (s *Service) ReplyNow(tenantID, convID, customerID, channelID uint, question string) *ReplyResult {
+	conv, err := s.repo.FindAutoReplyConversation(tenantID, convID)
 	if err != nil {
 		return nil
 	}
@@ -179,20 +193,20 @@ func ReplyNow(tenantID, convID, customerID, channelID uint, question string) *Re
 		return &ReplyResult{Transferred: false}
 	}
 
-	rule, matched := MatchRule(tenantID, channelID, question)
+	rule, matched := s.MatchRule(tenantID, channelID, question)
 
 	if matched && rule.TransferToHuman {
 		desc := ""
 		if rule.Name != "" {
 			desc = "（命中：" + rule.Name + "）"
 		}
-		conversation.AppendSystemMessage(tenantID, convID, "客户请求人工客服"+desc+"，正在为您转接，请稍候")
+		s.conv.AppendSystemMessage(tenantID, convID, "客户请求人工客服"+desc+"，正在为您转接，请稍候")
 		// 转人工：置为待接待并清空接待人（失败不阻断，后续由客服端手动接入）
-		_ = UpdateAutoReplyConversation(convID, map[string]interface{}{
+		_ = s.repo.UpdateAutoReplyConversation(convID, map[string]interface{}{
 			"status": "pending", "agent_id": 0,
 		})
-		conversation.NotifyChannelAgents(tenantID, channelID, convID, "待接待提醒", "有客户请求人工客服，请尽快接入")
-		conversation.BroadcastConversation(tenantID, convID)
+		s.conv.NotifyChannelAgents(tenantID, channelID, convID, "待接待提醒", "有客户请求人工客服，请尽快接入")
+		s.conv.BroadcastConversation(tenantID, convID)
 		realtime.HubInstance().PublishToGuest(tenantID, convID, realtime.Event{
 			Event: "conversation.updated",
 			Data:  map[string]interface{}{"id": convID, "status": "pending", "transferred": true},
@@ -204,7 +218,7 @@ func ReplyNow(tenantID, convID, customerID, channelID uint, question string) *Re
 	if matched {
 		reply = rule.Reply
 	} else {
-		if ch, err := FindAutoReplyChannel(channelID); err == nil && ch.RobotEnabled {
+		if ch, err := s.repo.FindAutoReplyChannel(channelID); err == nil && ch.RobotEnabled {
 			reply = robotAnswer(question)
 		}
 	}
@@ -216,14 +230,14 @@ func ReplyNow(tenantID, convID, customerID, channelID uint, question string) *Re
 		SenderRole: "user", SenderID: 0,
 		Type: "text", Direction: "out", Content: reply, Read: true,
 	}
-	if err := CreateAutoReplyMessage(m); err != nil {
+	if err := s.repo.CreateAutoReplyMessage(m); err != nil {
 		return &ReplyResult{Transferred: false}
 	}
 	// 回写会话摘要（失败不阻断，消息本身已入库）
-	_ = UpdateAutoReplyConversation(convID, map[string]interface{}{
+	_ = s.repo.UpdateAutoReplyConversation(convID, map[string]interface{}{
 		"last_message": reply, "last_message_at": time.Now(),
 	})
-	vo := conversation.BuildMessageVO(m)
+	vo := s.conv.BuildMessageVO(m)
 	realtime.HubInstance().Publish(tenantID, nil, realtime.Event{Event: "message.new", Data: vo})
 	realtime.HubInstance().PublishToGuest(tenantID, convID, realtime.Event{Event: "message.new", Data: vo})
 	return &ReplyResult{Transferred: false, Message: vo}

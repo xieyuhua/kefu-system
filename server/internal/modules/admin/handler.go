@@ -2,7 +2,8 @@ package admin
 
 // 本文件是后台端（modules/admin）的 HTTP 层：渠道与渠道类型、子账号、客户与标签、
 // 自动回复、设置与统计、设备自检、对话记录。
-// handler 层不持有数据库连接：参数绑定 → 调 core/* 的 service（或本端 service）→ 写响应。
+// handler 层不持有数据库连接：参数绑定 → 调本端 service（其内已持有各内核 service）→ 写响应。
+// 所有处理器都是 *Handler 的方法（指针接收者），实例由 route 在 Setup 里创建一次。
 //
 // 依赖方向：modules/admin → core/* → platform → pkg。
 // 本包不 import modules/client、modules/agent，也不被 core/* import。
@@ -15,7 +16,6 @@ import (
 	"net/http"
 	"net/url"
 
-	"kefu-server/internal/core/account"
 	"kefu-server/internal/core/automation"
 	"kefu-server/internal/core/channel"
 	"kefu-server/internal/core/conversation"
@@ -30,10 +30,18 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// Handler 后台端的 HTTP 层，持有本端 service（service 内已建好各内核依赖）。
+type Handler struct {
+	svc *Service
+}
+
+// NewHandler 创建 HTTP 层实例（自带 service 依赖）。
+func NewHandler() *Handler { return &Handler{svc: NewService()} }
+
 // ---------------- 渠道 ----------------
 
-func ListChannelsHandler(c *gin.Context) {
-	list, err := channel.ListChannels(authctx.TenantID(c), authctx.UserID(c), authctx.IsAdmin(c))
+func (h *Handler) ListChannelsHandler(c *gin.Context) {
+	list, err := h.svc.ch.ListChannels(authctx.TenantID(c), authctx.UserID(c), authctx.IsAdmin(c))
 	if err != nil {
 		response.Server(c, err.Error())
 		return
@@ -41,7 +49,7 @@ func ListChannelsHandler(c *gin.Context) {
 	response.OK(c, list)
 }
 
-func CreateChannelHandler(c *gin.Context) {
+func (h *Handler) CreateChannelHandler(c *gin.Context) {
 	if !authctx.IsAdmin(c) {
 		response.Forbid(c, "仅管理员可操作")
 		return
@@ -50,7 +58,7 @@ func CreateChannelHandler(c *gin.Context) {
 	if !httpx.BindJSON(c, &req) {
 		return
 	}
-	vo, err := channel.CreateChannel(authctx.TenantID(c), req)
+	vo, err := h.svc.ch.CreateChannel(authctx.TenantID(c), req)
 	if err != nil {
 		response.Param(c, err.Error())
 		return
@@ -58,7 +66,7 @@ func CreateChannelHandler(c *gin.Context) {
 	response.OK(c, vo)
 }
 
-func UpdateChannelHandler(c *gin.Context) {
+func (h *Handler) UpdateChannelHandler(c *gin.Context) {
 	if !authctx.IsAdmin(c) {
 		response.Forbid(c, "仅管理员可操作")
 		return
@@ -67,19 +75,19 @@ func UpdateChannelHandler(c *gin.Context) {
 	if !httpx.BindJSON(c, &req) {
 		return
 	}
-	if err := channel.UpdateChannel(authctx.TenantID(c), httpx.UintParam(c, "id"), req); err != nil {
+	if err := h.svc.ch.UpdateChannel(authctx.TenantID(c), httpx.UintParam(c, "id"), req); err != nil {
 		response.Param(c, err.Error())
 		return
 	}
 	response.OK(c, true)
 }
 
-func DeleteChannelHandler(c *gin.Context) {
+func (h *Handler) DeleteChannelHandler(c *gin.Context) {
 	if !authctx.IsAdmin(c) {
 		response.Forbid(c, "仅管理员可操作")
 		return
 	}
-	if err := channel.DeleteChannel(authctx.TenantID(c), httpx.UintParam(c, "id")); err != nil {
+	if err := h.svc.ch.DeleteChannel(authctx.TenantID(c), httpx.UintParam(c, "id")); err != nil {
 		response.Server(c, err.Error())
 		return
 	}
@@ -87,23 +95,23 @@ func DeleteChannelHandler(c *gin.Context) {
 }
 
 // ResetChannelAppIDHandler 重置渠道标识（app_id），生成新的随机值
-func ResetChannelAppIDHandler(c *gin.Context) {
-	appID, err := channel.ResetChannelAppID(authctx.TenantID(c), httpx.UintParam(c, "id"))
+func (h *Handler) ResetChannelAppIDHandler(c *gin.Context) {
+	appID, err := h.svc.ch.ResetChannelAppID(authctx.TenantID(c), httpx.UintParam(c, "id"))
 	if err != nil {
 		response.Param(c, err.Error())
 		return
 	}
 	response.OK(c, map[string]interface{}{
 		"app_id":     appID,
-		"access_url": channel.AccessURLByAppID(authctx.TenantID(c), httpx.UintParam(c, "id"), ""),
+		"access_url": h.svc.ch.AccessURLByAppID(authctx.TenantID(c), httpx.UintParam(c, "id"), ""),
 	})
 }
 
 // ---------------- 二维码 / 接入地址 ----------------
 
 // ChannelQRPNGHandler 返回 PNG 图片本身，便于前端直接下载（GET /api/channels/:id/qr.png?size=320）
-func ChannelQRPNGHandler(c *gin.Context) {
-	vo, err := channel.ChannelQR(authctx.TenantID(c), httpx.UintParam(c, "id"),
+func (h *Handler) ChannelQRPNGHandler(c *gin.Context) {
+	vo, err := h.svc.ch.ChannelQR(authctx.TenantID(c), httpx.UintParam(c, "id"),
 		c.Query("base"), httpx.QueryInt(c, "size", 320))
 	if err != nil {
 		response.Param(c, err.Error())
@@ -115,8 +123,8 @@ func ChannelQRPNGHandler(c *gin.Context) {
 }
 
 // ChannelQRInfoHandler 返回 base64 + 地址，便于页面内联展示与复制
-func ChannelQRInfoHandler(c *gin.Context) {
-	vo, err := channel.ChannelQR(authctx.TenantID(c), httpx.UintParam(c, "id"),
+func (h *Handler) ChannelQRInfoHandler(c *gin.Context) {
+	vo, err := h.svc.ch.ChannelQR(authctx.TenantID(c), httpx.UintParam(c, "id"),
 		c.Query("base"), httpx.QueryInt(c, "size", 320))
 	if err != nil {
 		response.Param(c, err.Error())
@@ -127,8 +135,8 @@ func ChannelQRInfoHandler(c *gin.Context) {
 
 // ---------------- 渠道接待账号快速设置 ----------------
 
-func ListChannelAgentsHandler(c *gin.Context) {
-	list, err := channel.ListChannelAgents(authctx.TenantID(c), httpx.UintParam(c, "id"))
+func (h *Handler) ListChannelAgentsHandler(c *gin.Context) {
+	list, err := h.svc.ch.ListChannelAgents(authctx.TenantID(c), httpx.UintParam(c, "id"))
 	if err != nil {
 		response.Param(c, err.Error())
 		return
@@ -136,7 +144,7 @@ func ListChannelAgentsHandler(c *gin.Context) {
 	response.OK(c, list)
 }
 
-func SetChannelAgentsHandler(c *gin.Context) {
+func (h *Handler) SetChannelAgentsHandler(c *gin.Context) {
 	if !authctx.IsAdmin(c) {
 		response.Forbid(c, "仅管理员可操作")
 		return
@@ -150,7 +158,7 @@ func SetChannelAgentsHandler(c *gin.Context) {
 	if req.UserIDs == nil {
 		req.UserIDs = []uint{}
 	}
-	list, err := channel.SetChannelAgents(authctx.TenantID(c), httpx.UintParam(c, "id"), req.UserIDs)
+	list, err := h.svc.ch.SetChannelAgents(authctx.TenantID(c), httpx.UintParam(c, "id"), req.UserIDs)
 	if err != nil {
 		response.Param(c, err.Error())
 		return
@@ -160,8 +168,8 @@ func SetChannelAgentsHandler(c *gin.Context) {
 
 // ---------------- 渠道类型库（可自定义，不限制枚举） ----------------
 
-func ListChannelTypesHandler(c *gin.Context) {
-	list, err := channel.ListChannelTypes(authctx.TenantID(c))
+func (h *Handler) ListChannelTypesHandler(c *gin.Context) {
+	list, err := h.svc.ch.ListChannelTypes(authctx.TenantID(c))
 	if err != nil {
 		response.Server(c, err.Error())
 		return
@@ -169,12 +177,12 @@ func ListChannelTypesHandler(c *gin.Context) {
 	response.OK(c, list)
 }
 
-func CreateChannelTypeHandler(c *gin.Context) {
+func (h *Handler) CreateChannelTypeHandler(c *gin.Context) {
 	var req channel.ChannelTypeRequest
 	if !httpx.BindJSON(c, &req) {
 		return
 	}
-	vo, err := channel.CreateChannelType(authctx.TenantID(c), req)
+	vo, err := h.svc.ch.CreateChannelType(authctx.TenantID(c), req)
 	if err != nil {
 		response.Param(c, err.Error())
 		return
@@ -182,20 +190,20 @@ func CreateChannelTypeHandler(c *gin.Context) {
 	response.OK(c, vo)
 }
 
-func UpdateChannelTypeHandler(c *gin.Context) {
+func (h *Handler) UpdateChannelTypeHandler(c *gin.Context) {
 	var req channel.ChannelTypeRequest
 	if !httpx.BindJSON(c, &req) {
 		return
 	}
-	if err := channel.UpdateChannelType(authctx.TenantID(c), httpx.UintParam(c, "id"), req); err != nil {
+	if err := h.svc.ch.UpdateChannelType(authctx.TenantID(c), httpx.UintParam(c, "id"), req); err != nil {
 		response.Param(c, err.Error())
 		return
 	}
 	response.OK(c, true)
 }
 
-func DeleteChannelTypeHandler(c *gin.Context) {
-	if err := channel.DeleteChannelType(authctx.TenantID(c), httpx.UintParam(c, "id")); err != nil {
+func (h *Handler) DeleteChannelTypeHandler(c *gin.Context) {
+	if err := h.svc.ch.DeleteChannelType(authctx.TenantID(c), httpx.UintParam(c, "id")); err != nil {
 		response.Param(c, err.Error())
 		return
 	}
@@ -207,12 +215,12 @@ func DeleteChannelTypeHandler(c *gin.Context) {
 // ListAgentsHandler 客服列表。
 //   - admin：看全部
 //   - agent：带 ?scope=transfer 时可看「与自己接待渠道有交集」的在线客服（用于会话转接）
-func ListAgentsHandler(c *gin.Context) {
+func (h *Handler) ListAgentsHandler(c *gin.Context) {
 	if !authctx.IsAdmin(c) && c.Query("scope") != "transfer" {
 		response.Forbid(c, "仅管理员可查看")
 		return
 	}
-	list, err := account.ListAgents(authctx.TenantID(c))
+	list, err := h.svc.acc.ListAgents(authctx.TenantID(c))
 	if err != nil {
 		response.Server(c, err.Error())
 		return
@@ -230,7 +238,7 @@ func ListAgentsHandler(c *gin.Context) {
 	response.OK(c, list)
 }
 
-func CreateAgentHandler(c *gin.Context) {
+func (h *Handler) CreateAgentHandler(c *gin.Context) {
 	if !authctx.IsAdmin(c) {
 		response.Forbid(c, "仅管理员可操作")
 		return
@@ -239,7 +247,7 @@ func CreateAgentHandler(c *gin.Context) {
 	if !httpx.BindJSON(c, &req) {
 		return
 	}
-	vo, err := account.CreateAgent(authctx.TenantID(c), req)
+	vo, err := h.svc.acc.CreateAgent(authctx.TenantID(c), req)
 	if err != nil {
 		response.Param(c, err.Error())
 		return
@@ -247,7 +255,7 @@ func CreateAgentHandler(c *gin.Context) {
 	response.OK(c, vo)
 }
 
-func UpdateAgentHandler(c *gin.Context) {
+func (h *Handler) UpdateAgentHandler(c *gin.Context) {
 	if !authctx.IsAdmin(c) {
 		response.Forbid(c, "仅管理员可操作")
 		return
@@ -256,26 +264,26 @@ func UpdateAgentHandler(c *gin.Context) {
 	if !httpx.BindJSON(c, &req) {
 		return
 	}
-	if err := account.UpdateAgent(authctx.TenantID(c), httpx.UintParam(c, "id"), req); err != nil {
+	if err := h.svc.acc.UpdateAgent(authctx.TenantID(c), httpx.UintParam(c, "id"), req); err != nil {
 		response.Param(c, err.Error())
 		return
 	}
 	response.OK(c, true)
 }
 
-func DeleteAgentHandler(c *gin.Context) {
+func (h *Handler) DeleteAgentHandler(c *gin.Context) {
 	if !authctx.IsAdmin(c) {
 		response.Forbid(c, "仅管理员可操作")
 		return
 	}
-	if err := account.DeleteAgent(authctx.TenantID(c), httpx.UintParam(c, "id")); err != nil {
+	if err := h.svc.acc.DeleteAgent(authctx.TenantID(c), httpx.UintParam(c, "id")); err != nil {
 		response.Server(c, err.Error())
 		return
 	}
 	response.OK(c, true)
 }
 
-func SetOnlineHandler(c *gin.Context) {
+func (h *Handler) SetOnlineHandler(c *gin.Context) {
 	var body struct {
 		Online bool `json:"online"`
 	}
@@ -289,7 +297,7 @@ func SetOnlineHandler(c *gin.Context) {
 		response.Forbid(c, "只能修改自己的在线状态")
 		return
 	}
-	if err := account.SetOnline(authctx.TenantID(c), target, body.Online); err != nil {
+	if err := h.svc.acc.SetOnline(authctx.TenantID(c), target, body.Online); err != nil {
 		response.Server(c, err.Error())
 		return
 	}
@@ -302,8 +310,8 @@ func SetOnlineHandler(c *gin.Context) {
 
 // ---------------- 客户 / 历史档案 ----------------
 
-func ListCustomersHandler(c *gin.Context) {
-	paged, err := customer.ListCustomers(authctx.TenantID(c), c.Query("keyword"), httpx.QueryUint(c, "channel_id"),
+func (h *Handler) ListCustomersHandler(c *gin.Context) {
+	paged, err := h.svc.cust.ListCustomers(authctx.TenantID(c), c.Query("keyword"), httpx.QueryUint(c, "channel_id"),
 		httpx.QueryInt(c, "page", 1), httpx.QueryInt(c, "page_size", 20))
 	if err != nil {
 		response.Server(c, err.Error())
@@ -314,8 +322,8 @@ func ListCustomersHandler(c *gin.Context) {
 
 // ---------------- 客户标签 ----------------
 
-func ListTagsHandler(c *gin.Context) {
-	list, err := customer.ListTags(authctx.TenantID(c))
+func (h *Handler) ListTagsHandler(c *gin.Context) {
+	list, err := h.svc.cust.ListTags(authctx.TenantID(c))
 	if err != nil {
 		response.Server(c, err.Error())
 		return
@@ -323,12 +331,12 @@ func ListTagsHandler(c *gin.Context) {
 	response.OK(c, list)
 }
 
-func CreateTagHandler(c *gin.Context) {
+func (h *Handler) CreateTagHandler(c *gin.Context) {
 	var req customer.TagRequest
 	if !httpx.BindJSON(c, &req) {
 		return
 	}
-	vo, err := customer.CreateTag(authctx.TenantID(c), req)
+	vo, err := h.svc.cust.CreateTag(authctx.TenantID(c), req)
 	if err != nil {
 		response.Param(c, err.Error())
 		return
@@ -336,22 +344,22 @@ func CreateTagHandler(c *gin.Context) {
 	response.OK(c, vo)
 }
 
-func DeleteTagHandler(c *gin.Context) {
-	if err := customer.DeleteTag(authctx.TenantID(c), httpx.UintParam(c, "id")); err != nil {
+func (h *Handler) DeleteTagHandler(c *gin.Context) {
+	if err := h.svc.cust.DeleteTag(authctx.TenantID(c), httpx.UintParam(c, "id")); err != nil {
 		response.Server(c, err.Error())
 		return
 	}
 	response.OK(c, true)
 }
 
-func UpdateCustomerRemarkHandler(c *gin.Context) {
+func (h *Handler) UpdateCustomerRemarkHandler(c *gin.Context) {
 	var req struct {
 		Remark string `json:"remark"`
 	}
 	if !httpx.BindJSON(c, &req) {
 		return
 	}
-	if err := customer.UpdateCustomerRemark(authctx.TenantID(c), httpx.UintParam(c, "id"), req.Remark); err != nil {
+	if err := h.svc.cust.UpdateCustomerRemark(authctx.TenantID(c), httpx.UintParam(c, "id"), req.Remark); err != nil {
 		response.Server(c, err.Error())
 		return
 	}
@@ -360,8 +368,8 @@ func UpdateCustomerRemarkHandler(c *gin.Context) {
 
 // ---------------- 自动回复规则（关键词 → 机器人回复 / 转人工） ----------------
 
-func ListAutoRepliesHandler(c *gin.Context) {
-	list, err := automation.ListAutoReplies(authctx.TenantID(c))
+func (h *Handler) ListAutoRepliesHandler(c *gin.Context) {
+	list, err := h.svc.auto.ListAutoReplies(authctx.TenantID(c))
 	if err != nil {
 		response.Server(c, err.Error())
 		return
@@ -369,7 +377,7 @@ func ListAutoRepliesHandler(c *gin.Context) {
 	response.OK(c, list)
 }
 
-func CreateAutoReplyHandler(c *gin.Context) {
+func (h *Handler) CreateAutoReplyHandler(c *gin.Context) {
 	if !authctx.IsAdmin(c) {
 		response.Forbid(c, "仅管理员可操作")
 		return
@@ -378,7 +386,7 @@ func CreateAutoReplyHandler(c *gin.Context) {
 	if !httpx.BindJSON(c, &req) {
 		return
 	}
-	vo, err := automation.CreateAutoReply(authctx.TenantID(c), req)
+	vo, err := h.svc.auto.CreateAutoReply(authctx.TenantID(c), req)
 	if err != nil {
 		response.Param(c, err.Error())
 		return
@@ -386,7 +394,7 @@ func CreateAutoReplyHandler(c *gin.Context) {
 	response.OK(c, vo)
 }
 
-func UpdateAutoReplyHandler(c *gin.Context) {
+func (h *Handler) UpdateAutoReplyHandler(c *gin.Context) {
 	if !authctx.IsAdmin(c) {
 		response.Forbid(c, "仅管理员可操作")
 		return
@@ -395,19 +403,19 @@ func UpdateAutoReplyHandler(c *gin.Context) {
 	if !httpx.BindJSON(c, &req) {
 		return
 	}
-	if err := automation.UpdateAutoReply(authctx.TenantID(c), httpx.UintParam(c, "id"), req); err != nil {
+	if err := h.svc.auto.UpdateAutoReply(authctx.TenantID(c), httpx.UintParam(c, "id"), req); err != nil {
 		response.Param(c, err.Error())
 		return
 	}
 	response.OK(c, true)
 }
 
-func DeleteAutoReplyHandler(c *gin.Context) {
+func (h *Handler) DeleteAutoReplyHandler(c *gin.Context) {
 	if !authctx.IsAdmin(c) {
 		response.Forbid(c, "仅管理员可操作")
 		return
 	}
-	if err := automation.DeleteAutoReply(authctx.TenantID(c), httpx.UintParam(c, "id")); err != nil {
+	if err := h.svc.auto.DeleteAutoReply(authctx.TenantID(c), httpx.UintParam(c, "id")); err != nil {
 		response.Server(c, err.Error())
 		return
 	}
@@ -418,7 +426,7 @@ func DeleteAutoReplyHandler(c *gin.Context) {
 // 实现完全落在 platform/setting（account 的登录响应也要用），本模块只做 HTTP 适配。
 
 // ListSettingsHandler 读取全部配置项
-func ListSettingsHandler(c *gin.Context) {
+func (h *Handler) ListSettingsHandler(c *gin.Context) {
 	list, err := setting.ListSettings(authctx.TenantID(c))
 	if err != nil {
 		response.Server(c, err.Error())
@@ -428,7 +436,7 @@ func ListSettingsHandler(c *gin.Context) {
 }
 
 // SaveSettingHandler 保存单个配置项
-func SaveSettingHandler(c *gin.Context) {
+func (h *Handler) SaveSettingHandler(c *gin.Context) {
 	var req struct {
 		Key   string `json:"key"`
 		Value string `json:"value"`
@@ -445,9 +453,9 @@ func SaveSettingHandler(c *gin.Context) {
 
 // ---------------- 数据统计 ----------------
 
-func StatsOverviewHandler(c *gin.Context) {
+func (h *Handler) StatsOverviewHandler(c *gin.Context) {
 	days := httpx.QueryInt(c, "days", 7)
-	data, err := StatsOverviewData(authctx.TenantID(c), days)
+	data, err := h.svc.StatsOverviewData(authctx.TenantID(c), days)
 	if err != nil {
 		response.Server(c, err.Error())
 		return
@@ -460,7 +468,7 @@ func StatsOverviewHandler(c *gin.Context) {
 
 // ---------------- 设备自检（推送通道验证，仅管理员） ----------------
 
-func TestDevicePushHandler(c *gin.Context) {
+func (h *Handler) TestDevicePushHandler(c *gin.Context) {
 	var body struct {
 		Title string `json:"title"`
 		Body  string `json:"body"`
@@ -481,7 +489,7 @@ func TestDevicePushHandler(c *gin.Context) {
 
 // ---------------- 对话记录（全局检索 / 只读回放） ----------------
 
-func SearchConversationRecordsHandler(c *gin.Context) {
+func (h *Handler) SearchConversationRecordsHandler(c *gin.Context) {
 	q := conversation.ConversationRecordsQuery{
 		Keyword:   c.Query("keyword"),
 		ChannelID: httpx.QueryUint(c, "channel_id"),
@@ -492,7 +500,7 @@ func SearchConversationRecordsHandler(c *gin.Context) {
 		Page:      httpx.QueryInt(c, "page", 1),
 		PageSize:  httpx.QueryInt(c, "page_size", 20),
 	}
-	list, total, err := conversation.SearchConversations(authctx.TenantID(c), q)
+	list, total, err := h.svc.conv.SearchConversations(authctx.TenantID(c), q)
 	if err != nil {
 		response.Server(c, err.Error())
 		return
@@ -504,8 +512,8 @@ func SearchConversationRecordsHandler(c *gin.Context) {
 }
 
 // GetConversationMessagesHandler 管理后台查看某个会话的完整消息（只读）
-func GetConversationMessagesHandler(c *gin.Context) {
-	list, err := conversation.ListMessages(authctx.TenantID(c), httpx.UintParam(c, "id"), 0, httpx.QueryInt(c, "limit", 200))
+func (h *Handler) GetConversationMessagesHandler(c *gin.Context) {
+	list, err := h.svc.conv.ListMessages(authctx.TenantID(c), httpx.UintParam(c, "id"), 0, httpx.QueryInt(c, "limit", 200))
 	if err != nil {
 		response.Server(c, err.Error())
 		return

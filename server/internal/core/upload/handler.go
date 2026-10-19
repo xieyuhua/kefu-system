@@ -1,9 +1,12 @@
 // Package upload 附件上传内核：图片 / 视频 / 文件落盘并返回可访问 URL。
-// 只有 handler 层（无 service / repository）：上传流程不涉及业务规则与数据表读写。
+// 只有 handler / service 两层（无 repository）：上传流程不涉及业务规则与数据表读写。
 //
 // 依赖方向：core/upload → core/customer（游客态兜底租户）→ platform → pkg。
 // 本包是跨端端点：客服端 POST /api/upload（登录态）与用户端 POST /api/guest/upload
 // （游客态）共用同一个处理器，故留在内核层，两端都不复制。
+//
+// 形态约定：处理器是 *Handler 的方法（指针接收者），Handler 在构造时建好自己的 Service；
+// 只有无状态的纯工具（uploadKind / randomName）与类型白名单保留为包级定义。
 package upload
 
 import (
@@ -16,7 +19,6 @@ import (
 	"strings"
 	"time"
 
-	"kefu-server/internal/core/customer"
 	"kefu-server/internal/platform/authctx"
 	"kefu-server/internal/platform/config"
 	"kefu-server/pkg/httpx"
@@ -25,18 +27,26 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// Handler 附件上传的 HTTP 层，持有本模块 service。
+type Handler struct {
+	svc *Service
+}
+
+// NewHandler 创建 HTTP 层实例（自带 service 依赖）。
+func NewHandler() *Handler { return &Handler{svc: NewService()} }
+
 // tenantIDOf 解析本次上传所属租户：登录态取 token 里的租户；
 // 游客态与用户端同口径（?tenant= 优先，缺省取第一个租户）。
 // 用户端的同口径实现在 modules/client，内核不能反向 import 端模块，
-// 因此兜底租户复用 core/customer.DefaultTenantID，避免多写一份 tenants 查询。
-func tenantIDOf(c *gin.Context) uint {
+// 因此兜底租户复用客户内核的 Service.DefaultTenantID，避免多写一份 tenants 查询。
+func (h *Handler) tenantIDOf(c *gin.Context) uint {
 	if cl := authctx.ClaimsFromContext(c); cl != nil {
 		return cl.TenantID
 	}
 	if t := httpx.QueryUint(c, "tenant"); t > 0 {
 		return t
 	}
-	return customer.DefaultTenantID()
+	return h.svc.DefaultTenantID()
 }
 
 // 允许上传的类型：图片 / 视频 / 文档
@@ -70,8 +80,8 @@ func uploadKind(ext string) string {
 
 // UploadHandler 上传附件（图片 / 视频 / 文件），返回可访问的 URL 与类别。
 // 客服端与用户端共用；用户端走 /api/guest/upload（无需登录）。
-func UploadHandler(c *gin.Context) {
-	tenantID := tenantIDOf(c)
+func (h *Handler) UploadHandler(c *gin.Context) {
+	tenantID := h.tenantIDOf(c)
 
 	fileHeader, err := c.FormFile("file")
 	if err != nil {
