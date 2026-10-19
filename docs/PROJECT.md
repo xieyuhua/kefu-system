@@ -6,19 +6,30 @@ kefu/
   server/
     main.go              启动装配：config → db → cache → seed → route
     internal/
-      route/             路由注册（原 router/）
-      handler/           HTTP 层：参数解析 + 响应（原 api/），不直接访问数据库
+      route/             路由注册
+      handler/           HTTP 层：参数解析 + 响应，不直接访问数据库
       service/           业务层：校验、编排、事务边界、DTO 组装
       repository/        数据访问层：所有 GORM 查询与写入
       model/             数据实体
       dto/ response/ middleware/ auth/ cache/ config/ db/ seed/
   web/                   Vue3 + Vite + TS + Element Plus（三端独立入口）
+    src/
+      app/               应用引导：App.vue、bootstrap.ts、style.css
+      shared/            三端共用：api/ types/ utils/ composables/ stores/auth
+                        + views/LoginView.vue + components/(卡片/媒体/缩略图/个人资料)
+      client/            ① 用户端（kefu.html）：ClientView + router
+      chat/              ② 客服端（chat.html）：WorkbenchView + 工作台组件 + stores/chat
+      admin/             ③ 后台端（admin.html）：AdminLayout + 10 个管理视图 + router/routes
+      main-kefu.ts / main-chat.ts / main-admin.ts   三个 MPA 入口
   docs/API.md            ★ 前后端唯一契约，所有字段以此为准
-  docs/架构分层.md        后端分层约定与新增接口的标准动作
+  docs/架构分层.md        分层约定与新增接口的标准动作
 ```
 
 后端分层依赖方向：`route → handler → service → repository → model`，
 上层可依赖下层，**下层不得反向依赖上层**。详见 [架构分层.md](架构分层.md)。
+
+前端按「共用层 + 三端」组织：`shared/` 只能被三端引用，三端之间**不得互相引用**
+（跨端跳转用整页 `window.location.href` 换入口，不能只改 hash）。
 
 ## 角色与权限
 - `admin`：租户管理员，可管理渠道、子账号，可看全部会话
@@ -47,10 +58,10 @@ kefu/
 
 ## 前端约定
 - 路径别名 `@` → `web/src`
-- 请求封装 `web/src/api/http.ts`：baseURL `/api`，dev 下 vite proxy 转发到 `http://127.0.0.1:8480`；拦截器返回 `res.data.data`，`code!=0` 抛错
-- 状态管理 Pinia：`stores/auth.ts`（token/user）、`stores/chat.ts`（会话/消息/未读）
-- WebSocket：`web/src/composables/useSocket.ts`，`ws://<host>/ws?token=xxx`，自动重连
-- 组件目录：`components/` 通用组件，`views/` 页面
+- 请求封装 `web/src/shared/api/http.ts`：baseURL `/api`，dev 下 vite proxy 转发到 `http://127.0.0.1:8480`；拦截器返回 `res.data.data`，`code!=0` 抛错
+- 状态管理 Pinia：`shared/stores/auth.ts`（token/user）、`chat/stores/chat.ts`（会话/消息/未读，仅客服端）
+- WebSocket：`web/src/shared/composables/useSocket.ts`，`ws://<host>/ws?token=xxx`，自动重连
+- 目录归属：`shared/` 三端共用；`client/` 用户端；`chat/` 客服工作台；`admin/` 管理后台
 - 图标用 `@element-plus/icons-vue`；渠道图标可用 emoji 或自定义 svg 占位
 
 ## 后端约定
