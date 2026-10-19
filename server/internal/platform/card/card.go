@@ -7,7 +7,7 @@ package card
 import (
 	"encoding/json"
 
-	"kefu-server/internal/platform/model"
+	"kefu-server/internal/common/model"
 	"kefu-server/pkg/util"
 )
 

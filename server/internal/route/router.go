@@ -1,3 +1,12 @@
+// Package route 路由组合入口：静态资源、SPA 兜底、健康检查，以及各端 /api 路由的汇总。
+//
+// 分工：
+//   - 本文件：静态资源（/uploads、/demo、/assets、/img、favicon、icons）、三端 SPA 入口与兜底、
+//     /health、根路径跳转；
+//   - internal/common/route：跨端公共端点（登录 / 资料 / 上传 / 订单商品）；
+//   - internal/{admin,agent,client}/route：各端专属端点，以及各自的 WebSocket 通道。
+//
+// 每条路由的 HTTP 方法、路径字符串、中间件与相对注册顺序在重排前后逐字一致。
 package route
 
 import (
@@ -6,12 +15,10 @@ import (
 	"os"
 	"path/filepath"
 
-	"kefu-server/internal/core/account"
-	"kefu-server/internal/core/customer"
-	"kefu-server/internal/core/upload"
-	"kefu-server/internal/modules/admin"
-	"kefu-server/internal/modules/agent"
-	"kefu-server/internal/modules/client"
+	adminroute "kefu-server/internal/admin/route"
+	agentroute "kefu-server/internal/agent/route"
+	clientroute "kefu-server/internal/client/route"
+	commonroute "kefu-server/internal/common/route"
 	"kefu-server/internal/platform/config"
 	"kefu-server/internal/platform/middleware"
 
@@ -109,16 +116,15 @@ func absPath(p string) string {
 	return p
 }
 
+// Setup 组装完整路由：静态资源 / SPA 入口 / 健康检查 / WebSocket，再按端汇总 /api 路由。
+//
+// 路由分三层归属：
+//   - 本文件：静态资源、SPA 兜底、/health 与静态目录；
+//   - internal/{admin,agent,client}/route：各端在 /api 下的注册（含各自的 WebSocket 通道）；
+//   - internal/common/route：三端共用的登录 / 资料 / 上传 / 订单商品端点。
+//
+// 每条路由的 HTTP 方法、路径字符串、中间件与相对注册顺序与拆分前逐字一致。
 func Setup() *gin.Engine {
-	// 各端 handler 只在这里实例化一次（handler 内部自带 service / repository），
-	// 路由注册时直接取方法值，避免每条路由各自 New 一遍。
-	accH := account.NewHandler()   // 账号内核：登录 / 个人资料（跨端端点）
-	custH := customer.NewHandler() // 客户内核：订单 / 商品（跨端端点）
-	upH := upload.NewHandler()     // 附件上传（跨端端点）
-	clientH := client.NewHandler() // 用户端（访客）
-	agentH := agent.NewHandler()   // 客服端（工作台 / APP / 桌面端）
-	adminH := admin.NewHandler()   // 管理后台
-
 	gin.SetMode(config.C.Server.Mode)
 	r := gin.New()
 	r.Use(gin.Recovery())
@@ -184,123 +190,19 @@ func Setup() *gin.Engine {
 		c.JSON(http.StatusOK, gin.H{"code": 0, "data": gin.H{"ok": true}})
 	})
 
-	// WebSocket：客服端（需 token）与用户端/访客（凭 channel+uid）两条独立通道
-	r.GET("/ws", agentH.WSHandler)
-	r.GET("/ws/guest", clientH.GuestWSHandler)
+	// WebSocket：客服端（需 token）与用户端/访客（凭 channel+uid）两条独立通道，
+	// 归属各自的端（客服端 / 用户端），因此由各端 route 注册到引擎根。
+	agentroute.RegisterWS(r)
+	clientroute.RegisterWS(r)
 
-	// 路由汇总：路径 / 方法 / 中间件与拆分前逐字一致，处理器改为各端 handler 的方法
-	// （handler 实例在 Setup 开头创建一次；模块内方法统一带 Handler 后缀，避免与 service 同名）。
+	// /api 路由汇总：按端注册，路径 / 方法 / 中间件与拆分前逐字一致。
 	g := r.Group("/api")
+	authed := g.Group("", middleware.JWTAuth())
 	{
-		// 认证
-		g.POST("/auth/login", accH.LoginHandler)
-		g.POST("/auth/logout", middleware.JWTAuth(), accH.LogoutHandler)
-		g.GET("/auth/me", middleware.JWTAuth(), accH.MeHandler)
-		g.PUT("/auth/profile", middleware.JWTAuth(), accH.UpdateProfileHandler)
-		g.PUT("/auth/password", middleware.JWTAuth(), accH.ChangePasswordHandler)
-
-		// 用户端（GET 参数传递渠道等信息，无需登录）
-		g.GET("/guest/init", clientH.GuestInitHandler)
-		g.POST("/guest/message", clientH.GuestSendHandler)
-		g.GET("/guest/messages", clientH.GuestMessagesHandler)
-		// 用户端上传附件（图片/视频/文件）
-		g.POST("/guest/upload", upH.UploadHandler)
-
-		authed := g.Group("", middleware.JWTAuth())
-		{
-			// 渠道
-			authed.GET("/channels", adminH.ListChannelsHandler)
-			authed.POST("/channels", adminH.CreateChannelHandler)
-			authed.PUT("/channels/:id", adminH.UpdateChannelHandler)
-			authed.DELETE("/channels/:id", adminH.DeleteChannelHandler)
-			// 重置渠道标识（app_id）：生成新的随机标识，旧链接失效
-			authed.POST("/channels/:id/reset-app-id", adminH.ResetChannelAppIDHandler)
-
-			// 渠道二维码 / 接入地址
-			authed.GET("/channels/:id/qr", adminH.ChannelQRInfoHandler)
-			authed.GET("/channels/:id/qr.png", adminH.ChannelQRPNGHandler)
-			// 渠道接待账号快速设置
-			authed.GET("/channels/:id/agents", adminH.ListChannelAgentsHandler)
-			authed.PUT("/channels/:id/agents", adminH.SetChannelAgentsHandler)
-
-			// 渠道类型库（自定义类型，不限制枚举）
-			authed.GET("/channel-types", adminH.ListChannelTypesHandler)
-			authed.POST("/channel-types", adminH.CreateChannelTypeHandler)
-			authed.PUT("/channel-types/:id", adminH.UpdateChannelTypeHandler)
-			authed.DELETE("/channel-types/:id", adminH.DeleteChannelTypeHandler)
-
-			// 子账号
-			authed.GET("/agents", adminH.ListAgentsHandler)
-			authed.POST("/agents", adminH.CreateAgentHandler)
-			authed.PUT("/agents/:id", adminH.UpdateAgentHandler)
-			authed.DELETE("/agents/:id", adminH.DeleteAgentHandler)
-			authed.POST("/agents/:id/online", adminH.SetOnlineHandler)
-
-			// 会话
-			authed.GET("/conversations", agentH.ListConversationsHandler)
-			authed.GET("/conversations/stats", agentH.ConversationStatsHandler)
-			authed.GET("/conversations/:id", agentH.GetConversationHandler)
-			authed.POST("/conversations/:id/claim", agentH.ClaimConversationHandler)
-			authed.POST("/conversations/:id/transfer", agentH.TransferConversationHandler)
-			authed.POST("/conversations/:id/close", agentH.CloseConversationHandler)
-			authed.POST("/conversations/:id/read", agentH.MarkReadHandler)
-			// 会话归档 / 删除 / 消息搜索
-			authed.POST("/conversations/archive-bulk", agentH.ArchiveConversationsBulkHandler)
-			authed.POST("/conversations/:id/archive", agentH.ArchiveConversationHandler)
-			authed.POST("/conversations/:id/unarchive", agentH.UnarchiveConversationHandler)
-			authed.DELETE("/conversations/:id", agentH.DeleteConversationHandler)
-			authed.GET("/conversations/:id/messages/search", agentH.SearchConversationMessagesHandler)
-			authed.GET("/conversations/:id/messages", agentH.ListMessagesHandler)
-			authed.POST("/conversations/:id/messages", agentH.SendMessageHandler)
-
-			// 客户与历史档案
-			authed.GET("/conversation-records", adminH.SearchConversationRecordsHandler)
-			authed.GET("/conversation-records/:id/messages", adminH.GetConversationMessagesHandler)
-			authed.GET("/users", adminH.ListCustomersHandler)
-			authed.GET("/users/:id", agentH.GetCustomerHandler)
-			authed.PUT("/users/:id/remark", adminH.UpdateCustomerRemarkHandler)
-
-			// 客户标签
-			authed.GET("/tags", adminH.ListTagsHandler)
-			authed.POST("/tags", adminH.CreateTagHandler)
-			authed.DELETE("/tags/:id", adminH.DeleteTagHandler)
-			authed.PUT("/users/:id/tags", agentH.SetCustomerTagsHandler)
-
-			// 订单 / 商品
-			authed.GET("/orders", custH.ListOrdersHandler)
-			authed.GET("/products", custH.ListProductsHandler)
-
-			// 自动回复规则（关键词 → 机器人回复 / 转人工）
-			authed.GET("/auto-replies", adminH.ListAutoRepliesHandler)
-			authed.POST("/auto-replies", adminH.CreateAutoReplyHandler)
-			authed.PUT("/auto-replies/:id", adminH.UpdateAutoReplyHandler)
-			authed.DELETE("/auto-replies/:id", adminH.DeleteAutoReplyHandler)
-
-			// 数据统计
-			authed.GET("/stats/overview", adminH.StatsOverviewHandler)
-
-			// 系统配置（默认图片等）
-			authed.GET("/settings", adminH.ListSettingsHandler)
-			authed.PUT("/settings", adminH.SaveSettingHandler)
-
-			// 设备（APP / PC 桌面端推送注册）
-			authed.GET("/devices", agentH.ListDevicesHandler)
-			authed.POST("/devices", agentH.RegisterDeviceHandler)
-			authed.DELETE("/devices/:id", agentH.DeleteDeviceHandler)
-			authed.POST("/devices/test-push", adminH.TestDevicePushHandler)
-
-			// 离线消息同步
-			authed.GET("/offline/messages", agentH.OfflineMessagesHandler)
-			authed.GET("/offline/notifications", agentH.OfflineNotificationsHandler)
-			authed.POST("/offline/notifications/read", agentH.ReadNotificationsHandler)
-
-			// 演示
-			authed.POST("/demo/incoming", agentH.DemoIncomingHandler)
-			authed.GET("/demo/products", agentH.DemoProductsHandler)
-
-			// 上传附件（图片 / 视频 / 文件）
-			authed.POST("/upload", upH.UploadHandler)
-		}
+		commonroute.Register(g, authed) // 登录 / 资料 / 上传 / 订单商品（跨端端点）
+		clientroute.Register(g, authed) // 用户端（访客）
+		adminroute.Register(g, authed)  // 管理后台
+		agentroute.Register(g, authed)  // 客服端（工作台 / APP / 桌面端）
 	}
 	return r
 }

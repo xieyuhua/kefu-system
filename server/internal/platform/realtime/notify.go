@@ -1,12 +1,12 @@
 package realtime
 
 import (
-	"kefu-server/internal/platform/model"
+	"kefu-server/internal/common/model"
 	"kefu-server/pkg/util"
 )
 
 // ---------------- 提醒与消息的统一出口 ----------------
-// 本文件是「提醒/消息产生后如何下发」的唯一入口，业务模块（modules/*）只调用这里的函数，
+// 本文件是「提醒/消息产生后如何下发」的唯一入口，业务模块（internal/{admin,agent,client}）只调用这里的函数，
 // 不必关心 WebSocket / 厂商推送的细节。
 
 // Notify 写一条系统提醒（离线时 APP/PC 端重连后可拉取），并通过推送网关尝试下发。

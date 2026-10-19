@@ -4,7 +4,7 @@ import (
 	"log"
 	"os"
 
-	"kefu-server/internal/core/account"
+	"kefu-server/internal/common/service"
 	"kefu-server/internal/platform/config"
 	"kefu-server/internal/platform/db"
 	"kefu-server/internal/platform/realtime"
@@ -55,7 +55,7 @@ func main() {
 	// 补齐演示静态资源（幂等，防止 data/demo 被清理后图片全部 404）
 	seed.EnsureDemoAssets()
 	// 重启后没有任何 WebSocket 连接，把所有客服重置为离线
-	if err := account.NewService().ResetAllOnline(); err != nil {
+	if err := service.NewAccountService().ResetAllOnline(); err != nil {
 		log.Printf("重置在线状态失败: %v", err)
 	}
 

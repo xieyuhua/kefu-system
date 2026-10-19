@@ -1,8 +1,8 @@
 package authctx
 
 import (
+	"kefu-server/internal/common/model"
 	"kefu-server/internal/platform/auth"
-	"kefu-server/internal/platform/model"
 
 	"github.com/gin-gonic/gin"
 )

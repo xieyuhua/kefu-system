@@ -1,6 +1,6 @@
 package dto
 
-import "kefu-server/internal/platform/model"
+import "kefu-server/internal/common/model"
 
 // LoginRequest / LoginResponse
 type LoginRequest struct {

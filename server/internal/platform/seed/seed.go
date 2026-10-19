@@ -8,12 +8,12 @@ import (
 	"path/filepath"
 	"time"
 
+	"kefu-server/internal/common/model"
 	"kefu-server/internal/platform/auth"
 	"kefu-server/internal/platform/card"
 	"kefu-server/internal/platform/config"
 	"kefu-server/internal/platform/db"
 	"kefu-server/internal/platform/idgen"
-	"kefu-server/internal/platform/model"
 )
 
 // Run 初始化演示数据。已存在数据时幂等跳过。

@@ -13,7 +13,7 @@ import (
 	"fmt"
 	"time"
 
-	"kefu-server/internal/platform/model"
+	"kefu-server/internal/common/model"
 	"kefu-server/pkg/storage"
 )
 

@@ -1,0 +1,45 @@
+package service
+
+// Package service 后台端（admin）的端内编排：为各后台能力建好公共业务依赖，
+// 并把概览统计委派给共享统计内核。
+//
+// 其余后台能力（渠道、子账号、客户与标签、自动回复、设置）由 admin/handler 直接调用
+// 本结构体暴露的字段，端内不再复制一份「转调门面」。
+//
+// 依赖方向：admin/handler → admin/service → common/service → common/repository → common/model → platform → pkg。
+//
+// 形态约定：端内编排都是 Service 的方法（指针接收者），跨层依赖在构造时建好。
+
+import (
+	commonsvc "kefu-server/internal/common/service"
+)
+
+// Service 后台端的端内编排层，持有各公共业务依赖（含共享统计内核）。
+// 字段导出：handler 已拆到 admin/handler 包，需要按能力直接取用对应的公共 service。
+type Service struct {
+	Conv      *commonsvc.ConversationService
+	Cust      *commonsvc.CustomerService
+	Channels  *commonsvc.ChannelService
+	Account   *commonsvc.AccountService
+	AutoReply *commonsvc.AutomationService
+	Stats     *commonsvc.StatsService
+}
+
+// NewService 创建端内业务层实例（自带各公共业务依赖）。
+func NewService() *Service {
+	return &Service{
+		Conv:      commonsvc.NewConversationService(),
+		Cust:      commonsvc.NewCustomerService(),
+		Channels:  commonsvc.NewChannelService(),
+		Account:   commonsvc.NewAccountService(),
+		AutoReply: commonsvc.NewAutomationService(),
+		Stats:     commonsvc.NewStatsService(),
+	}
+}
+
+// ---------------- 数据统计 ----------------
+
+// StatsOverviewData 生成指定天数的数据概览：口径在统计内核，本端只做委派。
+func (s *Service) StatsOverviewData(tenantID uint, days int) (*commonsvc.StatsOverview, error) {
+	return s.Stats.StatsOverviewData(tenantID, days)
+}

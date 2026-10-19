@@ -1,7 +1,7 @@
 package realtime
 
 import (
-	"kefu-server/internal/platform/model"
+	"kefu-server/internal/common/model"
 	"kefu-server/pkg/storage"
 )
 
@@ -12,7 +12,7 @@ import (
 //   - 账号在线状态翻转（WS 连接建立 / 断开）
 // 这些表的「业务写入」仍由对应模块的 repository 负责，本文件只处理实时通道自身需要的那几条。
 //
-// 设备列表读取不在此列：它归 core/notify，通过 SetDeviceLister 回调注入。
+// 设备列表读取不在此列：它归 common/service，通过 SetDeviceLister 回调注入。
 
 // createNotification 写入一条站内提醒（客服离线时重连后可拉取）。
 func createNotification(n *model.Notification) error {
