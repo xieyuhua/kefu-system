@@ -96,3 +96,11 @@ func (s *Service) OfflineNotifications(tenantID, userID uint, sinceID uint) ([]d
 func (s *Service) MarkNotificationsRead(tenantID, userID uint, ids []uint) error {
 	return s.repo.SetNotificationsRead(tenantID, userID, ids)
 }
+
+// ---------------- 供其它内核复用的门面 ----------------
+
+// ListDevicesForPush 返回某客服已登记的推送设备（原 model 实体，供厂商推送下发使用）。
+// platform/realtime 通过 SetDeviceLister 回调注入使用，避免平台层再写一份相同查询。
+func (s *Service) ListDevicesForPush(tenantID, userID uint) ([]*model.Device, error) {
+	return s.repo.ListDevicesOfUser(tenantID, userID)
+}
