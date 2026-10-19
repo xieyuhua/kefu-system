@@ -4,7 +4,7 @@ import (
 	"log"
 	"time"
 
-	"kefu-server/internal/common/realtime"
+	"kefu-server/pkg/realtime"
 )
 
 // ---------------- 基础设施层回调注册 ----------------

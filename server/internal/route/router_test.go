@@ -20,10 +20,10 @@ import (
 	"testing"
 	"time"
 
-	"kefu-server/internal/common/config"
 	"kefu-server/internal/common/middleware"
 	"kefu-server/internal/route"
 	"kefu-server/pkg/auth"
+	"kefu-server/pkg/config"
 
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"

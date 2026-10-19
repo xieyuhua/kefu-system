@@ -1,7 +1,7 @@
 // Package httpx 提供与业务无关的 gin 辅助：路径/查询参数解析与 JSON 绑定。
 //
 // 本包属于通用层（pkg），不得依赖 internal 下的任何包；
-// 依赖登录态的鉴权辅助见 internal/common/authctx。
+// 依赖登录态的鉴权辅助见 pkg/authctx。
 //
 // 形态约定（与 internal 一致）：包级只保留构造函数 NewHelper 与单例访问器 Default，
 // 业务能力一律是 *Helper 的指针接收者方法；调用点写 httpx.Default().BindJSON(c, &req)。

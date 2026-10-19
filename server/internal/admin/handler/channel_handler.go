@@ -5,8 +5,8 @@ import (
 	"net/http"
 	"net/url"
 
-	"kefu-server/internal/common/authctx"
-	"kefu-server/internal/common/dto"
+	"kefu-server/pkg/authctx"
+	"kefu-server/pkg/dto"
 	"kefu-server/pkg/httpx"
 	"kefu-server/pkg/response"
 

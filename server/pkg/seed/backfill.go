@@ -4,8 +4,8 @@ import (
 	"log"
 	"strings"
 
-	"kefu-server/internal/common/db"
 	"kefu-server/internal/common/model"
+	"kefu-server/pkg/db"
 	"kefu-server/pkg/idgen"
 )
 

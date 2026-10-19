@@ -18,9 +18,9 @@ import (
 	adminroute "kefu-server/internal/admin/route"
 	agentroute "kefu-server/internal/agent/route"
 	clientroute "kefu-server/internal/client/route"
-	"kefu-server/internal/common/config"
 	"kefu-server/internal/common/middleware"
 	commonroute "kefu-server/internal/common/route"
+	"kefu-server/pkg/config"
 
 	"github.com/gin-gonic/gin"
 )

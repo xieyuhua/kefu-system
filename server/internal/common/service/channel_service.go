@@ -11,9 +11,9 @@ import (
 	"strconv"
 	"strings"
 
-	"kefu-server/internal/common/dto"
 	"kefu-server/internal/common/model"
 	"kefu-server/internal/common/repository"
+	"kefu-server/pkg/dto"
 	"kefu-server/pkg/idgen"
 	"kefu-server/pkg/util"
 )

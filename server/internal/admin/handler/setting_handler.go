@@ -1,10 +1,10 @@
 package handler
 
 import (
-	"kefu-server/internal/common/authctx"
-	"kefu-server/internal/common/setting"
+	"kefu-server/pkg/authctx"
 	"kefu-server/pkg/httpx"
 	"kefu-server/pkg/response"
+	"kefu-server/pkg/setting"
 
 	"github.com/gin-gonic/gin"
 )

@@ -7,8 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"kefu-server/internal/common/config"
 	"kefu-server/internal/common/model"
+	"kefu-server/pkg/config"
 
 	"gorm.io/driver/mysql"
 	"gorm.io/driver/sqlite"

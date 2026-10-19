@@ -3,10 +3,10 @@ package handler
 import (
 	"strings"
 
-	"kefu-server/internal/common/authctx"
-	"kefu-server/internal/common/dto"
-	"kefu-server/internal/common/realtime"
+	"kefu-server/pkg/authctx"
+	"kefu-server/pkg/dto"
 	"kefu-server/pkg/httpx"
+	"kefu-server/pkg/realtime"
 	"kefu-server/pkg/response"
 
 	"github.com/gin-gonic/gin"

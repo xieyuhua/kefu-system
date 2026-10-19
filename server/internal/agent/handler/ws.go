@@ -3,8 +3,8 @@ package handler
 import (
 	"net/http"
 
-	"kefu-server/internal/common/realtime"
 	"kefu-server/pkg/auth"
+	"kefu-server/pkg/realtime"
 
 	"github.com/gin-gonic/gin"
 	commonsvc "kefu-server/internal/common/service"

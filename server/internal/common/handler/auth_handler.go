@@ -10,10 +10,10 @@ package handler
 // —— 三端共用同一套口令与 token 语义，复制到端内只会让鉴权口径漂移，故留在公共层。
 
 import (
-	"kefu-server/internal/common/authctx"
-	"kefu-server/internal/common/dto"
 	"kefu-server/pkg/auth"
+	"kefu-server/pkg/authctx"
 	"kefu-server/pkg/cache"
+	"kefu-server/pkg/dto"
 	"kefu-server/pkg/httpx"
 	"kefu-server/pkg/response"
 

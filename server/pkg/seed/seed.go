@@ -8,10 +8,10 @@ import (
 	"path/filepath"
 	"time"
 
-	"kefu-server/internal/common/config"
-	"kefu-server/internal/common/db"
 	"kefu-server/internal/common/model"
 	"kefu-server/pkg/auth"
+	"kefu-server/pkg/config"
+	"kefu-server/pkg/db"
 	"kefu-server/pkg/idgen"
 )
 

@@ -5,14 +5,14 @@ import (
 	"os"
 	"time"
 
-	"kefu-server/internal/common/config"
-	"kefu-server/internal/common/db"
-	"kefu-server/internal/common/realtime"
-	"kefu-server/internal/common/seed"
 	"kefu-server/internal/common/service"
 	"kefu-server/internal/route"
 	"kefu-server/pkg/auth"
 	"kefu-server/pkg/cache"
+	"kefu-server/pkg/config"
+	"kefu-server/pkg/db"
+	"kefu-server/pkg/realtime"
+	"kefu-server/pkg/seed"
 	"kefu-server/pkg/storage"
 )
 

@@ -3,8 +3,8 @@ package service
 import (
 	"errors"
 
-	"kefu-server/internal/common/dto"
 	"kefu-server/internal/common/model"
+	"kefu-server/pkg/dto"
 )
 
 // ---------------- 渠道 ↔ 接待账号快速设置 ----------------

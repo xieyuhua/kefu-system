@@ -4,8 +4,8 @@ import (
 	"errors"
 	"strings"
 
-	"kefu-server/internal/common/dto"
 	"kefu-server/internal/common/model"
+	"kefu-server/pkg/dto"
 )
 
 // orDefault 空串取默认值（渠道名/昵称兜底）

@@ -14,9 +14,9 @@ import (
 	"strings"
 	"time"
 
-	"kefu-server/internal/common/config"
 	"kefu-server/internal/common/model"
 	"kefu-server/pkg/cache"
+	"kefu-server/pkg/config"
 	"kefu-server/pkg/ipinfo"
 	"kefu-server/pkg/storage"
 	"kefu-server/pkg/util"

@@ -17,10 +17,10 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"kefu-server/internal/common/dto"
 	"kefu-server/internal/common/model"
 	"kefu-server/internal/common/repository"
 	"kefu-server/internal/common/service"
+	"kefu-server/pkg/dto"
 	"kefu-server/pkg/storage"
 
 	"gorm.io/driver/sqlite"

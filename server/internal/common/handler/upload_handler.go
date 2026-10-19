@@ -19,8 +19,8 @@ import (
 	"strings"
 	"time"
 
-	"kefu-server/internal/common/authctx"
-	"kefu-server/internal/common/config"
+	"kefu-server/pkg/authctx"
+	"kefu-server/pkg/config"
 	"kefu-server/pkg/httpx"
 	"kefu-server/pkg/response"
 

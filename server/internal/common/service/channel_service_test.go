@@ -9,9 +9,9 @@ import (
 	"net/url"
 	"testing"
 
-	"kefu-server/internal/common/config"
 	"kefu-server/internal/common/model"
 	"kefu-server/internal/common/service"
+	"kefu-server/pkg/config"
 )
 
 // withPublicBase 设置全局配置里的 public_base，并在用例结束后还原，

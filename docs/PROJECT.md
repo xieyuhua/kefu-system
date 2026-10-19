@@ -19,10 +19,8 @@ kefu/
       admin/         后台端：handler/ service/ route/（无自有 model/repository，直接用 common）
       agent/         客服端：handler/ service/ route/
       client/        用户端：handler/ service/ route/
-      common/        三端共用
-        handler/ service/ repository/ model/ route/   业务与数据访问
-        auth/ authctx/ card/ config/ db/ dto/ idgen/  基础设施（原 platform 已并入）
-        ipinfo/ middleware/ realtime/ seed/ setting/
+      common/        三端共用（只留业务四层 + 中间件 + 模型 + 路由）
+        handler/ service/ repository/ model/ route/ middleware/
       route/router.go 组合入口：静态资源 + SPA + 三端路由汇总
   web/                   Vue3 + Vite + TS + Element Plus（三端独立入口）
     src/
