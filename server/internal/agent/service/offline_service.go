@@ -1,7 +1,7 @@
 package service
 
 import (
-	"kefu-server/internal/platform/dto"
+	"kefu-server/internal/common/dto"
 )
 
 // ---------------- 离线消息 ----------------

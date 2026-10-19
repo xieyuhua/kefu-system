@@ -9,10 +9,10 @@ package service
 import (
 	"errors"
 
+	"kefu-server/internal/common/dto"
+	"kefu-server/internal/common/ipinfo"
 	"kefu-server/internal/common/model"
 	"kefu-server/internal/common/repository"
-	"kefu-server/internal/platform/dto"
-	"kefu-server/internal/platform/ipinfo"
 	"kefu-server/pkg/response"
 	"kefu-server/pkg/storage"
 	"kefu-server/pkg/util"

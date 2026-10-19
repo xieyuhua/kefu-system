@@ -7,9 +7,9 @@ import (
 	"strings"
 	"time"
 
+	"kefu-server/internal/common/dto"
 	"kefu-server/internal/common/model"
-	"kefu-server/internal/platform/dto"
-	"kefu-server/internal/platform/realtime"
+	"kefu-server/internal/common/realtime"
 )
 
 // ---------------- 演示入口 ----------------

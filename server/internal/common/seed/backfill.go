@@ -4,9 +4,9 @@ import (
 	"log"
 	"strings"
 
+	"kefu-server/internal/common/db"
+	"kefu-server/internal/common/idgen"
 	"kefu-server/internal/common/model"
-	"kefu-server/internal/platform/db"
-	"kefu-server/internal/platform/idgen"
 )
 
 // EnsureDemoAssets 幂等补齐内置演示 SVG 资源。

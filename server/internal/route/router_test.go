@@ -20,9 +20,9 @@ import (
 	"testing"
 	"time"
 
-	"kefu-server/internal/platform/auth"
-	"kefu-server/internal/platform/config"
-	"kefu-server/internal/platform/middleware"
+	"kefu-server/internal/common/auth"
+	"kefu-server/internal/common/config"
+	"kefu-server/internal/common/middleware"
 	"kefu-server/internal/route"
 
 	"github.com/gin-gonic/gin"

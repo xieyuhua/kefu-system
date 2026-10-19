@@ -12,7 +12,7 @@ package handler
 // 两端语义一致、参数兼容，复制到任一端都会立刻出现两份分页实现，故留在公共层。
 
 import (
-	"kefu-server/internal/platform/authctx"
+	"kefu-server/internal/common/authctx"
 	"kefu-server/pkg/httpx"
 	"kefu-server/pkg/response"
 

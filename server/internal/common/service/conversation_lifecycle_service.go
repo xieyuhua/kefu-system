@@ -5,8 +5,8 @@ import (
 	"log"
 	"time"
 
+	"kefu-server/internal/common/dto"
 	"kefu-server/internal/common/model"
-	"kefu-server/internal/platform/dto"
 	"kefu-server/pkg/storage"
 )
 

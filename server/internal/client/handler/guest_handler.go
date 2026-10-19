@@ -18,11 +18,11 @@ import (
 	"strings"
 
 	"kefu-server/internal/client/service"
+	"kefu-server/internal/common/dto"
+	"kefu-server/internal/common/ipinfo"
 	"kefu-server/internal/common/model"
+	"kefu-server/internal/common/realtime"
 	commonsvc "kefu-server/internal/common/service"
-	"kefu-server/internal/platform/dto"
-	"kefu-server/internal/platform/ipinfo"
-	"kefu-server/internal/platform/realtime"
 	"kefu-server/pkg/httpx"
 	"kefu-server/pkg/response"
 

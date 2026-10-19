@@ -12,12 +12,13 @@ kefu/
       httpx              通用 gin 辅助（参数解析、JSON 绑定）
       util               时间等通用工具
     internal/
-      admin/         后台端：handler/ service/ repository/ model/ route/
-      agent/         客服端：handler/ service/ repository/ model/ route/
-      client/        用户端：handler/ service/ repository/ model/ route/
-      common/        三端共用：handler/ service/ repository/ model/ route/
-      platform/      基础设施：auth authctx cache card config db dto idgen
-                     ipinfo middleware realtime response seed setting util
+      admin/         后台端：handler/ service/ route/（无自有 model/repository，直接用 common）
+      agent/         客服端：handler/ service/ route/
+      client/        用户端：handler/ service/ route/
+      common/        三端共用
+        handler/ service/ repository/ model/ route/   业务与数据访问
+        auth/ authctx/ card/ config/ db/ dto/ idgen/  基础设施（原 platform 已并入）
+        ipinfo/ middleware/ realtime/ seed/ setting/
       route/router.go 组合入口：静态资源 + SPA + 三端路由汇总
   web/                   Vue3 + Vite + TS + Element Plus（三端独立入口）
     src/

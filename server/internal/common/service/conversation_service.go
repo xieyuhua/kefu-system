@@ -19,11 +19,11 @@ import (
 	"fmt"
 	"time"
 
+	"kefu-server/internal/common/dto"
+	"kefu-server/internal/common/ipinfo"
 	"kefu-server/internal/common/model"
+	"kefu-server/internal/common/realtime"
 	"kefu-server/internal/common/repository"
-	"kefu-server/internal/platform/dto"
-	"kefu-server/internal/platform/ipinfo"
-	"kefu-server/internal/platform/realtime"
 	"kefu-server/pkg/response"
 	"kefu-server/pkg/util"
 )

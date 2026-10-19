@@ -9,8 +9,8 @@ import (
 	"sync"
 	"time"
 
+	"kefu-server/internal/common/config"
 	"kefu-server/internal/common/model"
-	"kefu-server/internal/platform/config"
 	"kefu-server/pkg/cache"
 	"kefu-server/pkg/storage"
 )

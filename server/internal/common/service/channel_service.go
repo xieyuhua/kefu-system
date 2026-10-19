@@ -11,10 +11,10 @@ import (
 	"strconv"
 	"strings"
 
+	"kefu-server/internal/common/dto"
+	"kefu-server/internal/common/idgen"
 	"kefu-server/internal/common/model"
 	"kefu-server/internal/common/repository"
-	"kefu-server/internal/platform/dto"
-	"kefu-server/internal/platform/idgen"
 	"kefu-server/pkg/util"
 )
 

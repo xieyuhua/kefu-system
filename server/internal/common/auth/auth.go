@@ -4,7 +4,7 @@ import (
 	"errors"
 	"time"
 
-	"kefu-server/internal/platform/config"
+	"kefu-server/internal/common/config"
 	"kefu-server/pkg/cache"
 
 	"github.com/golang-jwt/jwt/v5"

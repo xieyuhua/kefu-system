@@ -8,7 +8,7 @@ package route
 
 import (
 	"kefu-server/internal/common/handler"
-	"kefu-server/internal/platform/middleware"
+	"kefu-server/internal/common/middleware"
 
 	"github.com/gin-gonic/gin"
 )

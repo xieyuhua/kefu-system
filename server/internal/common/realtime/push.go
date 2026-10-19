@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"log"
 
+	"kefu-server/internal/common/config"
 	"kefu-server/internal/common/model"
-	"kefu-server/internal/platform/config"
 )
 
 // ---------------- 厂商推送网关 ----------------

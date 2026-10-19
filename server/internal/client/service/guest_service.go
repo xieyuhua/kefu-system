@@ -20,10 +20,10 @@ import (
 	"strings"
 	"time"
 
+	"kefu-server/internal/common/card"
+	"kefu-server/internal/common/ipinfo"
 	"kefu-server/internal/common/model"
 	commonsvc "kefu-server/internal/common/service"
-	"kefu-server/internal/platform/card"
-	"kefu-server/internal/platform/ipinfo"
 )
 
 // Service 用户端（访客）的端内编排层，持有四个公共业务依赖。

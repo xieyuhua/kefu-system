@@ -1,8 +1,8 @@
 package service
 
 import (
+	"kefu-server/internal/common/dto"
 	"kefu-server/internal/common/model"
-	"kefu-server/internal/platform/dto"
 	"kefu-server/pkg/response"
 	"kefu-server/pkg/storage"
 	"kefu-server/pkg/util"

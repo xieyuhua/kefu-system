@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"strings"
 
+	"kefu-server/internal/common/config"
 	"kefu-server/internal/common/model"
-	"kefu-server/internal/platform/config"
 
 	qrcode "github.com/skip2/go-qrcode"
 )

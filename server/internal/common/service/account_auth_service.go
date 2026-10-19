@@ -8,13 +8,13 @@ package service
 import (
 	"strings"
 
+	"kefu-server/internal/common/auth"
+	"kefu-server/internal/common/authctx"
+	"kefu-server/internal/common/dto"
 	"kefu-server/internal/common/model"
+	"kefu-server/internal/common/realtime"
 	"kefu-server/internal/common/repository"
-	"kefu-server/internal/platform/auth"
-	"kefu-server/internal/platform/authctx"
-	"kefu-server/internal/platform/dto"
-	"kefu-server/internal/platform/realtime"
-	"kefu-server/internal/platform/setting"
+	"kefu-server/internal/common/setting"
 )
 
 // AccountService 账号内核的业务编排层。

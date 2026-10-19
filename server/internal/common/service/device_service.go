@@ -7,9 +7,9 @@ package service
 // 形态约定：业务编排都是 NotifyService 的方法（指针接收者），构造时建好设备与提醒两个仓储；
 // 本域没有需要保留的包级纯函数。
 import (
+	"kefu-server/internal/common/dto"
 	"kefu-server/internal/common/model"
 	"kefu-server/internal/common/repository"
-	"kefu-server/internal/platform/dto"
 	"kefu-server/pkg/util"
 )
 

@@ -1,7 +1,7 @@
 package handler
 
 import (
-	"kefu-server/internal/platform/authctx"
+	"kefu-server/internal/common/authctx"
 	"kefu-server/pkg/httpx"
 	"kefu-server/pkg/response"
 

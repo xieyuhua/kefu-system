@@ -3,7 +3,7 @@ package middleware
 import (
 	"strings"
 
-	"kefu-server/internal/platform/auth"
+	"kefu-server/internal/common/auth"
 	"kefu-server/pkg/response"
 
 	"github.com/gin-gonic/gin"
