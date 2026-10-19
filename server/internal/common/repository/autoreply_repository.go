@@ -26,7 +26,7 @@ func NewAutoReplyRepository() *AutoReplyRepository { return &AutoReplyRepository
 // ListAutoRepliesByTenant 列出租户的全部规则，优先级高的在前、同优先级按 id 升序。
 func (r *AutoReplyRepository) ListAutoRepliesByTenant(tenantID uint) ([]*model.AutoReply, error) {
 	var list []*model.AutoReply
-	if err := storage.DB().Where("tenant_id = ?", tenantID).
+	if err := storage.Default().DB().Where("tenant_id = ?", tenantID).
 		Order("priority desc, id asc").Find(&list).Error; err != nil {
 		return nil, err
 	}
@@ -36,7 +36,7 @@ func (r *AutoReplyRepository) ListAutoRepliesByTenant(tenantID uint) ([]*model.A
 // ListEnabledAutoReplies 列出参与关键词匹配的启用规则（enabled = true），排序同上。
 func (r *AutoReplyRepository) ListEnabledAutoReplies(tenantID uint) ([]*model.AutoReply, error) {
 	var list []*model.AutoReply
-	if err := storage.DB().Where("tenant_id = ? AND enabled = ?", tenantID, true).
+	if err := storage.Default().DB().Where("tenant_id = ? AND enabled = ?", tenantID, true).
 		Order("priority desc, id asc").Find(&list).Error; err != nil {
 		return nil, err
 	}
@@ -46,7 +46,7 @@ func (r *AutoReplyRepository) ListEnabledAutoReplies(tenantID uint) ([]*model.Au
 // FindAutoReplyByID 按租户 + 主键查询规则；未命中返回 gorm.ErrRecordNotFound。
 func (r *AutoReplyRepository) FindAutoReplyByID(tenantID, id uint) (*model.AutoReply, error) {
 	var ar model.AutoReply
-	if err := storage.DB().Where("tenant_id = ? AND id = ?", tenantID, id).First(&ar).Error; err != nil {
+	if err := storage.Default().DB().Where("tenant_id = ? AND id = ?", tenantID, id).First(&ar).Error; err != nil {
 		return nil, err
 	}
 	return &ar, nil
@@ -54,29 +54,29 @@ func (r *AutoReplyRepository) FindAutoReplyByID(tenantID, id uint) (*model.AutoR
 
 // InsertAutoReply 新增规则，成功后回填主键与时间戳。
 func (r *AutoReplyRepository) InsertAutoReply(ar *model.AutoReply) error {
-	return storage.DB().Create(ar).Error
+	return storage.Default().DB().Create(ar).Error
 }
 
 // SaveAutoReply 保存规则全字段（更新路径）。
 func (r *AutoReplyRepository) SaveAutoReply(ar *model.AutoReply) error {
-	return storage.DB().Save(ar).Error
+	return storage.Default().DB().Save(ar).Error
 }
 
 // RemoveAutoReply 按租户 + 主键删除规则。
 func (r *AutoReplyRepository) RemoveAutoReply(tenantID, id uint) error {
-	return storage.DB().Where("tenant_id = ? AND id = ?", tenantID, id).Delete(&model.AutoReply{}).Error
+	return storage.Default().DB().Where("tenant_id = ? AND id = ?", tenantID, id).Delete(&model.AutoReply{}).Error
 }
 
 // UpdateAutoReplyHitCount 回写规则的命中次数（命中即 +1，按主键更新，不做租户过滤）。
 func (r *AutoReplyRepository) UpdateAutoReplyHitCount(id uint, hitCount int64) error {
-	return storage.DB().Model(&model.AutoReply{}).Where("id = ?", id).Update("hit_count", hitCount).Error
+	return storage.Default().DB().Model(&model.AutoReply{}).Where("id = ?", id).Update("hit_count", hitCount).Error
 }
 
 // FindAutoReplyChannel 规则回显渠道名用：按主键直取渠道（只读 channels 表）。
 // 规则可能指向历史渠道，故这里不叠加租户过滤，保持与原实现一致。
 func (r *AutoReplyRepository) FindAutoReplyChannel(channelID uint) (*model.Channel, error) {
 	var ch model.Channel
-	if err := storage.DB().First(&ch, channelID).Error; err != nil {
+	if err := storage.Default().DB().First(&ch, channelID).Error; err != nil {
 		return nil, err
 	}
 	return &ch, nil
@@ -87,7 +87,7 @@ func (r *AutoReplyRepository) FindAutoReplyChannel(channelID uint) (*model.Chann
 // FindAutoReplyConversation 按租户 + 主键读取会话（判定是否已由人工接待）。
 func (r *AutoReplyRepository) FindAutoReplyConversation(tenantID, convID uint) (*model.Conversation, error) {
 	var conv model.Conversation
-	if err := storage.DB().Where("tenant_id = ? AND id = ?", tenantID, convID).First(&conv).Error; err != nil {
+	if err := storage.Default().DB().Where("tenant_id = ? AND id = ?", tenantID, convID).First(&conv).Error; err != nil {
 		return nil, err
 	}
 	return &conv, nil
@@ -96,10 +96,10 @@ func (r *AutoReplyRepository) FindAutoReplyConversation(tenantID, convID uint) (
 // UpdateAutoReplyConversation 按主键更新会话的指定字段（转人工置 pending / 回写消息摘要）。
 // 用 map 更新才能把 agent_id 显式写成 0，保持原行为。
 func (r *AutoReplyRepository) UpdateAutoReplyConversation(convID uint, fields map[string]interface{}) error {
-	return storage.DB().Model(&model.Conversation{}).Where("id = ?", convID).Updates(fields).Error
+	return storage.Default().DB().Model(&model.Conversation{}).Where("id = ?", convID).Updates(fields).Error
 }
 
 // CreateAutoReplyMessage 落一条机器人发出的消息，成功后回填主键。
 func (r *AutoReplyRepository) CreateAutoReplyMessage(m *model.Message) error {
-	return storage.DB().Create(m).Error
+	return storage.Default().DB().Create(m).Error
 }

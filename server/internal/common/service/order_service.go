@@ -12,7 +12,7 @@ import (
 
 func (s *CustomerService) ListOrders(tenantID uint, customerID uint, keyword string, page, pageSize int) (*response.Paged, error) {
 	// 统一夹取到合法区间，并回显夹取后的值（否则 page_size=100000000 会原样出现在响应里）
-	page, pageSize = storage.ClampPage(page, pageSize)
+	page, pageSize = storage.Default().ClampPage(page, pageSize)
 	list, total, err := s.orders.ListOrdersPaged(tenantID, customerID, keyword, page, pageSize)
 	if err != nil {
 		return nil, err
@@ -22,7 +22,7 @@ func (s *CustomerService) ListOrders(tenantID uint, customerID uint, keyword str
 		vos = append(vos, dto.OrderVO{
 			ID: o.ID, OrderNo: o.OrderNo, Title: o.Title, Status: o.Status,
 			Amount: o.Amount, Quantity: o.Quantity, Image: o.Image, SKU: o.SKU,
-			CreatedAt: util.FmtTime(o.CreatedAt), PaidAt: util.FmtTimePtr(o.PaidAt),
+			CreatedAt: util.Default().FmtTime(o.CreatedAt), PaidAt: util.Default().FmtTimePtr(o.PaidAt),
 		})
 	}
 	return &response.Paged{List: vos, Total: total, Page: page, PageSize: pageSize}, nil

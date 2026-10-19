@@ -44,31 +44,31 @@ func countRows(q *gorm.DB) (int64, error) {
 
 // CountConversationsInRange 统计租户在 [from, to) 内创建的会话总数。
 func (r *StatsRepository) CountConversationsInRange(tenantID uint, from, to time.Time) (int64, error) {
-	return countRows(storage.DB().Model(&model.Conversation{}).
+	return countRows(storage.Default().DB().Model(&model.Conversation{}).
 		Where("tenant_id = ? AND created_at >= ? AND created_at < ?", tenantID, from, to))
 }
 
 // CountHandledConversationsInRange 统计 [from, to) 内已接待（agent_id > 0）的会话数。
 func (r *StatsRepository) CountHandledConversationsInRange(tenantID uint, from, to time.Time) (int64, error) {
-	return countRows(storage.DB().Model(&model.Conversation{}).
+	return countRows(storage.Default().DB().Model(&model.Conversation{}).
 		Where("tenant_id = ? AND created_at >= ? AND created_at < ? AND agent_id > 0", tenantID, from, to))
 }
 
 // CountConversationsInRangeByStatus 统计 [from, to) 内指定状态（pending/open/closed）的会话数。
 func (r *StatsRepository) CountConversationsInRangeByStatus(tenantID uint, from, to time.Time, status string) (int64, error) {
-	return countRows(storage.DB().Model(&model.Conversation{}).
+	return countRows(storage.Default().DB().Model(&model.Conversation{}).
 		Where("tenant_id = ? AND created_at >= ? AND created_at < ? AND status = ?", tenantID, from, to, status))
 }
 
 // CountMessagesInRange 统计 [from, to) 内的消息总数。
 func (r *StatsRepository) CountMessagesInRange(tenantID uint, from, to time.Time) (int64, error) {
-	return countRows(storage.DB().Model(&model.Message{}).
+	return countRows(storage.Default().DB().Model(&model.Message{}).
 		Where("tenant_id = ? AND created_at >= ? AND created_at < ?", tenantID, from, to))
 }
 
 // CountMessagesInRangeByDirection 统计 [from, to) 内指定方向（in=客户 / out=客服）的消息数。
 func (r *StatsRepository) CountMessagesInRangeByDirection(tenantID uint, from, to time.Time, direction string) (int64, error) {
-	return countRows(storage.DB().Model(&model.Message{}).
+	return countRows(storage.Default().DB().Model(&model.Message{}).
 		Where("tenant_id = ? AND created_at >= ? AND created_at < ? AND direction = ?", tenantID, from, to, direction))
 }
 
@@ -76,7 +76,7 @@ func (r *StatsRepository) CountMessagesInRangeByDirection(tenantID uint, from, t
 // 不能只按 role='agent' 过滤），按 role 降序、id 升序返回。
 func (r *StatsRepository) ListUsersForStats(tenantID uint) ([]*model.User, error) {
 	var users []*model.User
-	if err := storage.DB().Where("tenant_id = ?", tenantID).
+	if err := storage.Default().DB().Where("tenant_id = ?", tenantID).
 		Order("role desc, id asc").Find(&users).Error; err != nil {
 		return nil, err
 	}
@@ -85,20 +85,20 @@ func (r *StatsRepository) ListUsersForStats(tenantID uint) ([]*model.User, error
 
 // CountAgentConversations 统计某账号接待过的会话总数（不限状态、不限时间）。
 func (r *StatsRepository) CountAgentConversations(tenantID, agentID uint) (int64, error) {
-	return countRows(storage.DB().Model(&model.Conversation{}).
+	return countRows(storage.Default().DB().Model(&model.Conversation{}).
 		Where("tenant_id = ? AND agent_id = ?", tenantID, agentID))
 }
 
 // CountAgentConversationsByStatus 统计某账号在指定状态下的会话数。
 func (r *StatsRepository) CountAgentConversationsByStatus(tenantID, agentID uint, status string) (int64, error) {
-	return countRows(storage.DB().Model(&model.Conversation{}).
+	return countRows(storage.Default().DB().Model(&model.Conversation{}).
 		Where("tenant_id = ? AND agent_id = ? AND status = ?", tenantID, agentID, status))
 }
 
 // CountAgentMessagesSince 统计某账号自 since 起的消息数（沿用原有 sender_role='user' 口径，
 // 与表头「最近 N 天」对齐）。
 func (r *StatsRepository) CountAgentMessagesSince(tenantID, agentID uint, since time.Time) (int64, error) {
-	return countRows(storage.DB().Model(&model.Message{}).
+	return countRows(storage.Default().DB().Model(&model.Message{}).
 		Where("tenant_id = ? AND sender_id = ? AND sender_role = 'user' AND created_at >= ?",
 			tenantID, agentID, since))
 }
@@ -106,7 +106,7 @@ func (r *StatsRepository) CountAgentMessagesSince(tenantID, agentID uint, since 
 // ListChannelsForStats 列出参与渠道分布统计的渠道，按 id 升序返回。
 func (r *StatsRepository) ListChannelsForStats(tenantID uint) ([]*model.Channel, error) {
 	var list []*model.Channel
-	if err := storage.DB().Where("tenant_id = ?", tenantID).Order("id asc").Find(&list).Error; err != nil {
+	if err := storage.Default().DB().Where("tenant_id = ?", tenantID).Order("id asc").Find(&list).Error; err != nil {
 		return nil, err
 	}
 	return list, nil
@@ -114,49 +114,49 @@ func (r *StatsRepository) ListChannelsForStats(tenantID uint) ([]*model.Channel,
 
 // CountChannelConversationsSince 统计某渠道自 since 起创建的会话总数。
 func (r *StatsRepository) CountChannelConversationsSince(tenantID, channelID uint, since time.Time) (int64, error) {
-	return countRows(storage.DB().Model(&model.Conversation{}).
+	return countRows(storage.Default().DB().Model(&model.Conversation{}).
 		Where("tenant_id = ? AND channel_id = ? AND created_at >= ?", tenantID, channelID, since))
 }
 
 // CountChannelConversationsSinceByStatus 统计某渠道自 since 起指定状态的会话数。
 func (r *StatsRepository) CountChannelConversationsSinceByStatus(tenantID, channelID uint, since time.Time, status string) (int64, error) {
-	return countRows(storage.DB().Model(&model.Conversation{}).
+	return countRows(storage.Default().DB().Model(&model.Conversation{}).
 		Where("tenant_id = ? AND channel_id = ? AND status = ? AND created_at >= ?", tenantID, channelID, status, since))
 }
 
 // CountTenantConversations 统计租户全部会话数（汇总卡片用，不限时间）。
 func (r *StatsRepository) CountTenantConversations(tenantID uint) (int64, error) {
-	return countRows(storage.DB().Model(&model.Conversation{}).Where("tenant_id = ?", tenantID))
+	return countRows(storage.Default().DB().Model(&model.Conversation{}).Where("tenant_id = ?", tenantID))
 }
 
 // CountTenantHandledConversations 统计租户全部已接待会话数（agent_id > 0）。
 func (r *StatsRepository) CountTenantHandledConversations(tenantID uint) (int64, error) {
-	return countRows(storage.DB().Model(&model.Conversation{}).Where("tenant_id = ? AND agent_id > 0", tenantID))
+	return countRows(storage.Default().DB().Model(&model.Conversation{}).Where("tenant_id = ? AND agent_id > 0", tenantID))
 }
 
 // CountTenantMessages 统计租户全部消息数（用于计算平均消息数/会话）。
 func (r *StatsRepository) CountTenantMessages(tenantID uint) (int64, error) {
-	return countRows(storage.DB().Model(&model.Message{}).Where("tenant_id = ?", tenantID))
+	return countRows(storage.Default().DB().Model(&model.Message{}).Where("tenant_id = ?", tenantID))
 }
 
 // CountTenantCustomers 统计租户客户总数。
 func (r *StatsRepository) CountTenantCustomers(tenantID uint) (int64, error) {
-	return countRows(storage.DB().Model(&model.Customer{}).Where("tenant_id = ?", tenantID))
+	return countRows(storage.Default().DB().Model(&model.Customer{}).Where("tenant_id = ?", tenantID))
 }
 
 // CountNewCustomersSince 统计自 since 起新增的客户数。
 func (r *StatsRepository) CountNewCustomersSince(tenantID uint, since time.Time) (int64, error) {
-	return countRows(storage.DB().Model(&model.Customer{}).
+	return countRows(storage.Default().DB().Model(&model.Customer{}).
 		Where("tenant_id = ? AND created_at >= ?", tenantID, since))
 }
 
 // CountTenantOrders 统计租户订单总数。
 func (r *StatsRepository) CountTenantOrders(tenantID uint) (int64, error) {
-	return countRows(storage.DB().Model(&model.Order{}).Where("tenant_id = ?", tenantID))
+	return countRows(storage.Default().DB().Model(&model.Order{}).Where("tenant_id = ?", tenantID))
 }
 
 // CountOnlineAgents 统计当前在线客服数（online = true）。
 func (r *StatsRepository) CountOnlineAgents(tenantID uint) (int64, error) {
-	return countRows(storage.DB().Model(&model.User{}).
+	return countRows(storage.Default().DB().Model(&model.User{}).
 		Where("tenant_id = ? AND online = ?", tenantID, true))
 }

@@ -33,21 +33,21 @@ func NewCustomerHandler() *CustomerHandler {
 // ---------------- 订单 / 商品（跨端端点） ----------------
 
 func (h *CustomerHandler) ListOrdersHandler(c *gin.Context) {
-	paged, err := h.svc.ListOrders(authctx.TenantID(c), httpx.QueryUint(c, "user_id"), c.Query("keyword"),
-		httpx.QueryInt(c, "page", 1), httpx.QueryInt(c, "page_size", 20))
+	paged, err := h.svc.ListOrders(authctx.TenantID(c), httpx.Default().QueryUint(c, "user_id"), c.Query("keyword"),
+		httpx.Default().QueryInt(c, "page", 1), httpx.Default().QueryInt(c, "page_size", 20))
 	if err != nil {
-		response.Server(c, err.Error())
+		response.Default().Server(c, err.Error())
 		return
 	}
-	response.OK(c, paged)
+	response.Default().OK(c, paged)
 }
 
 func (h *CustomerHandler) ListProductsHandler(c *gin.Context) {
 	paged, err := h.svc.ListProducts(authctx.TenantID(c), c.Query("keyword"),
-		httpx.QueryInt(c, "page", 1), httpx.QueryInt(c, "page_size", 20))
+		httpx.Default().QueryInt(c, "page", 1), httpx.Default().QueryInt(c, "page_size", 20))
 	if err != nil {
-		response.Server(c, err.Error())
+		response.Default().Server(c, err.Error())
 		return
 	}
-	response.OK(c, paged)
+	response.Default().OK(c, paged)
 }

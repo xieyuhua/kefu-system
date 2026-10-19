@@ -16,10 +16,10 @@ import (
 
 // createNotification 写入一条站内提醒（客服离线时重连后可拉取）。
 func createNotification(n *model.Notification) error {
-	return storage.DB().Create(n).Error
+	return storage.Default().DB().Create(n).Error
 }
 
 // updateUserOnlineByID 只按主键更新在线状态（WS 层只持有 userID 的场景）。
 func updateUserOnlineByID(id uint, online bool) error {
-	return storage.DB().Model(&model.User{}).Where("id = ?", id).Update("online", online).Error
+	return storage.Default().DB().Model(&model.User{}).Where("id = ?", id).Update("online", online).Error
 }

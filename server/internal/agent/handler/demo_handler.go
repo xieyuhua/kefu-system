@@ -13,22 +13,22 @@ import (
 
 func (h *Handler) DemoIncomingHandler(c *gin.Context) {
 	var req dto.DemoIncomingRequest
-	if !httpx.BindJSON(c, &req) {
+	if !httpx.Default().BindJSON(c, &req) {
 		return
 	}
 	cvo, _, err := h.svc.DemoIncoming(authctx.TenantID(c), req)
 	if err != nil {
-		response.Param(c, err.Error())
+		response.Default().Param(c, err.Error())
 		return
 	}
-	response.OK(c, cvo)
+	response.Default().OK(c, cvo)
 }
 
 func (h *Handler) DemoProductsHandler(c *gin.Context) {
 	paged, err := h.svc.Cust.ListProducts(authctx.TenantID(c), c.Query("keyword"), 1, 50)
 	if err != nil {
-		response.Server(c, err.Error())
+		response.Default().Server(c, err.Error())
 		return
 	}
-	response.OK(c, paged.List)
+	response.Default().OK(c, paged.List)
 }

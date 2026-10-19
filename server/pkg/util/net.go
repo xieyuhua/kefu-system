@@ -7,7 +7,7 @@ import (
 
 // IsPrivateIP 判断是否为内网 / 本机 / 保留地址（这类地址没有归属地，不必查询）。
 // 解析失败按内网处理，避免无意义的远程查询。
-func IsPrivateIP(ipStr string) bool {
+func (u *Util) IsPrivateIP(ipStr string) bool {
 	ip := net.ParseIP(strings.TrimSpace(ipStr))
 	if ip == nil {
 		return true
@@ -33,7 +33,7 @@ func IsPrivateIP(ipStr string) bool {
 }
 
 // ClientIP 从请求中提取真实客户端 IP，优先级：X-Forwarded-For → X-Real-IP → RemoteAddr。
-func ClientIP(remoteAddr string, headers map[string][]string) string {
+func (u *Util) ClientIP(remoteAddr string, headers map[string][]string) string {
 	get := func(k string) string {
 		if v, ok := headers[k]; ok && len(v) > 0 {
 			return v[0]

@@ -18,7 +18,7 @@ func (s *NotifyService) OfflineNotifications(tenantID, userID uint, sinceID uint
 	for _, n := range list {
 		out = append(out, dto.NotificationVO{
 			ID: n.ID, Type: n.Type, Title: n.Title, Body: n.Body,
-			ConversationID: n.ConversationID, Read: n.Read, CreatedAt: util.FmtTime(n.CreatedAt),
+			ConversationID: n.ConversationID, Read: n.Read, CreatedAt: util.Default().FmtTime(n.CreatedAt),
 		})
 		if n.ID > latest {
 			latest = n.ID

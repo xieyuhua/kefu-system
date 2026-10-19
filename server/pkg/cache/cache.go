@@ -1,3 +1,9 @@
+// Package cache 缓存 / 队列 SDK：Redis 与内存两种驱动，键名规则与跨实例广播。
+//
+// 形态约定（与 internal 一致）：包级只保留构造函数 New / 单例访问器 Default，
+// 业务能力一律是 *Cache 的指针接收者方法；驱动、实例标识都是实例字段。
+// 单例语义：main 通过 cache.Default().Init(opts) 装配默认实例，全仓调用点
+// 统一走 cache.Default().Get() / cache.Default().TokenKey(token)。
 package cache
 
 import (
@@ -42,22 +48,63 @@ type Driver interface {
 	Ping() error
 }
 
-var (
-	drv Driver = &memoryDriver{m: map[string]item{}}
-	// InstanceID 当前进程唯一标识，分布式下用于区分消息来源实例。
-	InstanceID = newInstanceID()
-)
-
-func newInstanceID() string {
-	return randomID()
+// Cache 缓存实例：驱动与实例标识都是字段，不再有包级可变状态。
+type Cache struct {
+	mu         sync.RWMutex
+	drv        Driver
+	instanceID string
 }
 
-// Init 初始化驱动。Redis 未启用或连接失败时静默降级。
-func Init(opts Options) error {
+// New 按配置构造缓存实例。Redis 未启用或连接失败时静默降级为内存驱动。
+func New(opts Options) (*Cache, error) {
+	c := &Cache{instanceID: randomID()}
+	c.drv = c.newDriver(opts)
+	return c, nil
+}
+
+// defaultCache 进程内默认实例（语义等同构造函数，供全仓调用点共用）。
+// 初始为内存驱动：即使 main 尚未 Init，读取也不会 panic。
+var defaultCache = &Cache{
+	drv:        &memoryDriver{m: map[string]item{}},
+	instanceID: randomID(),
+}
+
+// Default 返回包级默认实例。
+func Default() *Cache { return defaultCache }
+
+// Init 在实例上按配置装配驱动（main 启动时调用一次；再次调用即重建驱动）。
+func (c *Cache) Init(opts Options) error {
+	drv := c.newDriver(opts)
+	c.mu.Lock()
+	c.drv = drv
+	c.mu.Unlock()
+	return nil
+}
+
+// Get 返回当前驱动。Redis 不可用时为内存实现。
+func (c *Cache) Get() Driver {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.drv
+}
+
+// InstanceID 当前实例的唯一标识，分布式下用于区分消息来源实例。
+func (c *Cache) InstanceID() string { return c.instanceID }
+
+// ---- key 辅助 ----
+
+func (c *Cache) TokenKey(token string) string   { return "token:" + token }
+func (c *Cache) BlacklistKey(jti string) string { return "jwt:blacklist:" + jti }
+func (c *Cache) OnlineKey(tenantID, userID uint) string {
+	return "online:" + itoa(tenantID) + ":" + itoa(userID)
+}
+func (c *Cache) ConvLockKey(convID uint) string { return "lock:conv:" + itoa(convID) }
+
+// newDriver 按 opts 创建驱动；私有辅助，无包级状态，只被本包方法调用。
+func (c *Cache) newDriver(opts Options) Driver {
 	if !opts.Enabled {
-		drv = &memoryDriver{m: map[string]item{}}
 		log.Println("[cache] redis disabled, using in-memory driver (single node mode)")
-		return nil
+		return &memoryDriver{m: map[string]item{}}
 	}
 	rd := &redisDriver{
 		client: redis.NewClient(&redis.Options{
@@ -65,30 +112,18 @@ func Init(opts Options) error {
 			Password: opts.Password,
 			DB:       opts.DB,
 		}),
-		prefix: opts.Prefix,
+		prefix:     opts.Prefix,
+		instanceID: c.instanceID,
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	if err := rd.client.Ping(ctx).Err(); err != nil {
 		log.Printf("[cache] WARNING redis unreachable (%v), fallback to in-memory driver", err)
-		drv = &memoryDriver{m: map[string]item{}}
-		return nil
+		return &memoryDriver{m: map[string]item{}}
 	}
-	drv = rd
-	log.Printf("[cache] redis connected: %s (distributed mode, instance=%s)", opts.Addr, InstanceID)
-	return nil
+	log.Printf("[cache] redis connected: %s (distributed mode, instance=%s)", opts.Addr, c.instanceID)
+	return rd
 }
-
-func Get() Driver { return drv }
-
-// ---- key 辅助 ----
-
-func TokenKey(token string) string   { return "token:" + token }
-func BlacklistKey(jti string) string { return "jwt:blacklist:" + jti }
-func OnlineKey(tenantID, userID uint) string {
-	return "online:" + itoa(tenantID) + ":" + itoa(userID)
-}
-func ConvLockKey(convID uint) string { return "lock:conv:" + itoa(convID) }
 
 // ---- 内存实现 ----
 
@@ -176,8 +211,9 @@ func (d *memoryDriver) Ping() error  { return nil }
 // ---- Redis 实现 ----
 
 type redisDriver struct {
-	client *redis.Client
-	prefix string
+	client     *redis.Client
+	prefix     string
+	instanceID string
 }
 
 func (d *redisDriver) Enabled() bool { return true }
@@ -223,7 +259,7 @@ func (d *redisDriver) Publish(ctx context.Context, topic string, env Envelope) e
 		env.Timestamp = time.Now().UnixMilli()
 	}
 	if env.SenderID == "" {
-		env.SenderID = InstanceID
+		env.SenderID = d.instanceID
 	}
 	b, err := json.Marshal(env)
 	if err != nil {
@@ -258,6 +294,7 @@ func (d *redisDriver) Subscribe(ctx context.Context, topic string, handler func(
 func (d *redisDriver) Close() error { return d.client.Close() }
 func (d *redisDriver) Ping() error  { return d.client.Ping(context.Background()).Err() }
 
+// itoa 无符号整型转十进制串（包级私有辅助，无状态）。
 func itoa(u uint) string {
 	if u == 0 {
 		return "0"

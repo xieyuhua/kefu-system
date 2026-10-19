@@ -8,14 +8,13 @@ package service
 import (
 	"strings"
 
-	"kefu-server/internal/common/auth"
 	"kefu-server/internal/common/authctx"
 	"kefu-server/internal/common/dto"
 	"kefu-server/internal/common/model"
 	"kefu-server/internal/common/realtime"
 	"kefu-server/internal/common/repository"
 	"kefu-server/internal/common/setting"
-	"kefu-server/pkg/util"
+	"kefu-server/pkg/auth"
 )
 
 // AccountService 账号内核的业务编排层。
@@ -48,7 +47,7 @@ func (e *AuthError) Error() string { return e.Msg }
 func authErr(status, msg string) *AuthError { return &AuthError{Status: status, Msg: msg} }
 
 // hashPwd 口令哈希（bcrypt），失败由调用方按「系统错误」处理。
-func hashPwd(p string) (string, error) { return util.HashPassword(p) }
+func hashPwd(p string) (string, error) { return auth.Default().HashPassword(p) }
 
 // ---------------- 登录 ----------------
 
@@ -62,14 +61,14 @@ func (s *AccountService) Login(req dto.LoginRequest) (*dto.LoginResponse, *AuthE
 	if err != nil {
 		return nil, authErr("unauth", "账号或密码错误")
 	}
-	if !util.CheckPassword(u.PasswordHash, req.Password) {
+	if !auth.Default().CheckPassword(u.PasswordHash, req.Password) {
 		return nil, authErr("unauth", "账号或密码错误")
 	}
 	if !u.Enabled {
 		return nil, authErr("forbid", "账号已被停用，请联系管理员")
 	}
 
-	token, err := auth.GenerateToken(u.ID, u.TenantID, u.Role, u.Account)
+	token, err := auth.Default().GenerateToken(u.ID, u.TenantID, u.Role, u.Account)
 	if err != nil {
 		return nil, authErr("server", "签发 token 失败")
 	}
@@ -185,10 +184,10 @@ func (s *AccountService) ChangePassword(tenantID, userID uint, oldPassword, newP
 	if err != nil {
 		return authErr("unauth", "账号不存在")
 	}
-	if !util.CheckPassword(fresh.PasswordHash, oldPassword) {
+	if !auth.Default().CheckPassword(fresh.PasswordHash, oldPassword) {
 		return authErr("param", "原密码不正确")
 	}
-	hash, err := util.HashPassword(newPassword)
+	hash, err := auth.Default().HashPassword(newPassword)
 	if err != nil {
 		return authErr("server", "密码加密失败")
 	}

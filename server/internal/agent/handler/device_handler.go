@@ -13,30 +13,30 @@ import (
 
 func (h *Handler) RegisterDeviceHandler(c *gin.Context) {
 	var req dto.DeviceRequest
-	if !httpx.BindJSON(c, &req) {
+	if !httpx.Default().BindJSON(c, &req) {
 		return
 	}
 	vo, err := h.notify.RegisterDevice(authctx.TenantID(c), authctx.UserID(c), req)
 	if err != nil {
-		response.Server(c, err.Error())
+		response.Default().Server(c, err.Error())
 		return
 	}
-	response.OK(c, vo)
+	response.Default().OK(c, vo)
 }
 
 func (h *Handler) ListDevicesHandler(c *gin.Context) {
 	list, err := h.notify.ListDevices(authctx.TenantID(c), authctx.UserID(c))
 	if err != nil {
-		response.Server(c, err.Error())
+		response.Default().Server(c, err.Error())
 		return
 	}
-	response.OK(c, list)
+	response.Default().OK(c, list)
 }
 
 func (h *Handler) DeleteDeviceHandler(c *gin.Context) {
-	if err := h.notify.DeleteDevice(authctx.TenantID(c), authctx.UserID(c), httpx.UintParam(c, "id")); err != nil {
-		response.Server(c, err.Error())
+	if err := h.notify.DeleteDevice(authctx.TenantID(c), authctx.UserID(c), httpx.Default().UintParam(c, "id")); err != nil {
+		response.Default().Server(c, err.Error())
 		return
 	}
-	response.OK(c, true)
+	response.Default().OK(c, true)
 }

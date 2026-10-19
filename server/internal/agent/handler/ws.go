@@ -3,8 +3,8 @@ package handler
 import (
 	"net/http"
 
-	"kefu-server/internal/common/auth"
 	"kefu-server/internal/common/realtime"
+	"kefu-server/pkg/auth"
 
 	"github.com/gin-gonic/gin"
 	commonsvc "kefu-server/internal/common/service"
@@ -23,7 +23,7 @@ func (h *Handler) WSHandler(c *gin.Context) {
 		c.JSON(http.StatusUnauthorized, gin.H{"code": 401, "message": "未登录"})
 		return
 	}
-	claims, err := auth.ParseToken(token)
+	claims, err := auth.Default().ParseToken(token)
 	if err != nil {
 		c.JSON(http.StatusUnauthorized, gin.H{"code": 401, "message": "登录已失效"})
 		return

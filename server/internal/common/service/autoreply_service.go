@@ -69,7 +69,7 @@ func (s *AutomationService) toAutoReplyVO(r *model.AutoReply) AutoReplyVO {
 		MatchType: r.MatchType, Keywords: r.Keywords, Reply: r.Reply,
 		ReplyType: r.ReplyType, TransferToHuman: r.TransferToHuman,
 		Enabled: r.Enabled, Priority: r.Priority, HitCount: r.HitCount,
-		CreatedAt: util.FmtTime(r.CreatedAt), ChannelName: "全渠道",
+		CreatedAt: util.Default().FmtTime(r.CreatedAt), ChannelName: "全渠道",
 	}
 	if r.ChannelID > 0 {
 		// 渠道名查不到时保留"全渠道"兜底文案，不影响规则列表展示（与原逻辑一致）

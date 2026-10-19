@@ -24,7 +24,7 @@ func NewDeviceRepository() *DeviceRepository { return &DeviceRepository{} }
 
 // CreateDevice 登记一台推送设备。
 func (r *DeviceRepository) CreateDevice(d *model.Device) error {
-	return storage.DB().Create(d).Error
+	return storage.Default().DB().Create(d).Error
 }
 
 // FindDeviceByToken 按 (tenant_id, user_id, push_token) 查一台已登记的设备。
@@ -33,7 +33,7 @@ func (r *DeviceRepository) CreateDevice(d *model.Device) error {
 // 排序取 id 最小的那条：线上若已存在历史重复行，也总是复用最早的一行，不让重复继续放大。
 func (r *DeviceRepository) FindDeviceByToken(tenantID, userID uint, token string) (*model.Device, error) {
 	d := &model.Device{}
-	if err := storage.DB().
+	if err := storage.Default().DB().
 		Where("tenant_id = ? AND user_id = ? AND push_token = ?", tenantID, userID, token).
 		Order("id asc").First(d).Error; err != nil {
 		return nil, err
@@ -46,7 +46,7 @@ func (r *DeviceRepository) FindDeviceByToken(tenantID, userID uint, token string
 // 未命中同样返回 gorm.ErrRecordNotFound。
 func (r *DeviceRepository) FindDeviceByKind(tenantID, userID uint, device, platform string) (*model.Device, error) {
 	d := &model.Device{}
-	if err := storage.DB().
+	if err := storage.Default().DB().
 		Where("tenant_id = ? AND user_id = ? AND device = ? AND platform = ?", tenantID, userID, device, platform).
 		Order("id asc").First(d).Error; err != nil {
 		return nil, err
@@ -56,13 +56,13 @@ func (r *DeviceRepository) FindDeviceByKind(tenantID, userID uint, device, platf
 
 // SaveDevice 按主键整体更新一台设备（应用层 upsert 的更新分支）。
 func (r *DeviceRepository) SaveDevice(d *model.Device) error {
-	return storage.DB().Save(d).Error
+	return storage.Default().DB().Save(d).Error
 }
 
 // ListDevicesOfUser 列出某用户已登记的推送设备（按 id 倒序）。
 func (r *DeviceRepository) ListDevicesOfUser(tenantID, userID uint) ([]*model.Device, error) {
 	var list []*model.Device
-	if err := storage.DB().Where("tenant_id = ? AND user_id = ?", tenantID, userID).
+	if err := storage.Default().DB().Where("tenant_id = ? AND user_id = ?", tenantID, userID).
 		Order("id desc").Find(&list).Error; err != nil {
 		return nil, err
 	}
@@ -71,6 +71,6 @@ func (r *DeviceRepository) ListDevicesOfUser(tenantID, userID uint) ([]*model.De
 
 // DeleteDeviceOfUser 删除某用户自己的一台设备。
 func (r *DeviceRepository) DeleteDeviceOfUser(tenantID, userID, id uint) error {
-	return storage.DB().Where("tenant_id = ? AND user_id = ? AND id = ?", tenantID, userID, id).
+	return storage.Default().DB().Where("tenant_id = ? AND user_id = ? AND id = ?", tenantID, userID, id).
 		Delete(&model.Device{}).Error
 }

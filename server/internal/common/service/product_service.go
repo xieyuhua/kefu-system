@@ -11,7 +11,7 @@ import (
 
 func (s *CustomerService) ListProducts(tenantID uint, keyword string, page, pageSize int) (*response.Paged, error) {
 	// 统一夹取到合法区间，并回显夹取后的值（否则 page_size=100000000 会原样出现在响应里）
-	page, pageSize = storage.ClampPage(page, pageSize)
+	page, pageSize = storage.Default().ClampPage(page, pageSize)
 	list, total, err := s.products.ListProductsPaged(tenantID, keyword, page, pageSize)
 	if err != nil {
 		return nil, err

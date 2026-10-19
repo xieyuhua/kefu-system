@@ -8,12 +8,11 @@ import (
 	"path/filepath"
 	"time"
 
-	"kefu-server/internal/common/card"
 	"kefu-server/internal/common/config"
 	"kefu-server/internal/common/db"
-	"kefu-server/internal/common/idgen"
 	"kefu-server/internal/common/model"
-	"kefu-server/pkg/util"
+	"kefu-server/pkg/auth"
+	"kefu-server/pkg/idgen"
 )
 
 // Run 初始化演示数据。已存在数据时幂等跳过。
@@ -44,12 +43,12 @@ func Run() error {
 	}
 	for i := range channels {
 		// 渠道标识（app_id）随机生成，作为接入链接里区分渠道来源的唯一标识
-		channels[i].AppID = idgen.GenerateAppID(tenant.ID)
+		channels[i].AppID = idgen.Default().GenerateAppID(appIDExists(tenant.ID))
 		db.DB.Create(channels[i])
 	}
 
 	// ---- 账号 ----
-	adminHash, _ := util.HashPassword("admin123")
+	adminHash, _ := auth.Default().HashPassword("admin123")
 	admin := model.User{
 		TenantID: tenant.ID, Account: "admin", PasswordHash: adminHash,
 		Name: "张管理", Role: "admin", Avatar: "/demo/avatar-1.svg",
@@ -57,14 +56,14 @@ func Run() error {
 	}
 	db.DB.Create(&admin)
 
-	kf1Hash, _ := util.HashPassword("123456")
+	kf1Hash, _ := auth.Default().HashPassword("123456")
 	kf1 := model.User{
 		TenantID: tenant.ID, Account: "kf01", PasswordHash: kf1Hash,
 		Name: "小李", Role: "agent", Avatar: "/demo/avatar-2.svg", MaxConcurrent: 5,
 	}
 	db.DB.Create(&kf1)
 
-	kf2Hash, _ := util.HashPassword("123456")
+	kf2Hash, _ := auth.Default().HashPassword("123456")
 	kf2 := model.User{
 		TenantID: tenant.ID, Account: "kf02", PasswordHash: kf2Hash,
 		Name: "小王", Role: "agent", Avatar: "/demo/avatar-3.svg", MaxConcurrent: 5,
@@ -181,14 +180,14 @@ func Run() error {
 				msgs = append(msgs, seedMsg{model.Message{
 					TenantID: tenant.ID, ConversationID: conv.ID, SenderID: cu.ID,
 					SenderRole: "customer", Type: "order", Direction: "in",
-					Content: card.BuildOrderCard(&o),
+					Content: buildOrderCard(&o),
 				}, now.Add(-17 * time.Minute)})
 			}
 			p := products[i%len(products)]
 			msgs = append(msgs, seedMsg{model.Message{
 				TenantID: tenant.ID, ConversationID: conv.ID, SenderID: agentID,
 				SenderRole: "user", Type: "product", Direction: "out",
-				Content: card.BuildProductCard(p), Read: true,
+				Content: buildProductCard(p), Read: true,
 			}, now.Add(-16 * time.Minute)})
 		}
 		msgs = append(msgs, seedMsg{model.Message{
@@ -236,6 +235,18 @@ func Run() error {
 	_ = rand.Intn
 	_ = os.MkdirAll
 	return nil
+}
+
+// appIDExists 返回「该租户内 app_id 是否已被占用」的判定闭包。
+// pkg/idgen 是可复用 SDK、不认识 channels 表，唯一性校验由调用方注入；
+// 查询失败按「未被占用」处理，与原逻辑一致。
+func appIDExists(tenantID uint) func(id string) bool {
+	return func(id string) bool {
+		var cnt int64
+		_ = db.DB.Model(&model.Channel{}).
+			Where("tenant_id = ? AND app_id = ?", tenantID, id).Count(&cnt).Error
+		return cnt > 0
+	}
 }
 
 // writeDemoAssets 生成内置演示 SVG 资源。

@@ -20,7 +20,6 @@ import (
 	"time"
 
 	"kefu-server/internal/common/dto"
-	"kefu-server/internal/common/ipinfo"
 	"kefu-server/internal/common/model"
 	"kefu-server/internal/common/realtime"
 	"kefu-server/internal/common/repository"
@@ -104,9 +103,9 @@ func (s *ConversationService) buildConversationVO(c *model.Conversation) dto.Con
 	vo := dto.ConversationVO{
 		ID: c.ID, ChannelID: c.ChannelID, Status: c.Status,
 		Unread: c.Unread, LastMessage: c.LastMessage,
-		LastMessageAt: util.FmtTime(c.LastMessageAt), CreatedAt: util.FmtTime(c.CreatedAt),
-		ClosedAt: util.FmtTimePtr(c.ClosedAt), MessageCount: c.MessageCount, Summary: c.Summary,
-		Archived: c.Archived, ArchivedAt: util.FmtTimePtr(c.ArchivedAt),
+		LastMessageAt: util.Default().FmtTime(c.LastMessageAt), CreatedAt: util.Default().FmtTime(c.CreatedAt),
+		ClosedAt: util.Default().FmtTimePtr(c.ClosedAt), MessageCount: c.MessageCount, Summary: c.Summary,
+		Archived: c.Archived, ArchivedAt: util.Default().FmtTimePtr(c.ArchivedAt),
 	}
 	// 渠道 / 客户 / 客服的展示信息查不到时留空，不阻断 VO 组装（与原逻辑一致）
 	if ch, err := s.channel.FindChannelByID(c.TenantID, c.ChannelID); err == nil {
@@ -120,10 +119,10 @@ func (s *ConversationService) buildConversationVO(c *model.Conversation) dto.Con
 			Tags:   s.customer.GetCustomerTags(c.TenantID, cu.ID),
 			Remark: cu.Remark,
 			IP:     cu.IP,
-			City:   ipinfo.CityOrLookup(cu),
+			City:   s.customer.CityOrLookup(cu),
 			// 客户在线状态：按最近活跃时间推断（2 分钟内活跃即在线）
 			Online:     IsCustomerOnline(cu),
-			LastSeenAt: util.FmtTimePtr(cu.LastSeenAt),
+			LastSeenAt: util.Default().FmtTimePtr(cu.LastSeenAt),
 		}
 		vo.OrderCount = oc
 	}

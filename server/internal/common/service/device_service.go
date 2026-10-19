@@ -70,7 +70,7 @@ func (s *NotifyService) RegisterDevice(tenantID, userID uint, req dto.DeviceRequ
 	}
 	return &dto.DeviceVO{
 		ID: d.ID, Device: d.Device, Platform: d.Platform,
-		Name: d.Name, PushToken: d.PushToken, CreatedAt: util.FmtTime(d.CreatedAt),
+		Name: d.Name, PushToken: d.PushToken, CreatedAt: util.Default().FmtTime(d.CreatedAt),
 	}, nil
 }
 
@@ -99,7 +99,7 @@ func (s *NotifyService) ListDevices(tenantID, userID uint) ([]dto.DeviceVO, erro
 	for _, d := range list {
 		out = append(out, dto.DeviceVO{
 			ID: d.ID, Device: d.Device, Platform: d.Platform,
-			Name: d.Name, PushToken: d.PushToken, CreatedAt: util.FmtTime(d.CreatedAt),
+			Name: d.Name, PushToken: d.PushToken, CreatedAt: util.Default().FmtTime(d.CreatedAt),
 		})
 	}
 	return out, nil

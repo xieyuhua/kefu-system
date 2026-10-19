@@ -38,7 +38,7 @@ func (r *ConversationVisibilityRepository) applyVisibility(q *gorm.DB, userID ui
 	}
 	var chIDs []uint
 	// 渠道集合查询失败按「无渠道」处理，退回只看自己的会话（与原逻辑一致）
-	storage.DB().Model(&model.AgentChannel{}).Where("user_id = ?", userID).Pluck("channel_id", &chIDs)
+	storage.Default().DB().Model(&model.AgentChannel{}).Where("user_id = ?", userID).Pluck("channel_id", &chIDs)
 	if len(chIDs) > 0 {
 		// 自己接待的，或（未接待 且 在自己渠道内）——别人已领取的自然被排除
 		return q.Where("agent_id = ? OR (agent_id = 0 AND channel_id IN ?)", userID, chIDs)
@@ -49,7 +49,7 @@ func (r *ConversationVisibilityRepository) applyVisibility(q *gorm.DB, userID ui
 // QueryConversations 分页列出会话（按最近消息时间倒序），同时返回满足条件的总数。
 // 可见范围见 applyVisibility；默认不返回已归档会话。
 func (r *ConversationVisibilityRepository) QueryConversations(tenantID, userID uint, isAdmin bool, f ConversationFilter) ([]*model.Conversation, int64, error) {
-	q := storage.DB().Model(&model.Conversation{}).Where("tenant_id = ?", tenantID)
+	q := storage.Default().DB().Model(&model.Conversation{}).Where("tenant_id = ?", tenantID)
 	// 默认不展示已归档会话；IncludeArchived 时一并返回（历史档案 / 统计用）
 	if !f.IncludeArchived {
 		q = q.Where("archived = ?", false)
@@ -72,7 +72,7 @@ func (r *ConversationVisibilityRepository) QueryConversations(tenantID, userID u
 	if err := q.Count(&total).Error; err != nil {
 		return nil, 0, err
 	}
-	offset, limit := storage.Paginate(f.Page, f.PageSize)
+	offset, limit := storage.Default().Paginate(f.Page, f.PageSize)
 	var list []*model.Conversation
 	if err := q.Order("last_message_at desc").Offset(offset).Limit(limit).Find(&list).Error; err != nil {
 		return nil, 0, err
@@ -84,7 +84,7 @@ func (r *ConversationVisibilityRepository) QueryConversations(tenantID, userID u
 // 口径必须与 QueryConversations 保持一致（同一套可见范围 + 默认排除已归档），
 // 否则会出现「侧边栏显示未接待 1，点进去却是空的」。
 func (r *ConversationVisibilityRepository) CountVisibleConversations(tenantID, userID uint, isAdmin bool, status string) (int64, error) {
-	q := storage.DB().Model(&model.Conversation{}).
+	q := storage.Default().DB().Model(&model.Conversation{}).
 		Where("tenant_id = ?", tenantID).
 		Where("archived = ?", false)
 	q = r.applyVisibility(q, userID, isAdmin, "")
@@ -101,7 +101,7 @@ func (r *ConversationVisibilityRepository) CountVisibleConversations(tenantID, u
 // SumVisibleConversationUnread 把当前角色可见、未归档会话的 unread 求和。
 // 会话 unread 字段 = 该会话未读消息条数，因此这个和就是「未读消息总数」。
 func (r *ConversationVisibilityRepository) SumVisibleConversationUnread(tenantID, userID uint, isAdmin bool) (int64, error) {
-	q := storage.DB().Model(&model.Conversation{}).
+	q := storage.Default().DB().Model(&model.Conversation{}).
 		Where("tenant_id = ?", tenantID).
 		Where("archived = ?", false)
 	q = r.applyVisibility(q, userID, isAdmin, "")

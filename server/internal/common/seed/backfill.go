@@ -5,8 +5,8 @@ import (
 	"strings"
 
 	"kefu-server/internal/common/db"
-	"kefu-server/internal/common/idgen"
 	"kefu-server/internal/common/model"
+	"kefu-server/pkg/idgen"
 )
 
 // EnsureDemoAssets 幂等补齐内置演示 SVG 资源。
@@ -29,7 +29,7 @@ func BackfillChannelAppID() {
 		if strings.TrimSpace(c.AppID) != "" {
 			continue
 		}
-		c.AppID = idgen.GenerateAppID(c.TenantID)
+		c.AppID = idgen.Default().GenerateAppID(appIDExists(c.TenantID))
 		if err := db.DB.Model(&model.Channel{}).
 			Where("id = ?", c.ID).Update("app_id", c.AppID).Error; err != nil {
 			continue

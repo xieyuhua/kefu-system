@@ -8,31 +8,44 @@
 //	platform/<基础设施> —— model / dto / middleware / auth / authctx / config /
 //	                      db / seed / realtime / ipinfo / setting / card / idgen
 //
-// 各模块的 repository 统一通过本包取连接：
+// 形态约定（与 internal 一致）：包级只保留构造函数 NewStore 与单例访问器 Default，
+// 业务能力一律是 *Store 的指针接收者方法；连接是实例字段。各模块的 repository
+// 统一通过默认实例取连接：
 //
-//	storage.DB()     —— 全局 *gorm.DB（只读 / 写入都从这里出发）
-//	storage.Tx(fn)   —— 事务，出错自动回滚
-//	storage.Paginate —— 页码 → offset / limit
+//	storage.Default().DB()       —— 全局 *gorm.DB（只读 / 写入都从这里出发）
+//	storage.Default().Tx(fn)     —— 事务，出错自动回滚
+//	storage.Default().Paginate   —— 页码 → offset / limit
 //
-// 连接由 main 在启动时通过 SetDB 注入一次。
+// 连接由 main 在启动时通过 storage.Default().SetDB 注入一次。
 package storage
 
 import "gorm.io/gorm"
 
-// db 全局数据库连接。由 main 在启动时通过 SetDB 注入一次。
-var db *gorm.DB
+// Store 数据库连接与通用查询辅助。连接是实例字段。
+type Store struct {
+	db *gorm.DB
+}
+
+// NewStore 创建 Store 实例（连接随后由 SetDB 注入）。
+func NewStore() *Store { return &Store{} }
+
+// defaultStore 进程内默认实例（语义等同构造函数，供全仓调用点共用）。
+var defaultStore = NewStore()
+
+// Default 返回包级默认实例。全仓共用同一个连接。
+func Default() *Store { return defaultStore }
 
 // SetDB 注入数据库连接（仅在应用启动时调用）。
-func SetDB(g *gorm.DB) { db = g }
+func (s *Store) SetDB(g *gorm.DB) { s.db = g }
 
-// DB 返回全局连接，供各模块 repository 使用。
+// DB 返回当前连接，供各模块 repository 使用。
 // 上层（service / handler）不应直接取值，以保持数据访问集中在各模块的 repository 里。
-func DB() *gorm.DB { return db }
+func (s *Store) DB() *gorm.DB { return s.db }
 
 // Tx 在事务中执行 fn，出错自动回滚。
 // 用于跨多表写入且要求原子性的场景（如「发消息 + 更新会话摘要」）。
-func Tx(fn func(tx *gorm.DB) error) error {
-	return db.Transaction(fn)
+func (s *Store) Tx(fn func(tx *gorm.DB) error) error {
+	return s.db.Transaction(fn)
 }
 
 // 分页上限常量。handler 会把 query 里的 page / page_size 直接透传进来，
@@ -49,7 +62,7 @@ const (
 // ClampPage 把页码/页大小夹取到合法区间，返回实际生效的值。
 // 用于「响应里回显 page / page_size」的场景：回显原始 query 值会让调用方
 // 误以为 100000000 生效了，必须回显夹取后的值。
-func ClampPage(page, pageSize int) (int, int) {
+func (s *Store) ClampPage(page, pageSize int) (int, int) {
 	if page <= 0 {
 		page = 1
 	}
@@ -69,7 +82,7 @@ func ClampPage(page, pageSize int) (int, int) {
 //
 // 传入值一律先夹取到合法区间：page ∈ [1, MaxPage]，pageSize ∈ [1, MaxPageSize]；
 // page <= 0 视为第 1 页，pageSize <= 0 视为 DefaultPageSize。
-func Paginate(page, pageSize int) (offset, limit int) {
-	page, pageSize = ClampPage(page, pageSize)
+func (s *Store) Paginate(page, pageSize int) (offset, limit int) {
+	page, pageSize = s.ClampPage(page, pageSize)
 	return (page - 1) * pageSize, pageSize
 }

@@ -10,7 +10,6 @@ import (
 	"errors"
 
 	"kefu-server/internal/common/dto"
-	"kefu-server/internal/common/ipinfo"
 	"kefu-server/internal/common/model"
 	"kefu-server/internal/common/repository"
 	"kefu-server/pkg/response"
@@ -44,7 +43,7 @@ func NewCustomerService() *CustomerService {
 
 func (s *CustomerService) ListCustomers(tenantID uint, keyword string, channelID uint, page, pageSize int) (*response.Paged, error) {
 	// 统一夹取到合法区间，并回显夹取后的值（否则 page_size=100000000 会原样出现在响应里）
-	page, pageSize = storage.ClampPage(page, pageSize)
+	page, pageSize = storage.Default().ClampPage(page, pageSize)
 	list, total, err := s.repo.ListCustomersPaged(tenantID, keyword, channelID, page, pageSize)
 	if err != nil {
 		return nil, err
@@ -58,9 +57,9 @@ func (s *CustomerService) ListCustomers(tenantID uint, keyword string, channelID
 			ID: c.ID, ExternalID: c.ExternalID, Nickname: c.Nickname,
 			Avatar: c.Avatar, Phone: c.Phone, Remark: c.Remark,
 			Tags: s.GetCustomerTags(tenantID, c.ID),
-			IP:   c.IP, City: ipinfo.CityOrLookup(c),
+			IP:   c.IP, City: s.CityOrLookup(c),
 			OrderCount: oc, ConversationCount: cc,
-			LastSeenAt: util.FmtTimePtr(c.LastSeenAt), CreatedAt: util.FmtTime(c.CreatedAt),
+			LastSeenAt: util.Default().FmtTimePtr(c.LastSeenAt), CreatedAt: util.Default().FmtTime(c.CreatedAt),
 		}
 		if ch, err := s.refs.FindChannelRefByID(tenantID, c.ChannelID); err == nil {
 			item.Channel = &dto.ChannelRef{ID: ch.ID, Type: ch.Type, Name: ch.Name}
@@ -80,8 +79,8 @@ func (s *CustomerService) GetCustomerDetail(tenantID, id uint) (*dto.CustomerDet
 			ID: c.ID, ExternalID: c.ExternalID, Nickname: c.Nickname,
 			Avatar: c.Avatar, Phone: c.Phone, Remark: c.Remark,
 			Tags: s.GetCustomerTags(tenantID, c.ID),
-			IP:   c.IP, City: ipinfo.CityOrLookup(c),
-			CreatedAt: util.FmtTime(c.CreatedAt),
+			IP:   c.IP, City: s.CityOrLookup(c),
+			CreatedAt: util.Default().FmtTime(c.CreatedAt),
 		},
 		Orders:        []dto.OrderVO{},
 		Conversations: []dto.HistoryConversationVO{},
@@ -98,7 +97,7 @@ func (s *CustomerService) GetCustomerDetail(tenantID, id uint) (*dto.CustomerDet
 		detail.Orders = append(detail.Orders, dto.OrderVO{
 			ID: o.ID, OrderNo: o.OrderNo, Title: o.Title, Status: o.Status,
 			Amount: o.Amount, Quantity: o.Quantity, Image: o.Image, SKU: o.SKU,
-			CreatedAt: util.FmtTime(o.CreatedAt), PaidAt: util.FmtTimePtr(o.PaidAt),
+			CreatedAt: util.Default().FmtTime(o.CreatedAt), PaidAt: util.Default().FmtTimePtr(o.PaidAt),
 		})
 	}
 
@@ -106,8 +105,8 @@ func (s *CustomerService) GetCustomerDetail(tenantID, id uint) (*dto.CustomerDet
 	for _, cv := range convs {
 		item := dto.HistoryConversationVO{
 			ID: cv.ID, Status: cv.Status, MessageCount: cv.MessageCount,
-			Summary: cv.Summary, CreatedAt: util.FmtTime(cv.CreatedAt),
-			ClosedAt: util.FmtTimePtr(cv.ClosedAt), LastMessageAt: util.FmtTime(cv.LastMessageAt),
+			Summary: cv.Summary, CreatedAt: util.Default().FmtTime(cv.CreatedAt),
+			ClosedAt: util.Default().FmtTimePtr(cv.ClosedAt), LastMessageAt: util.Default().FmtTime(cv.LastMessageAt),
 		}
 		if cn, err := s.refs.FindChannelRefByID(tenantID, cv.ChannelID); err == nil {
 			item.Channel = &dto.ChannelRef{ID: cn.ID, Type: cn.Type, Name: cn.Name}

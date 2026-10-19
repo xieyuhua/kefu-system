@@ -82,7 +82,7 @@ func (s *ConversationService) SearchConversations(tenantID uint, q ConversationR
 			ID: c.ID, CustomerID: c.CustomerID, ChannelID: c.ChannelID,
 			AgentID: c.AgentID, Status: c.Status, Archived: c.Archived,
 			MessageCount: c.MessageCount, LastMessage: c.LastMessage,
-			LastMessageAt: util.FmtTime(c.LastMessageAt), CreatedAt: util.FmtTime(c.CreatedAt),
+			LastMessageAt: util.Default().FmtTime(c.LastMessageAt), CreatedAt: util.Default().FmtTime(c.CreatedAt),
 			FirstMessageAt: "",
 		}
 		if cu, err := s.customer.FindCustomerByID(c.CustomerID); err == nil {
@@ -102,7 +102,7 @@ func (s *ConversationService) SearchConversations(tenantID uint, q ConversationR
 		// 首条消息（列表里预览对话开头）
 		if first, err := s.messages.FindFirstUserMessage(c.ID); err == nil {
 			rec.FirstMessage = messagePreview(first)
-			rec.FirstMessageAt = util.FmtTime(first.CreatedAt)
+			rec.FirstMessageAt = util.Default().FmtTime(first.CreatedAt)
 		}
 		out = append(out, rec)
 	}

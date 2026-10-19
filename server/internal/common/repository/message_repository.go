@@ -22,13 +22,13 @@ func NewMessageRepository() *MessageRepository { return &MessageRepository{} }
 
 // CreateMessage 新增一条消息，成功后回填主键与时间戳。
 func (r *MessageRepository) CreateMessage(m *model.Message) error {
-	return storage.DB().Create(m).Error
+	return storage.Default().DB().Create(m).Error
 }
 
 // AddSystemMessage 落一条系统消息，并把所属会话的 message_count 加一。
 // 「系统提示语 + 计数」必须同生同灭，故放在同一事务里。
 func (r *MessageRepository) AddSystemMessage(m *model.Message) error {
-	return storage.Tx(func(tx *gorm.DB) error {
+	return storage.Default().Tx(func(tx *gorm.DB) error {
 		if err := tx.Create(m).Error; err != nil {
 			return err
 		}
@@ -40,19 +40,19 @@ func (r *MessageRepository) AddSystemMessage(m *model.Message) error {
 // UpdateConversationDigest 定点回写会话摘要相关字段（最近一条消息、最近消息时间、消息数、未读数）。
 // 只更新传入字段、不整行保存，避免覆盖并发写入的归属与状态。
 func (r *MessageRepository) UpdateConversationDigest(convID uint, fields map[string]interface{}) error {
-	return storage.DB().Model(&model.Conversation{}).Where("id = ?", convID).Updates(fields).Error
+	return storage.Default().DB().Model(&model.Conversation{}).Where("id = ?", convID).Updates(fields).Error
 }
 
 // BumpConversationMessageCount 会话消息计数增减（delta 可为负）。
 func (r *MessageRepository) BumpConversationMessageCount(convID uint, delta int) error {
-	return storage.DB().Model(&model.Conversation{}).Where("id = ?", convID).
+	return storage.Default().DB().Model(&model.Conversation{}).Where("id = ?", convID).
 		Update("message_count", gorm.Expr("message_count + ?", delta)).Error
 }
 
 // CountMessagesOfConversation 统计会话内的消息条数。
 func (r *MessageRepository) CountMessagesOfConversation(tenantID, convID uint) (int64, error) {
 	var n int64
-	if err := storage.DB().Model(&model.Message{}).
+	if err := storage.Default().DB().Model(&model.Message{}).
 		Where("tenant_id = ? AND conversation_id = ?", tenantID, convID).
 		Count(&n).Error; err != nil {
 		return 0, err
@@ -62,7 +62,7 @@ func (r *MessageRepository) CountMessagesOfConversation(tenantID, convID uint) (
 
 // MarkMessagesRead 把会话内消息标记为已读。
 func (r *MessageRepository) MarkMessagesRead(tenantID, convID uint) error {
-	return storage.DB().Model(&model.Message{}).
+	return storage.Default().DB().Model(&model.Message{}).
 		Where("tenant_id = ? AND conversation_id = ?", tenantID, convID).
 		Update("read", true).Error
 }
@@ -71,7 +71,7 @@ func (r *MessageRepository) MarkMessagesRead(tenantID, convID uint) error {
 // beforeID = 0 表示无游标（客户端首次进入会话），直接取最新 limit 条。
 // 内部先按 id desc 取最近若干条再整体反转，保证拿到的是紧邻的上一页。
 func (r *MessageRepository) ListMessagesBefore(tenantID, convID, beforeID uint, limit int) ([]*model.Message, error) {
-	q := storage.DB().Where("tenant_id = ? AND conversation_id = ?", tenantID, convID)
+	q := storage.Default().DB().Where("tenant_id = ? AND conversation_id = ?", tenantID, convID)
 	if beforeID > 0 {
 		q = q.Where("id < ?", beforeID)
 	}
@@ -87,7 +87,7 @@ func (r *MessageRepository) ListMessagesBefore(tenantID, convID, beforeID uint, 
 // 供用户端 / APP 离线同步补拉，与 ListMessagesBefore 的翻页方向相反。
 func (r *MessageRepository) ListMessagesAfter(tenantID, convID, sinceID uint, limit int) ([]*model.Message, error) {
 	var list []*model.Message
-	if err := storage.DB().Where("tenant_id = ? AND conversation_id = ? AND id > ?", tenantID, convID, sinceID).
+	if err := storage.Default().DB().Where("tenant_id = ? AND conversation_id = ? AND id > ?", tenantID, convID, sinceID).
 		Order("id asc").Limit(limit).Find(&list).Error; err != nil {
 		return nil, err
 	}
@@ -98,7 +98,7 @@ func (r *MessageRepository) ListMessagesAfter(tenantID, convID, sinceID uint, li
 // 未命中返回 gorm.ErrRecordNotFound，表示该会话还没有系统提示语。
 func (r *MessageRepository) FindLastSystemMessage(tenantID, convID uint) (*model.Message, error) {
 	var m model.Message
-	if err := storage.DB().Where("tenant_id = ? AND conversation_id = ? AND type = 'system'", tenantID, convID).
+	if err := storage.Default().DB().Where("tenant_id = ? AND conversation_id = ? AND type = 'system'", tenantID, convID).
 		Order("id desc").First(&m).Error; err != nil {
 		return nil, err
 	}
@@ -108,7 +108,7 @@ func (r *MessageRepository) FindLastSystemMessage(tenantID, convID uint) (*model
 // FindFirstUserMessage 取会话首条非系统消息（id 正序第一条），供对话记录列表预览对话开头。
 func (r *MessageRepository) FindFirstUserMessage(convID uint) (*model.Message, error) {
 	var m model.Message
-	if err := storage.DB().Where("conversation_id = ? AND type != 'system'", convID).
+	if err := storage.Default().DB().Where("conversation_id = ? AND type != 'system'", convID).
 		Order("id asc").First(&m).Error; err != nil {
 		return nil, err
 	}
@@ -119,7 +119,7 @@ func (r *MessageRepository) FindFirstUserMessage(convID uint) (*model.Message, e
 // 与消息流顺序保持一致。
 func (r *MessageRepository) SearchMessagesByContent(tenantID, convID uint, keyword string, limit int) ([]*model.Message, error) {
 	var list []*model.Message
-	if err := storage.DB().Where("tenant_id = ? AND conversation_id = ? AND content LIKE ?",
+	if err := storage.Default().DB().Where("tenant_id = ? AND conversation_id = ? AND content LIKE ?",
 		tenantID, convID, "%"+keyword+"%").
 		Order("id desc").Limit(limit).Find(&list).Error; err != nil {
 		return nil, err
@@ -139,7 +139,7 @@ func reverseMessages(list []*model.Message) {
 // 调用方按「多取一条」判断是否还有更多（has_more）。
 func (r *MessageRepository) ListMessagesOfConversations(tenantID uint, convIDs []uint, afterID uint, limit int) ([]*model.Message, error) {
 	var list []*model.Message
-	if err := storage.DB().Where("tenant_id = ? AND conversation_id IN ? AND id > ?", tenantID, convIDs, afterID).
+	if err := storage.Default().DB().Where("tenant_id = ? AND conversation_id IN ? AND id > ?", tenantID, convIDs, afterID).
 		Order("id asc").Limit(limit).Find(&list).Error; err != nil {
 		return nil, err
 	}

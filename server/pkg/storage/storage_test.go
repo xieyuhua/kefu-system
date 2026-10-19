@@ -102,7 +102,7 @@ func TestPaginate(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			offset, limit := storage.Paginate(tt.page, tt.pageSize)
+			offset, limit := storage.Default().Paginate(tt.page, tt.pageSize)
 			if offset != tt.wantOffset {
 				t.Errorf("Paginate(%d, %d) offset = %d, 期望 %d", tt.page, tt.pageSize, offset, tt.wantOffset)
 			}
@@ -150,7 +150,7 @@ func TestPaginateOffsetMonotonic(t *testing.T) {
 	const pageSize = 15
 	prev := -1
 	for page := 1; page <= 5; page++ {
-		offset, limit := storage.Paginate(page, pageSize)
+		offset, limit := storage.Default().Paginate(page, pageSize)
 		if limit != pageSize {
 			t.Fatalf("第 %d 页 limit = %d, 期望 %d", page, limit, pageSize)
 		}
@@ -185,13 +185,13 @@ func TestClampPage(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			gotPage, gotSize := storage.ClampPage(tt.page, tt.pageSize)
+			gotPage, gotSize := storage.Default().ClampPage(tt.page, tt.pageSize)
 			if gotPage != tt.wantPage || gotSize != tt.wantSize {
 				t.Fatalf("ClampPage(%d,%d) = (%d,%d), 期望 (%d,%d)",
 					tt.page, tt.pageSize, gotPage, gotSize, tt.wantPage, tt.wantSize)
 			}
 			// 与 Paginate 的一致性：offset/limit 必须由同一套夹取后的值算出
-			offset, limit := storage.Paginate(tt.page, tt.pageSize)
+			offset, limit := storage.Default().Paginate(tt.page, tt.pageSize)
 			if limit != gotSize {
 				t.Fatalf("Paginate limit = %d, 与 ClampPage 的 pageSize %d 不一致", limit, gotSize)
 			}

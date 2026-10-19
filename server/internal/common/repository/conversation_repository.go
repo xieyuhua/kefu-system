@@ -41,7 +41,7 @@ type ConversationFilter struct {
 // FindConversationByID 按租户 + 主键读取会话；未命中返回 gorm.ErrRecordNotFound。
 func (r *ConversationRepository) FindConversationByID(tenantID, id uint) (*model.Conversation, error) {
 	var c model.Conversation
-	if err := storage.DB().Where("tenant_id = ? AND id = ?", tenantID, id).First(&c).Error; err != nil {
+	if err := storage.Default().DB().Where("tenant_id = ? AND id = ?", tenantID, id).First(&c).Error; err != nil {
 		return nil, err
 	}
 	return &c, nil
@@ -53,7 +53,7 @@ func (r *ConversationRepository) FindConversationByID(tenantID, id uint) (*model
 // 未命中返回 gorm.ErrRecordNotFound —— 表示该客户首次咨询。
 func (r *ConversationRepository) FindLatestConversationByCustomer(tenantID, customerID uint) (*model.Conversation, error) {
 	var c model.Conversation
-	if err := storage.DB().Where("tenant_id = ? AND customer_id = ?", tenantID, customerID).
+	if err := storage.Default().DB().Where("tenant_id = ? AND customer_id = ?", tenantID, customerID).
 		Order("id desc").First(&c).Error; err != nil {
 		return nil, err
 	}
@@ -66,7 +66,7 @@ func (r *ConversationRepository) ListConversationsByCustomer(tenantID, customerI
 		limit = 50
 	}
 	var list []*model.Conversation
-	if err := storage.DB().Where("tenant_id = ? AND customer_id = ?", tenantID, customerID).
+	if err := storage.Default().DB().Where("tenant_id = ? AND customer_id = ?", tenantID, customerID).
 		Order("id desc").Limit(limit).Find(&list).Error; err != nil {
 		return nil, err
 	}
@@ -75,24 +75,24 @@ func (r *ConversationRepository) ListConversationsByCustomer(tenantID, customerI
 
 // CreateConversation 新增会话，成功后回填主键与时间戳。
 func (r *ConversationRepository) CreateConversation(c *model.Conversation) error {
-	return storage.DB().Create(c).Error
+	return storage.Default().DB().Create(c).Error
 }
 
 // SaveConversation 全字段保存会话（状态 / 归属 / 最近消息 / 消息数 / 未读 / 归档等）。
 func (r *ConversationRepository) SaveConversation(c *model.Conversation) error {
-	return storage.DB().Save(c).Error
+	return storage.Default().DB().Save(c).Error
 }
 
 // UpdateConversationByID 按主键更新会话的指定字段（归档、分配、状态、摘要、未读清零）。
 // 用 map 更新才能把 agent_id 显式写成 0，保持原行为；调用方必须先校验过归属。
 func (r *ConversationRepository) UpdateConversationByID(convID uint, fields map[string]interface{}) error {
-	return storage.DB().Model(&model.Conversation{}).Where("id = ?", convID).Updates(fields).Error
+	return storage.Default().DB().Model(&model.Conversation{}).Where("id = ?", convID).Updates(fields).Error
 }
 
 // UpdateConversationInTenant 按租户 + 主键更新会话的指定字段。
 // 主键来自接口入参时一律用这个版本，跨租户 id 落到「未更新」而不是越权改到别家数据。
 func (r *ConversationRepository) UpdateConversationInTenant(tenantID, convID uint, fields map[string]interface{}) error {
-	return storage.DB().Model(&model.Conversation{}).
+	return storage.Default().DB().Model(&model.Conversation{}).
 		Where("tenant_id = ? AND id = ?", tenantID, convID).
 		Updates(fields).Error
 }
@@ -111,7 +111,7 @@ func (r *ConversationRepository) SetConversationUnarchived(tenantID, convID uint
 // ReopenArchivedConversation 仅在「已归档」时取消归档。
 // 客户重新咨询时自动恢复，条件里带 archived = true 让重复调用保持幂等。
 func (r *ConversationRepository) ReopenArchivedConversation(tenantID, convID uint) error {
-	return storage.DB().Model(&model.Conversation{}).
+	return storage.Default().DB().Model(&model.Conversation{}).
 		Where("tenant_id = ? AND id = ? AND archived = ?", tenantID, convID, true).
 		Updates(map[string]interface{}{"archived": false, "archived_at": nil}).Error
 }
@@ -120,7 +120,7 @@ func (r *ConversationRepository) ReopenArchivedConversation(tenantID, convID uin
 // 批量归档前用它判断哪些会话需要释放归属（agent_id = 0 回到待接待池）。
 func (r *ConversationRepository) ListConversationAgentRefs(tenantID uint, ids []uint) ([]*model.Conversation, error) {
 	var list []*model.Conversation
-	if err := storage.DB().Select("id", "agent_id").
+	if err := storage.Default().DB().Select("id", "agent_id").
 		Where("tenant_id = ? AND id IN ?", tenantID, ids).
 		Find(&list).Error; err != nil {
 		return nil, err
@@ -130,7 +130,7 @@ func (r *ConversationRepository) ListConversationAgentRefs(tenantID uint, ids []
 
 // DeleteConversationWithMessages 在同一事务内删除会话及其全部消息（不可恢复）。
 func (r *ConversationRepository) DeleteConversationWithMessages(tenantID, convID uint) error {
-	return storage.Tx(func(tx *gorm.DB) error {
+	return storage.Default().Tx(func(tx *gorm.DB) error {
 		if err := tx.Where("tenant_id = ? AND conversation_id = ?", tenantID, convID).
 			Delete(&model.Message{}).Error; err != nil {
 			return err
@@ -158,7 +158,7 @@ type ConversationRecordFilter struct {
 // SearchConversationRecords 跨会话检索对话记录（支持按消息内容全文匹配），
 // 返回当页会话与总数，按最近消息时间倒序。
 func (r *ConversationRepository) SearchConversationRecords(tenantID uint, f ConversationRecordFilter) ([]*model.Conversation, int64, error) {
-	q := storage.DB().Model(&model.Conversation{}).Where("tenant_id = ?", tenantID)
+	q := storage.Default().DB().Model(&model.Conversation{}).Where("tenant_id = ?", tenantID)
 	if kw := strings.TrimSpace(f.Keyword); kw != "" {
 		like := "%" + kw + "%"
 		// 昵称/手机号/外部ID 匹配，或该会话下存在内容匹配的消息
@@ -188,7 +188,7 @@ func (r *ConversationRepository) SearchConversationRecords(tenantID uint, f Conv
 	if err := q.Count(&total).Error; err != nil {
 		return nil, 0, err
 	}
-	offset, limit := storage.Paginate(f.Page, f.PageSize)
+	offset, limit := storage.Default().Paginate(f.Page, f.PageSize)
 	var list []*model.Conversation
 	if err := q.Order("last_message_at desc").Offset(offset).Limit(limit).Find(&list).Error; err != nil {
 		return nil, 0, err
@@ -200,7 +200,7 @@ func (r *ConversationRepository) SearchConversationRecords(tenantID uint, f Conv
 // 用于客服离线时释放其占用的会话（回到待接待池）。
 func (r *ConversationRepository) ListOpenConversationsByAgent(tenantID, agentID uint) ([]*model.Conversation, error) {
 	var convs []*model.Conversation
-	err := storage.DB().Where("tenant_id = ? AND agent_id = ? AND status = ?", tenantID, agentID, "open").
+	err := storage.Default().DB().Where("tenant_id = ? AND agent_id = ? AND status = ?", tenantID, agentID, "open").
 		Find(&convs).Error
 	return convs, err
 }
@@ -214,12 +214,12 @@ func (r *ConversationRepository) ListOpenConversationsByAgent(tenantID, agentID 
 // 自己接待的 + 自己渠道下尚未分配的（与原离线同步口径一致）。
 func (r *ConversationRepository) ListVisibleConversationIDs(tenantID, userID uint) ([]uint, error) {
 	var chIDs []uint
-	if err := storage.DB().Model(&model.AgentChannel{}).Where("user_id = ?", userID).
+	if err := storage.Default().DB().Model(&model.AgentChannel{}).Where("user_id = ?", userID).
 		Pluck("channel_id", &chIDs).Error; err != nil {
 		return nil, err
 	}
 	var convIDs []uint
-	q := storage.DB().Model(&model.Conversation{}).Where("tenant_id = ?", tenantID)
+	q := storage.Default().DB().Model(&model.Conversation{}).Where("tenant_id = ?", tenantID)
 	if len(chIDs) > 0 {
 		q = q.Where("agent_id = ? OR (agent_id = 0 AND channel_id IN ?)", userID, chIDs)
 	} else {

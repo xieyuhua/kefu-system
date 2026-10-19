@@ -20,8 +20,6 @@ import (
 	"strings"
 	"time"
 
-	"kefu-server/internal/common/card"
-	"kefu-server/internal/common/ipinfo"
 	"kefu-server/internal/common/model"
 	commonsvc "kefu-server/internal/common/service"
 )
@@ -105,8 +103,14 @@ func (s *Service) EnsureGuestCustomer(tenantID uint, ch *model.Channel, uid, nic
 	if err := s.Cust.CreateCustomer(cu); err != nil {
 		return nil, err
 	}
-	ipinfo.RecordCustomerIP(cu.ID, cu.IP)
+	s.RecordCustomerIP(cu.ID, cu.IP)
 	return cu, nil
+}
+
+// RecordCustomerIP 记录访客最新 IP 与归属城市。
+// IP 归属地的缓存与落库口径在公共业务层客户域，端内只做一次转调（handler 也走这里）。
+func (s *Service) RecordCustomerIP(customerID uint, ip string) {
+	s.Cust.RecordCustomerIP(customerID, ip)
 }
 
 // FindGuestCustomer 按「租户 + 渠道 + 外部用户标识」定位客户。
@@ -148,7 +152,7 @@ func (s *Service) LookupOrderCard(tenantID uint, orderNo string) map[string]inte
 		return nil
 	}
 	var out map[string]interface{}
-	_ = json.Unmarshal([]byte(card.BuildOrderCard(o)), &out)
+	_ = json.Unmarshal([]byte(s.Cust.BuildOrderCard(o)), &out)
 	return out
 }
 
@@ -159,7 +163,7 @@ func (s *Service) LookupProductCard(tenantID uint, pid string) map[string]interf
 		return nil
 	}
 	var out map[string]interface{}
-	_ = json.Unmarshal([]byte(card.BuildProductCard(p)), &out)
+	_ = json.Unmarshal([]byte(s.Cust.BuildProductCard(p)), &out)
 	return out
 }
 

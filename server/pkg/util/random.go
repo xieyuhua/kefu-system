@@ -7,7 +7,7 @@ import (
 
 // RandomHex 生成 n 字节随机数的十六进制字符串（长度 2n）。
 // 随机源不可用时返回空串，由调用方决定降级策略。
-func RandomHex(n int) string {
+func (u *Util) RandomHex(n int) string {
 	if n <= 0 {
 		return ""
 	}

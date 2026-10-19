@@ -74,7 +74,7 @@ func (s *ChannelService) ListChannelTypes(tenantID uint) ([]ChannelTypeVO, error
 		out = append(out, ChannelTypeVO{
 			ID: t.ID, Code: t.Code, Name: t.Name, Color: t.Color,
 			Icon: t.Icon, Sort: t.Sort, BuiltIn: t.BuiltIn,
-			UsedCount: used, CreatedAt: util.FmtTime(t.CreatedAt),
+			UsedCount: used, CreatedAt: util.Default().FmtTime(t.CreatedAt),
 		})
 	}
 	return out, nil
@@ -109,7 +109,7 @@ func (s *ChannelService) CreateChannelType(tenantID uint, req ChannelTypeRequest
 	}
 	return &ChannelTypeVO{
 		ID: t.ID, Code: t.Code, Name: t.Name, Color: t.Color,
-		Icon: t.Icon, Sort: t.Sort, CreatedAt: util.FmtTime(t.CreatedAt),
+		Icon: t.Icon, Sort: t.Sort, CreatedAt: util.Default().FmtTime(t.CreatedAt),
 	}, nil
 }
 

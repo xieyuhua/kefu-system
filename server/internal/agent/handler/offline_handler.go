@@ -11,12 +11,12 @@ import (
 // ---------------- 离线消息 / 离线提醒 ----------------
 
 func (h *Handler) OfflineMessagesHandler(c *gin.Context) {
-	list, latest, hasMore, err := h.svc.OfflineMessages(authctx.TenantID(c), authctx.UserID(c), httpx.QueryUint(c, "since_id"), httpx.QueryInt(c, "limit", 200))
+	list, latest, hasMore, err := h.svc.OfflineMessages(authctx.TenantID(c), authctx.UserID(c), httpx.Default().QueryUint(c, "since_id"), httpx.Default().QueryInt(c, "limit", 200))
 	if err != nil {
-		response.Server(c, err.Error())
+		response.Default().Server(c, err.Error())
 		return
 	}
-	response.OK(c, map[string]interface{}{
+	response.Default().OK(c, map[string]interface{}{
 		"list":      list,
 		"latest_id": latest,
 		"has_more":  hasMore,
@@ -24,12 +24,12 @@ func (h *Handler) OfflineMessagesHandler(c *gin.Context) {
 }
 
 func (h *Handler) OfflineNotificationsHandler(c *gin.Context) {
-	list, latest, err := h.notify.OfflineNotifications(authctx.TenantID(c), authctx.UserID(c), httpx.QueryUint(c, "since_id"))
+	list, latest, err := h.notify.OfflineNotifications(authctx.TenantID(c), authctx.UserID(c), httpx.Default().QueryUint(c, "since_id"))
 	if err != nil {
-		response.Server(c, err.Error())
+		response.Default().Server(c, err.Error())
 		return
 	}
-	response.OK(c, map[string]interface{}{
+	response.Default().OK(c, map[string]interface{}{
 		"list":      list,
 		"latest_id": latest,
 	})
@@ -41,8 +41,8 @@ func (h *Handler) ReadNotificationsHandler(c *gin.Context) {
 	}
 	_ = c.ShouldBindJSON(&req)
 	if err := h.notify.MarkNotificationsRead(authctx.TenantID(c), authctx.UserID(c), req.IDs); err != nil {
-		response.Server(c, err.Error())
+		response.Default().Server(c, err.Error())
 		return
 	}
-	response.OK(c, true)
+	response.Default().OK(c, true)
 }

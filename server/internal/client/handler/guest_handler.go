@@ -19,7 +19,6 @@ import (
 
 	"kefu-server/internal/client/service"
 	"kefu-server/internal/common/dto"
-	"kefu-server/internal/common/ipinfo"
 	"kefu-server/internal/common/model"
 	"kefu-server/internal/common/realtime"
 	commonsvc "kefu-server/internal/common/service"
@@ -52,7 +51,7 @@ func (h *Handler) resolveChannel(c *gin.Context, tenantID uint) (*model.Channel,
 // guestTenantID 用户端未登录，租户由 ?tenant= 指定（缺省取第一个租户，便于演示）。
 // 端内私有：其它端与内核的游客态租户口径见 common/service 的 DefaultTenantID。
 func (h *Handler) guestTenantID(c *gin.Context) uint {
-	if t := httpx.QueryUint(c, "tenant"); t > 0 {
+	if t := httpx.Default().QueryUint(c, "tenant"); t > 0 {
 		return t
 	}
 	return h.svc.DefaultTenantID()
@@ -62,12 +61,12 @@ func (h *Handler) guestTenantID(c *gin.Context) uint {
 func (h *Handler) GuestInitHandler(c *gin.Context) {
 	tenantID := h.guestTenantID(c)
 	if tenantID == 0 {
-		response.Param(c, "缺少租户参数 tenant")
+		response.Default().Param(c, "缺少租户参数 tenant")
 		return
 	}
 	ch, err := h.resolveChannel(c, tenantID)
 	if err != nil {
-		response.Param(c, "渠道不存在或未启用：channel="+c.Query("channel"))
+		response.Default().Param(c, "渠道不存在或未启用：channel="+c.Query("channel"))
 		return
 	}
 	uid := strings.TrimSpace(c.Query("uid"))
@@ -76,11 +75,11 @@ func (h *Handler) GuestInitHandler(c *gin.Context) {
 	}
 
 	// 找到或创建客户
-	ip := util.ClientIP(c.Request.RemoteAddr, c.Request.Header)
+	ip := util.Default().ClientIP(c.Request.RemoteAddr, c.Request.Header)
 	cu, err := h.svc.EnsureGuestCustomer(tenantID, ch, uid,
 		c.Query("nickname"), c.Query("avatar"), c.Query("phone"), ip)
 	if err != nil {
-		response.Server(c, err.Error())
+		response.Default().Server(c, err.Error())
 		return
 	}
 
@@ -88,7 +87,7 @@ func (h *Handler) GuestInitHandler(c *gin.Context) {
 	// 保证同一 uid + 渠道的聊天记录自然合并
 	conv, err := h.svc.Conv.FindOrCreateConversation(tenantID, cu.ID, ch.ID)
 	if err != nil {
-		response.Server(c, err.Error())
+		response.Default().Server(c, err.Error())
 		return
 	}
 
@@ -99,9 +98,9 @@ func (h *Handler) GuestInitHandler(c *gin.Context) {
 	history, _ := h.svc.Conv.ListMessages(tenantID, conv.ID, 0, 20)
 
 	// 每次访问都刷新 IP 与归属城市（展示在客服工作台的会话列表）
-	ipinfo.RecordCustomerIP(cu.ID, ip)
+	h.svc.RecordCustomerIP(cu.ID, ip)
 
-	response.OK(c, gin.H{
+	response.Default().OK(c, gin.H{
 		"channel": gin.H{
 			"id":             ch.ID,
 			"type":           ch.Type,
@@ -123,43 +122,43 @@ func (h *Handler) GuestInitHandler(c *gin.Context) {
 func (h *Handler) GuestSendHandler(c *gin.Context) {
 	tenantID := h.guestTenantID(c)
 	if tenantID == 0 {
-		response.Param(c, "缺少租户参数 tenant")
+		response.Default().Param(c, "缺少租户参数 tenant")
 		return
 	}
 	ch, err := h.resolveChannel(c, tenantID)
 	if err != nil {
-		response.Param(c, "渠道不存在")
+		response.Default().Param(c, "渠道不存在")
 		return
 	}
 	var req dto.SendMessageRequest
-	if !httpx.BindJSON(c, &req) {
+	if !httpx.Default().BindJSON(c, &req) {
 		return
 	}
 	if req.Type == "" {
 		req.Type = "text"
 	}
 	if req.Content == "" {
-		response.Param(c, "消息内容不能为空")
+		response.Default().Param(c, "消息内容不能为空")
 		return
 	}
 
 	cu, err := h.svc.FindGuestCustomer(tenantID, ch.ID, strings.TrimSpace(c.Query("uid")))
 	if err != nil {
-		response.Param(c, "请先调用 /api/guest/init 初始化会话")
+		response.Default().Param(c, "请先调用 /api/guest/init 初始化会话")
 		return
 	}
 	conv, err := h.svc.Conv.FindOrCreateConversation(tenantID, cu.ID, ch.ID)
 	if err != nil {
-		response.Server(c, err.Error())
+		response.Default().Server(c, err.Error())
 		return
 	}
 
 	mvo, cvo, err := h.svc.Conv.ReceiveMessage(tenantID, conv.ID, cu.ID, req.Type, req.Content)
 	if err != nil {
-		response.Server(c, err.Error())
+		response.Default().Server(c, err.Error())
 		return
 	}
-	ipinfo.RecordCustomerIP(cu.ID, util.ClientIP(c.Request.RemoteAddr, c.Request.Header))
+	h.svc.RecordCustomerIP(cu.ID, util.Default().ClientIP(c.Request.RemoteAddr, c.Request.Header))
 	realtime.PublishMessage(tenantID, conv.ID, mvo, cvo)
 
 	// 同步判定自动回复 / 转人工（供接口直接返回）
@@ -173,33 +172,33 @@ func (h *Handler) GuestSendHandler(c *gin.Context) {
 	if reply != nil && reply.Message != nil {
 		out["reply"] = reply.Message
 	}
-	response.OK(c, out)
+	response.Default().OK(c, out)
 }
 
 // GuestMessagesHandler 无 WebSocket 环境的降级轮询
 func (h *Handler) GuestMessagesHandler(c *gin.Context) {
 	tenantID := h.guestTenantID(c)
 	if tenantID == 0 {
-		response.Param(c, "缺少租户参数 tenant")
+		response.Default().Param(c, "缺少租户参数 tenant")
 		return
 	}
 	cu, err := h.svc.FindGuestCustomerByExternalID(tenantID, c.Query("uid"))
 	if err != nil {
-		response.OK(c, []interface{}{})
+		response.Default().OK(c, []interface{}{})
 		return
 	}
 	conv, err := h.svc.LatestConversationOfCustomer(tenantID, cu.ID)
 	if err != nil {
-		response.OK(c, []interface{}{})
+		response.Default().OK(c, []interface{}{})
 		return
 	}
 	// 三种拉取模式，游标方向各不相同：
 	//   before_id > 0  → 向前翻页，返回 id < before_id 的**更早**消息（上滑加载历史）
 	//   since_id  > 0  → 正向增量，返回 id > since_id 的**更新**消息（轮询补拉）
 	//   两个都不传      → 首屏，返回**最新** limit 条
-	beforeID := httpx.QueryUint(c, "before_id")
-	sinceID := httpx.QueryUint(c, "since_id")
-	limit := httpx.QueryInt(c, "limit", 20)
+	beforeID := httpx.Default().QueryUint(c, "before_id")
+	sinceID := httpx.Default().QueryUint(c, "since_id")
+	limit := httpx.Default().QueryInt(c, "limit", 20)
 
 	var list []dto.MessageVO
 	switch {
@@ -212,10 +211,10 @@ func (h *Handler) GuestMessagesHandler(c *gin.Context) {
 		list, err = h.svc.Conv.ListMessages(tenantID, conv.ID, 0, limit)
 	}
 	if err != nil {
-		response.Server(c, err.Error())
+		response.Default().Server(c, err.Error())
 		return
 	}
-	response.OK(c, list)
+	response.Default().OK(c, list)
 }
 
 // GuestWSHandler 用户端（访客）实时通道，无需登录，凭 channel + uid 定位会话。
@@ -264,7 +263,7 @@ func (h *Handler) GuestWSHandler(c *gin.Context) {
 	})
 
 	// ② 离线消息回放：把 since_id 之后的消息一次性推给该端
-	if msgs, err := h.svc.Conv.ListMessagesSince(tenantID, convID, httpx.QueryUint(c, "since_id"), 200); err == nil && len(msgs) > 0 {
+	if msgs, err := h.svc.Conv.ListMessagesSince(tenantID, convID, httpx.Default().QueryUint(c, "since_id"), 200); err == nil && len(msgs) > 0 {
 		for _, m := range msgs {
 			client.SendEvent("message.new", m)
 		}

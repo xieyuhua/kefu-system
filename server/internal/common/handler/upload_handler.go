@@ -44,7 +44,7 @@ func (h *UploadHandler) tenantIDOf(c *gin.Context) uint {
 	if cl := authctx.ClaimsFromContext(c); cl != nil {
 		return cl.TenantID
 	}
-	if t := httpx.QueryUint(c, "tenant"); t > 0 {
+	if t := httpx.Default().QueryUint(c, "tenant"); t > 0 {
 		return t
 	}
 	return h.svc.DefaultTenantID()
@@ -86,15 +86,15 @@ func (h *UploadHandler) UploadHandler(c *gin.Context) {
 
 	fileHeader, err := c.FormFile("file")
 	if err != nil {
-		response.Param(c, "请选择要上传的文件")
+		response.Default().Param(c, "请选择要上传的文件")
 		return
 	}
 	if fileHeader.Size <= 0 {
-		response.Param(c, "文件内容为空")
+		response.Default().Param(c, "文件内容为空")
 		return
 	}
 	if fileHeader.Size > maxUploadSize {
-		response.Param(c, fmt.Sprintf("文件超过 %d MB 限制", maxUploadSize>>20))
+		response.Default().Param(c, fmt.Sprintf("文件超过 %d MB 限制", maxUploadSize>>20))
 		return
 	}
 
@@ -102,7 +102,7 @@ func (h *UploadHandler) UploadHandler(c *gin.Context) {
 	ext := strings.ToLower(filepath.Ext(original))
 	kind := uploadKind(ext)
 	if kind == "" {
-		response.Param(c, "不支持的文件类型："+ext)
+		response.Default().Param(c, "不支持的文件类型："+ext)
 		return
 	}
 
@@ -110,7 +110,7 @@ func (h *UploadHandler) UploadHandler(c *gin.Context) {
 	day := time.Now().Format("20060102")
 	dir := filepath.Join(config.C.Upload.Dir, day)
 	if err := os.MkdirAll(dir, 0755); err != nil {
-		response.Server(c, "创建上传目录失败")
+		response.Default().Server(c, "创建上传目录失败")
 		return
 	}
 
@@ -118,26 +118,26 @@ func (h *UploadHandler) UploadHandler(c *gin.Context) {
 	dst := filepath.Join(dir, stored)
 	src, err := fileHeader.Open()
 	if err != nil {
-		response.Server(c, "读取上传文件失败")
+		response.Default().Server(c, "读取上传文件失败")
 		return
 	}
 	defer src.Close()
 
 	out, err := os.Create(dst)
 	if err != nil {
-		response.Server(c, "保存文件失败")
+		response.Default().Server(c, "保存文件失败")
 		return
 	}
 	defer out.Close()
 
 	if _, err := io.Copy(out, src); err != nil {
-		response.Server(c, "写入文件失败")
+		response.Default().Server(c, "写入文件失败")
 		return
 	}
 
 	// 访问路径（与路由 r.Static("/uploads", ...) 对应）
 	url := "/uploads/" + day + "/" + stored
-	response.OK(c, map[string]interface{}{
+	response.Default().OK(c, map[string]interface{}{
 		"url":       url,
 		"kind":      kind,
 		"name":      original,

@@ -39,7 +39,7 @@ func (s *CustomerService) ListTags(tenantID uint) ([]TagVO, error) {
 		uc, _ := s.tags.CountTagUsage(tenantID, t.ID)
 		out = append(out, TagVO{
 			ID: t.ID, Name: t.Name, Color: t.Color, Sort: t.Sort,
-			UseCount: uc, CreatedAt: util.FmtTime(t.CreatedAt),
+			UseCount: uc, CreatedAt: util.Default().FmtTime(t.CreatedAt),
 		})
 	}
 	return out, nil
@@ -61,7 +61,7 @@ func (s *CustomerService) CreateTag(tenantID uint, req TagRequest) (*TagVO, erro
 	if err := s.tags.InsertTag(t); err != nil {
 		return nil, err
 	}
-	return &TagVO{ID: t.ID, Name: t.Name, Color: t.Color, Sort: t.Sort, CreatedAt: util.FmtTime(t.CreatedAt)}, nil
+	return &TagVO{ID: t.ID, Name: t.Name, Color: t.Color, Sort: t.Sort, CreatedAt: util.Default().FmtTime(t.CreatedAt)}, nil
 }
 
 func (s *CustomerService) DeleteTag(tenantID, id uint) error {

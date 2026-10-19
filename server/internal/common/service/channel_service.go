@@ -12,9 +12,9 @@ import (
 	"strings"
 
 	"kefu-server/internal/common/dto"
-	"kefu-server/internal/common/idgen"
 	"kefu-server/internal/common/model"
 	"kefu-server/internal/common/repository"
+	"kefu-server/pkg/idgen"
 	"kefu-server/pkg/util"
 )
 
@@ -50,7 +50,7 @@ func (s *ChannelService) ListChannels(tenantID uint, agentID uint, isAdmin bool)
 			ID: c.ID, Type: c.Type, Name: c.Name, AppID: c.AppID,
 			Enabled: c.Enabled, RobotEnabled: c.RobotEnabled,
 			HideHeader: c.HideHeader, HideDebug: c.HideDebug, HideMoreMenu: c.HideMoreMenu,
-			CreatedAt: util.FmtTime(c.CreatedAt), AgentCount: agentCount, PendingCount: pending,
+			CreatedAt: util.Default().FmtTime(c.CreatedAt), AgentCount: agentCount, PendingCount: pending,
 			// 始终用后端配置的 public_base 拼完整 URL，
 			// 不要让前端用 window.location.origin，避免内网/反代场景下复制到错地址
 			AccessPath: AccessPath(c),
@@ -97,7 +97,7 @@ func (s *ChannelService) CreateChannel(tenantID uint, req dto.ChannelRequest) (*
 	}
 	// app_id 未指定时自动生成一个随机标识（可在渠道管理里重置）
 	if c.AppID == "" {
-		c.AppID = idgen.GenerateAppID(tenantID)
+		c.AppID = idgen.Default().GenerateAppID(s.appIDExists(tenantID))
 	} else if err := s.ensureAppIDUnique(tenantID, c.AppID, 0); err != nil {
 		return nil, err
 	}
@@ -111,8 +111,18 @@ func (s *ChannelService) CreateChannel(tenantID uint, req dto.ChannelRequest) (*
 		ID: c.ID, Type: c.Type, Name: c.Name, AppID: c.AppID,
 		Enabled: c.Enabled, RobotEnabled: c.RobotEnabled,
 		HideHeader: c.HideHeader, HideDebug: c.HideDebug, HideMoreMenu: c.HideMoreMenu,
-		CreatedAt: util.FmtTime(c.CreatedAt),
+		CreatedAt: util.Default().FmtTime(c.CreatedAt),
 	}, nil
+}
+
+// appIDExists 返回「同租户内 app_id 是否已被占用」的判定闭包。
+// pkg/idgen 是可复用 SDK、不认识 channels 表，唯一性校验由业务层以闭包注入。
+func (s *ChannelService) appIDExists(tenantID uint) func(id string) bool {
+	return func(id string) bool {
+		// 统计失败按「未被占用」处理，与原逻辑一致
+		cnt, _ := s.repo.CountChannelByAppID(tenantID, id, 0)
+		return cnt > 0
+	}
 }
 
 // ensureAppIDUnique 保证同一租户内 app_id 唯一（excludeID 用于更新场景排除自身）
@@ -133,7 +143,7 @@ func (s *ChannelService) ResetChannelAppID(tenantID, id uint) (string, error) {
 		return "", errors.New("渠道不存在")
 	}
 	for i := 0; i < 5; i++ {
-		newID := idgen.GenerateAppID(tenantID)
+		newID := idgen.Default().GenerateAppID(s.appIDExists(tenantID))
 		if newID == c.AppID {
 			continue
 		}

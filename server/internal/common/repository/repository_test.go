@@ -53,7 +53,7 @@ func newTestDB(t *testing.T) *gorm.DB {
 	if err := db.AutoMigrate(&model.Device{}, &model.Notification{}); err != nil {
 		t.Fatalf("AutoMigrate 失败: %v", err)
 	}
-	storage.SetDB(db)
+	storage.Default().SetDB(db)
 	return db
 }
 

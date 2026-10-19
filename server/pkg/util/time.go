@@ -6,7 +6,7 @@ import "time"
 const TimeLayout = "2006-01-02 15:04:05"
 
 // FmtTime 格式化时间；零值返回空串，避免前端显示 0001-01-01
-func FmtTime(t time.Time) string {
+func (u *Util) FmtTime(t time.Time) string {
 	if t.IsZero() {
 		return ""
 	}
@@ -14,7 +14,7 @@ func FmtTime(t time.Time) string {
 }
 
 // FmtTimePtr 格式化时间指针；nil 返回空串
-func FmtTimePtr(t *time.Time) string {
+func (u *Util) FmtTimePtr(t *time.Time) string {
 	if t == nil {
 		return ""
 	}

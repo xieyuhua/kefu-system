@@ -29,7 +29,7 @@ func NewCustomerRepository() *CustomerRepository { return &CustomerRepository{} 
 // 租户条件保证后台任何入口都拿不到别人家的客户。
 func (r *CustomerRepository) FindCustomerInTenant(tenantID, id uint) (*model.Customer, error) {
 	var c model.Customer
-	if err := storage.DB().Where("tenant_id = ? AND id = ?", tenantID, id).First(&c).Error; err != nil {
+	if err := storage.Default().DB().Where("tenant_id = ? AND id = ?", tenantID, id).First(&c).Error; err != nil {
 		return nil, err
 	}
 	return &c, nil
@@ -39,7 +39,7 @@ func (r *CustomerRepository) FindCustomerInTenant(tenantID, id uint) (*model.Cus
 // 这是用户端（访客）识人的统一口径：同一渠道下同一个 uid 视为同一个客户。
 func (r *CustomerRepository) FindCustomerByChannelExternalID(tenantID, channelID uint, externalID string) (*model.Customer, error) {
 	var c model.Customer
-	if err := storage.DB().Where("tenant_id = ? AND channel_id = ? AND external_id = ?",
+	if err := storage.Default().DB().Where("tenant_id = ? AND channel_id = ? AND external_id = ?",
 		tenantID, channelID, externalID).First(&c).Error; err != nil {
 		return nil, err
 	}
@@ -50,7 +50,7 @@ func (r *CustomerRepository) FindCustomerByChannelExternalID(tenantID, channelID
 // 用于用户端无 WebSocket 时的轮询降级接口（只带 uid，不带 channel）。
 func (r *CustomerRepository) FindCustomerByExternalID(tenantID uint, externalID string) (*model.Customer, error) {
 	var c model.Customer
-	if err := storage.DB().Where("tenant_id = ? AND external_id = ?", tenantID, externalID).
+	if err := storage.Default().DB().Where("tenant_id = ? AND external_id = ?", tenantID, externalID).
 		First(&c).Error; err != nil {
 		return nil, err
 	}
@@ -60,7 +60,7 @@ func (r *CustomerRepository) FindCustomerByExternalID(tenantID uint, externalID 
 // ListCustomersPaged 分页查询客户列表，按最近活跃时间倒序。
 // keyword 同时匹配昵称 / 手机号 / 外部 ID；channelID > 0 时只查该渠道。
 func (r *CustomerRepository) ListCustomersPaged(tenantID uint, keyword string, channelID uint, page, pageSize int) ([]*model.Customer, int64, error) {
-	q := storage.DB().Model(&model.Customer{}).Where("tenant_id = ?", tenantID)
+	q := storage.Default().DB().Model(&model.Customer{}).Where("tenant_id = ?", tenantID)
 	if channelID > 0 {
 		q = q.Where("channel_id = ?", channelID)
 	}
@@ -73,7 +73,7 @@ func (r *CustomerRepository) ListCustomersPaged(tenantID uint, keyword string, c
 		return nil, 0, err
 	}
 	var list []*model.Customer
-	offset, limit := storage.Paginate(page, pageSize)
+	offset, limit := storage.Default().Paginate(page, pageSize)
 	if err := q.Order("last_seen_at desc").Offset(offset).Limit(limit).Find(&list).Error; err != nil {
 		return nil, 0, err
 	}
@@ -82,17 +82,17 @@ func (r *CustomerRepository) ListCustomersPaged(tenantID uint, keyword string, c
 
 // CreateCustomer 新增客户，成功后回填主键与时间戳。
 func (r *CustomerRepository) CreateCustomer(c *model.Customer) error {
-	return storage.DB().Create(c).Error
+	return storage.Default().DB().Create(c).Error
 }
 
 // UpdateCustomerColumns 按主键更新客户的部分字段（昵称、最近活跃时间等）。
 func (r *CustomerRepository) UpdateCustomerColumns(id uint, updates map[string]interface{}) error {
-	return storage.DB().Model(&model.Customer{}).Where("id = ?", id).Updates(updates).Error
+	return storage.Default().DB().Model(&model.Customer{}).Where("id = ?", id).Updates(updates).Error
 }
 
 // SaveCustomerRemark 更新客服备注（跨客服可见）。
 func (r *CustomerRepository) SaveCustomerRemark(tenantID, customerID uint, remark string) error {
-	return storage.DB().Model(&model.Customer{}).
+	return storage.Default().DB().Model(&model.Customer{}).
 		Where("tenant_id = ? AND id = ?", tenantID, customerID).
 		Update("remark", remark).Error
 }
@@ -105,7 +105,7 @@ func (r *CustomerRepository) SaveCustomerRemark(tenantID, customerID uint, remar
 // 一处未命中即返回 gorm.ErrRecordNotFound，由调用方决定是否新建会话。
 func (r *CustomerRepository) FindActiveConversationOfCustomer(tenantID, customerID uint) (*model.Conversation, error) {
 	var c model.Conversation
-	if err := storage.DB().Where("tenant_id = ? AND customer_id = ? AND status != 'closed' AND archived = ?",
+	if err := storage.Default().DB().Where("tenant_id = ? AND customer_id = ? AND status != 'closed' AND archived = ?",
 		tenantID, customerID, false).
 		Order("id desc").First(&c).Error; err != nil {
 		return nil, err
@@ -116,7 +116,7 @@ func (r *CustomerRepository) FindActiveConversationOfCustomer(tenantID, customer
 // CountConversationsOfCustomer 统计客户名下的会话总数（客户列表的统计口径）。
 func (r *CustomerRepository) CountConversationsOfCustomer(customerID uint) (int64, error) {
 	var cnt int64
-	if err := storage.DB().Model(&model.Conversation{}).Where("customer_id = ?", customerID).
+	if err := storage.Default().DB().Model(&model.Conversation{}).Where("customer_id = ?", customerID).
 		Count(&cnt).Error; err != nil {
 		return 0, err
 	}
@@ -130,7 +130,7 @@ func (r *CustomerRepository) ListCustomerConversations(tenantID, customerID uint
 		limit = 50
 	}
 	var list []*model.Conversation
-	if err := storage.DB().Where("tenant_id = ? AND customer_id = ?", tenantID, customerID).
+	if err := storage.Default().DB().Where("tenant_id = ? AND customer_id = ?", tenantID, customerID).
 		Order("id desc").Limit(limit).Find(&list).Error; err != nil {
 		return nil, err
 	}
@@ -141,7 +141,7 @@ func (r *CustomerRepository) ListCustomerConversations(tenantID, customerID uint
 // 用于会话/消息组装 VO：调用方已按租户确认过会话归属，此处只需取客户展示字段。
 func (r *CustomerRepository) FindCustomerByID(customerID uint) (*model.Customer, error) {
 	var cu model.Customer
-	if err := storage.DB().First(&cu, customerID).Error; err != nil {
+	if err := storage.Default().DB().First(&cu, customerID).Error; err != nil {
 		return nil, err
 	}
 	return &cu, nil

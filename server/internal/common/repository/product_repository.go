@@ -19,7 +19,7 @@ func NewProductRepository() *ProductRepository { return &ProductRepository{} }
 // 未命中返回 gorm.ErrRecordNotFound。
 func (r *ProductRepository) FindProductByPID(tenantID uint, pid string) (*model.Product, error) {
 	var p model.Product
-	if err := storage.DB().Where("tenant_id = ? AND p_id = ?", tenantID, pid).First(&p).Error; err != nil {
+	if err := storage.Default().DB().Where("tenant_id = ? AND p_id = ?", tenantID, pid).First(&p).Error; err != nil {
 		return nil, err
 	}
 	return &p, nil
@@ -28,7 +28,7 @@ func (r *ProductRepository) FindProductByPID(tenantID uint, pid string) (*model.
 // ListProductsPaged 分页查询商品列表，按主键升序。
 // keyword 同时匹配标题 / 对外商品 ID / SKU。
 func (r *ProductRepository) ListProductsPaged(tenantID uint, keyword string, page, pageSize int) ([]*model.Product, int64, error) {
-	q := storage.DB().Model(&model.Product{}).Where("tenant_id = ?", tenantID)
+	q := storage.Default().DB().Model(&model.Product{}).Where("tenant_id = ?", tenantID)
 	if kw := strings.TrimSpace(keyword); kw != "" {
 		like := "%" + kw + "%"
 		q = q.Where("title LIKE ? OR p_id LIKE ? OR sku LIKE ?", like, like, like)
@@ -38,7 +38,7 @@ func (r *ProductRepository) ListProductsPaged(tenantID uint, keyword string, pag
 		return nil, 0, err
 	}
 	var list []*model.Product
-	offset, limit := storage.Paginate(page, pageSize)
+	offset, limit := storage.Default().Paginate(page, pageSize)
 	if err := q.Order("id asc").Offset(offset).Limit(limit).Find(&list).Error; err != nil {
 		return nil, 0, err
 	}

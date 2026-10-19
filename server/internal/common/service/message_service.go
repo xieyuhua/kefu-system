@@ -71,7 +71,7 @@ func (s *ConversationService) buildMessageVO(m *model.Message) dto.MessageVO {
 	vo := dto.MessageVO{
 		ID: m.ID, ConversationID: m.ConversationID, Type: m.Type,
 		Direction: m.Direction, Content: m.Content,
-		CreatedAt: util.FmtTime(m.CreatedAt),
+		CreatedAt: util.Default().FmtTime(m.CreatedAt),
 	}
 	switch m.SenderRole {
 	case "user":

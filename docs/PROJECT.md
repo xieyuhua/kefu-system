@@ -5,12 +5,16 @@
 kefu/
   server/
     main.go              启动装配：config → db → cache → seed → route
-    pkg/                 通用层（可复用、不依赖 internal）
-      response           统一响应壳
+    pkg/                 可复用能力/SDK（零 internal 依赖，全部「结构体 + 方法 + Default() 单例」）
+      auth               鉴权 SDK：JWT 签发/校验/吊销、密码哈希
+      card               卡片渲染 SDK：订单/商品卡片 JSON（自定义 Input 结构体）
+      idgen              业务 ID 生成 SDK：渠道 app_id（唯一性由调用方闭包注入）
+      ipinfo             IP 归属查询 SDK：内网判定、客户端 IP 提取、城市查询（fetch 注入）
       storage            GORM 连接/事务/分页
-      cache              缓存抽象（Redis/内存降级，Init(Options)）
+      cache              缓存抽象（Redis/内存降级）
+      response           统一响应壳
       httpx              通用 gin 辅助（参数解析、JSON 绑定）
-      util               纯工具函数：时间格式化、密码哈希、IP 解析、随机串
+      util               小工具：时间格式化、IP 解析、随机串
     internal/
       admin/         后台端：handler/ service/ route/（无自有 model/repository，直接用 common）
       agent/         客服端：handler/ service/ route/

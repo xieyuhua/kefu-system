@@ -3,7 +3,7 @@ package middleware
 import (
 	"strings"
 
-	"kefu-server/internal/common/auth"
+	"kefu-server/pkg/auth"
 	"kefu-server/pkg/response"
 
 	"github.com/gin-gonic/gin"
@@ -21,15 +21,15 @@ func JWTAuth() gin.HandlerFunc {
 			}
 		}
 		if header == "" {
-			response.Unauth(c, "未登录")
+			response.Default().Unauth(c, "未登录")
 			c.Abort()
 			return
 		}
 		token := strings.TrimPrefix(header, "Bearer ")
 		token = strings.TrimSpace(token)
-		claims, err := auth.ParseToken(token)
+		claims, err := auth.Default().ParseToken(token)
 		if err != nil {
-			response.Unauth(c, "登录已失效，请重新登录")
+			response.Default().Unauth(c, "登录已失效，请重新登录")
 			c.Abort()
 			return
 		}

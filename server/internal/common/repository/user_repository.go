@@ -11,7 +11,7 @@ package repository
 //
 // 形态约定：所有数据访问都是 Repository 的方法（指针接收者）。
 // Repository 不持有 *gorm.DB 字段：本包的 init 会向 platform/authctx 注册鉴权回调，
-// 而连接是 main 启动后才注入 pkg/storage 的，因此每个方法现取 storage.DB()。
+// 而连接是 main 启动后才注入 pkg/storage 的，因此每个方法现取 storage.Default().DB()。
 import (
 	"kefu-server/internal/common/model"
 	"kefu-server/pkg/storage"
@@ -32,7 +32,7 @@ func NewUserRepository() *UserRepository { return &UserRepository{} }
 // 不要把它当成系统错误。
 func (r *UserRepository) FindUserByAccount(account string) (*model.User, error) {
 	var u model.User
-	if err := storage.DB().Where("account = ?", account).First(&u).Error; err != nil {
+	if err := storage.Default().DB().Where("account = ?", account).First(&u).Error; err != nil {
 		return nil, err
 	}
 	return &u, nil
@@ -42,7 +42,7 @@ func (r *UserRepository) FindUserByAccount(account string) (*model.User, error) 
 // 跨租户的 id 同样命中不到，避免后台接口越权读到别家账号。
 func (r *UserRepository) FindUserByID(tenantID, id uint) (*model.User, error) {
 	var u model.User
-	if err := storage.DB().Where("tenant_id = ? AND id = ?", tenantID, id).First(&u).Error; err != nil {
+	if err := storage.Default().DB().Where("tenant_id = ? AND id = ?", tenantID, id).First(&u).Error; err != nil {
 		return nil, err
 	}
 	return &u, nil
@@ -52,7 +52,7 @@ func (r *UserRepository) FindUserByID(tenantID, id uint) (*model.User, error) {
 // 注意与 channel 模块的 ListTenantAgents 的区别：后者只返回 role = 'agent' 的子账号，供渠道分配使用。
 func (r *UserRepository) ListUsersByTenant(tenantID uint) ([]*model.User, error) {
 	var users []*model.User
-	if err := storage.DB().Where("tenant_id = ?", tenantID).Order("id asc").Find(&users).Error; err != nil {
+	if err := storage.Default().DB().Where("tenant_id = ?", tenantID).Order("id asc").Find(&users).Error; err != nil {
 		return nil, err
 	}
 	return users, nil
@@ -60,18 +60,18 @@ func (r *UserRepository) ListUsersByTenant(tenantID uint) ([]*model.User, error)
 
 // CreateUser 新增账号，成功后回填主键与时间戳。
 func (r *UserRepository) CreateUser(u *model.User) error {
-	return storage.DB().Create(u).Error
+	return storage.Default().DB().Create(u).Error
 }
 
 // SaveUser 全字段保存账号（昵称、角色、并发上限、启用状态、密码哈希等）。
 func (r *UserRepository) SaveUser(u *model.User) error {
-	return storage.DB().Save(u).Error
+	return storage.Default().DB().Save(u).Error
 }
 
 // DeleteUserWithBindings 在同一事务内删除账号并清理其渠道分配（agent_channels）。
 // 两张表要么都删成功，要么都不动，避免残留孤儿分配记录。
 func (r *UserRepository) DeleteUserWithBindings(tenantID, id uint) error {
-	return storage.Tx(func(tx *gorm.DB) error {
+	return storage.Default().Tx(func(tx *gorm.DB) error {
 		if err := tx.Where("user_id = ?", id).Delete(&model.AgentChannel{}).Error; err != nil {
 			return err
 		}
@@ -83,7 +83,7 @@ func (r *UserRepository) DeleteUserWithBindings(tenantID, id uint) error {
 // excludeID > 0 时排除该主键，供更新场景「排除自身」查重。
 func (r *UserRepository) CountUsersByAccount(account string, excludeID uint) (int64, error) {
 	var cnt int64
-	q := storage.DB().Model(&model.User{}).Where("account = ?", account)
+	q := storage.Default().DB().Model(&model.User{}).Where("account = ?", account)
 	if excludeID > 0 {
 		q = q.Where("id != ?", excludeID)
 	}
@@ -96,7 +96,7 @@ func (r *UserRepository) CountUsersByAccount(account string, excludeID uint) (in
 // CountUsersByTenant 统计租户下的账号总数（含 admin）。
 func (r *UserRepository) CountUsersByTenant(tenantID uint) (int64, error) {
 	var cnt int64
-	if err := storage.DB().Model(&model.User{}).Where("tenant_id = ?", tenantID).Count(&cnt).Error; err != nil {
+	if err := storage.Default().DB().Model(&model.User{}).Where("tenant_id = ?", tenantID).Count(&cnt).Error; err != nil {
 		return 0, err
 	}
 	return cnt, nil
@@ -105,7 +105,7 @@ func (r *UserRepository) CountUsersByTenant(tenantID uint) (int64, error) {
 // CountUsers 统计全平台账号总数。
 func (r *UserRepository) CountUsers() (int64, error) {
 	var cnt int64
-	if err := storage.DB().Model(&model.User{}).Count(&cnt).Error; err != nil {
+	if err := storage.Default().DB().Model(&model.User{}).Count(&cnt).Error; err != nil {
 		return 0, err
 	}
 	return cnt, nil
@@ -113,24 +113,24 @@ func (r *UserRepository) CountUsers() (int64, error) {
 
 // UpdateUserOnline 更新账号在线状态（登录 / 登出 / WS 连接状态变更）。
 func (r *UserRepository) UpdateUserOnline(tenantID, id uint, online bool) error {
-	return storage.DB().Model(&model.User{}).
+	return storage.Default().DB().Model(&model.User{}).
 		Where("tenant_id = ? AND id = ?", tenantID, id).
 		Update("online", online).Error
 }
 
 // UpdateUserOnlineByID 只按主键更新在线状态（WebSocket 层只持有 userID 的场景）。
 func (r *UserRepository) UpdateUserOnlineByID(id uint, online bool) error {
-	return storage.DB().Model(&model.User{}).Where("id = ?", id).Update("online", online).Error
+	return storage.Default().DB().Model(&model.User{}).Where("id = ?", id).Update("online", online).Error
 }
 
 // ResetAllOnline 把全平台账号置为离线。进程重启后没有任何 WS 连接，启动时调用一次。
 func (r *UserRepository) ResetAllOnline() error {
-	return storage.DB().Model(&model.User{}).Where("online = ?", true).Update("online", false).Error
+	return storage.Default().DB().Model(&model.User{}).Where("online = ?", true).Update("online", false).Error
 }
 
 // UpdateUserPassword 只更新密码哈希，不触碰其它字段（避免整行覆盖）。
 func (r *UserRepository) UpdateUserPassword(id uint, passwordHash string) error {
-	return storage.DB().Model(&model.User{}).Where("id = ?", id).
+	return storage.Default().DB().Model(&model.User{}).Where("id = ?", id).
 		Update("password_hash", passwordHash).Error
 }
 
@@ -140,20 +140,20 @@ func (r *UserRepository) UpdateUserProfile(id uint, name, avatar string) error {
 	if avatar != "" {
 		updates["avatar"] = avatar
 	}
-	return storage.DB().Model(&model.User{}).Where("id = ?", id).Updates(updates).Error
+	return storage.Default().DB().Model(&model.User{}).Where("id = ?", id).Updates(updates).Error
 }
 
 // DeleteAgentChannelsByUser 清空某账号的全部渠道分配（按账号批量设置渠道时先删后建）。
 // 与 DeleteAgentChannels（按渠道维度清空）方向相反，互不替代。
 func (r *UserRepository) DeleteAgentChannelsByUser(userID uint) error {
-	return storage.DB().Where("user_id = ?", userID).Delete(&model.AgentChannel{}).Error
+	return storage.Default().DB().Where("user_id = ?", userID).Delete(&model.AgentChannel{}).Error
 }
 
 // ListAgentChannelIDsByUser 取某账号被分配（可接待）的渠道 ID 列表。
 // 登录响应与个人资料里的 channels 字段用它拼装。
 func (r *UserRepository) ListAgentChannelIDsByUser(userID uint) ([]uint, error) {
 	var acs []*model.AgentChannel
-	if err := storage.DB().Where("user_id = ?", userID).Find(&acs).Error; err != nil {
+	if err := storage.Default().DB().Where("user_id = ?", userID).Find(&acs).Error; err != nil {
 		return nil, err
 	}
 	ids := make([]uint, 0, len(acs))
@@ -167,14 +167,14 @@ func (r *UserRepository) ListAgentChannelIDsByUser(userID uint) ([]uint, error) 
 // 这张分配表由 account 与 channel 两个模块共同维护：本方法是「账号维度」的写入，
 // channel 模块的 CreateAgentChannel 是「渠道维度」的写入，方向不同、互不替代。
 func (r *UserRepository) UserCreateAgentChannel(ac *model.AgentChannel) error {
-	return storage.DB().Create(ac).Error
+	return storage.Default().DB().Create(ac).Error
 }
 
 // FindUserBriefByID 按主键取账号的接待相关字段（昵称 / 角色 / 头像 / 在线 / 最大同时接待数）。
 // 会话与消息的展示场景已确定归属，故不加租户条件；未命中返回 gorm.ErrRecordNotFound。
 func (r *UserRepository) FindUserBriefByID(userID uint) (*model.User, error) {
 	var u model.User
-	if err := storage.DB().Select("id", "name", "role", "avatar", "online", "max_concurrent").
+	if err := storage.Default().DB().Select("id", "name", "role", "avatar", "online", "max_concurrent").
 		Where("id = ?", userID).First(&u).Error; err != nil {
 		return nil, err
 	}
@@ -189,7 +189,7 @@ func (r *UserRepository) FindUserBriefByID(userID uint) (*model.User, error) {
 // 只统计租户内的会话，防止跨租户串号。
 func (r *UserRepository) CountOpenConversations(tenantID, agentID uint) (int64, error) {
 	var cnt int64
-	err := storage.DB().Model(&model.Conversation{}).
+	err := storage.Default().DB().Model(&model.Conversation{}).
 		Where("tenant_id = ? AND agent_id = ? AND status = ?", tenantID, agentID, "open").
 		Count(&cnt).Error
 	if err != nil {
@@ -208,7 +208,7 @@ func (r *UserRepository) CountOpenConversations(tenantID, agentID uint) (int64, 
 // 只改名字、SQL 与参数逐字未动。
 func (r *UserRepository) UserListChannelsByTenant(tenantID, agentID uint, isAdmin bool) ([]*model.Channel, error) {
 	var list []*model.Channel
-	q := storage.DB().Where("tenant_id = ?", tenantID)
+	q := storage.Default().DB().Where("tenant_id = ?", tenantID)
 	if !isAdmin {
 		q = q.Where("id IN (SELECT channel_id FROM agent_channels WHERE user_id = ?)", agentID)
 	}
@@ -223,7 +223,7 @@ func (r *UserRepository) UserListChannelsByTenant(tenantID, agentID uint, isAdmi
 // FindTenantByID 按主键取租户（登录/个人资料里拼租户名与 Logo）。
 func (r *UserRepository) FindTenantByID(id uint) (*model.Tenant, error) {
 	var t model.Tenant
-	if err := storage.DB().First(&t, id).Error; err != nil {
+	if err := storage.Default().DB().First(&t, id).Error; err != nil {
 		return nil, err
 	}
 	return &t, nil

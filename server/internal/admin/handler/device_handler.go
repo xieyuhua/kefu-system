@@ -26,5 +26,5 @@ func (h *Handler) TestDevicePushHandler(c *gin.Context) {
 		body.Body = "这是一条测试推送，收到说明厂商通道已接通"
 	}
 	realtime.Notify(authctx.TenantID(c), authctx.UserID(c), "test", body.Title, body.Body, 0)
-	response.OK(c, map[string]interface{}{"sent": true, "title": body.Title})
+	response.Default().OK(c, map[string]interface{}{"sent": true, "title": body.Title})
 }

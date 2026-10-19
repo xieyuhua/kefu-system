@@ -73,8 +73,8 @@ func HubInstance() *Hub {
 
 // subscribeGuestRedis 订阅跨实例的用户端（访客）事件
 func (h *Hub) subscribeGuestRedis() {
-	cache.Get().Subscribe(context.Background(), "guest-events", func(env cache.Envelope) {
-		if env.SenderID == cache.InstanceID {
+	cache.Default().Get().Subscribe(context.Background(), "guest-events", func(env cache.Envelope) {
+		if env.SenderID == cache.Default().InstanceID() {
 			return
 		}
 		var ev Event
@@ -95,8 +95,8 @@ func (h *Hub) subscribeGuestRedis() {
 
 func (h *Hub) subscribeRedis() {
 	// 订阅跨实例广播；内存驱动下为空操作（单机直连推送）
-	cache.Get().Subscribe(context.Background(), "events", func(env cache.Envelope) {
-		if env.SenderID == cache.InstanceID {
+	cache.Default().Get().Subscribe(context.Background(), "events", func(env cache.Envelope) {
+		if env.SenderID == cache.Default().InstanceID() {
 			return // 忽略自己发出的
 		}
 		var ev Event
@@ -175,15 +175,15 @@ func push(c *Client, b []byte) {
 func (h *Hub) Publish(tenantID uint, userIDs []uint, ev Event) {
 	h.broadcast <- broadcastMsg{TenantID: tenantID, UserIDs: userIDs, Event: ev}
 
-	if cache.Get().Enabled() {
+	if cache.Default().Get().Enabled() {
 		env := cache.Envelope{
 			TenantID:  tenantID,
 			Event:     ev.Event,
 			Data:      ev,
-			SenderID:  cache.InstanceID,
+			SenderID:  cache.Default().InstanceID(),
 			Timestamp: time.Now().UnixMilli(),
 		}
-		if err := cache.Get().Publish(context.Background(), "events", env); err != nil {
+		if err := cache.Default().Get().Publish(context.Background(), "events", env); err != nil {
 			log.Printf("[hub] publish error: %v", err)
 		}
 	}
@@ -269,16 +269,16 @@ func (h *Hub) GuestCount(convID uint) int {
 func (h *Hub) PublishToGuest(tenantID, convID uint, ev Event) {
 	h.broadcast <- broadcastMsg{TenantID: tenantID, ConvID: convID, Event: ev}
 
-	if cache.Get().Enabled() {
+	if cache.Default().Get().Enabled() {
 		env := cache.Envelope{
 			TenantID:  tenantID,
 			ConvID:    convID,
 			Event:     ev.Event,
 			Data:      ev,
-			SenderID:  cache.InstanceID,
+			SenderID:  cache.Default().InstanceID(),
 			Timestamp: time.Now().UnixMilli(),
 		}
-		if err := cache.Get().Publish(context.Background(), "guest-events", env); err != nil {
+		if err := cache.Default().Get().Publish(context.Background(), "guest-events", env); err != nil {
 			log.Printf("[hub] guest publish error: %v", err)
 		}
 	}

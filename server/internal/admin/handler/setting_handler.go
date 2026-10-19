@@ -16,10 +16,10 @@ import (
 func (h *Handler) ListSettingsHandler(c *gin.Context) {
 	list, err := setting.ListSettings(authctx.TenantID(c))
 	if err != nil {
-		response.Server(c, err.Error())
+		response.Default().Server(c, err.Error())
 		return
 	}
-	response.OK(c, list)
+	response.Default().OK(c, list)
 }
 
 // SaveSettingHandler 保存单个配置项
@@ -28,12 +28,12 @@ func (h *Handler) SaveSettingHandler(c *gin.Context) {
 		Key   string `json:"key"`
 		Value string `json:"value"`
 	}
-	if !httpx.BindJSON(c, &req) {
+	if !httpx.Default().BindJSON(c, &req) {
 		return
 	}
 	if err := setting.SaveSetting(authctx.TenantID(c), req.Key, req.Value); err != nil {
-		response.Param(c, err.Error())
+		response.Default().Param(c, err.Error())
 		return
 	}
-	response.OK(c, true)
+	response.Default().OK(c, true)
 }

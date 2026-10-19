@@ -18,7 +18,7 @@ func NewNotificationRepository() *NotificationRepository {
 // CreateNotification 写入一条站内提醒（客服离线时重连后可拉取）。
 // 平台层的 realtime.Notify 也有一份等价实现（基础设施例外），两者写同一张表。
 func (r *NotificationRepository) CreateNotification(n *model.Notification) error {
-	return storage.DB().Create(n).Error
+	return storage.Default().DB().Create(n).Error
 }
 
 // DefaultNotificationLimit 增量拉取提醒的默认条数上限，与唯一调用方 OfflineNotifications 保持一致。
@@ -32,7 +32,7 @@ func (r *NotificationRepository) ListNotificationsAfter(tenantID, userID, sinceI
 		limit = DefaultNotificationLimit
 	}
 	var list []*model.Notification
-	if err := storage.DB().Where("tenant_id = ? AND user_id = ? AND id > ?", tenantID, userID, sinceID).
+	if err := storage.Default().DB().Where("tenant_id = ? AND user_id = ? AND id > ?", tenantID, userID, sinceID).
 		Order("id asc").Limit(limit).Find(&list).Error; err != nil {
 		return nil, err
 	}
@@ -41,7 +41,7 @@ func (r *NotificationRepository) ListNotificationsAfter(tenantID, userID, sinceI
 
 // SetNotificationsRead 把用户的提醒标记为已读；ids 为空时表示全部已读。
 func (r *NotificationRepository) SetNotificationsRead(tenantID, userID uint, ids []uint) error {
-	q := storage.DB().Model(&model.Notification{}).Where("tenant_id = ? AND user_id = ?", tenantID, userID)
+	q := storage.Default().DB().Model(&model.Notification{}).Where("tenant_id = ? AND user_id = ?", tenantID, userID)
 	if len(ids) > 0 {
 		q = q.Where("id IN ?", ids)
 	}

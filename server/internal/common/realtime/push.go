@@ -108,7 +108,7 @@ func (p *PushGateway) Send(tenantID, userID uint, n *model.Notification) {
 			log.Printf("[push] %s 下发失败 device=%d token=%s: %v",
 				prov.Name(), d.ID, mask(d.PushToken), err)
 			// TODO: 厂商返回 token 失效（未注册/非法 token）时，可清理该设备：
-			//   storage.DB().Where("id = ?", d.ID).Delete(&model.Device{})
+			//   storage.Default().DB().Where("id = ?", d.ID).Delete(&model.Device{})
 			continue
 		}
 		log.Printf("[push] %s 下发成功 device=%d platform=%s title=%q",

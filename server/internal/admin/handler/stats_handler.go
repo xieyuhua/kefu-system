@@ -11,11 +11,11 @@ import (
 // ---------------- 数据统计 ----------------
 
 func (h *Handler) StatsOverviewHandler(c *gin.Context) {
-	days := httpx.QueryInt(c, "days", 7)
+	days := httpx.Default().QueryInt(c, "days", 7)
 	data, err := h.svc.StatsOverviewData(authctx.TenantID(c), days)
 	if err != nil {
-		response.Server(c, err.Error())
+		response.Default().Server(c, err.Error())
 		return
 	}
-	response.OK(c, data)
+	response.Default().OK(c, data)
 }

@@ -134,7 +134,7 @@ func MessageSound(tenantID uint) string {
 // findSettingByKey 按租户 + key 查询单个配置项；未命中返回 gorm.ErrRecordNotFound。
 func findSettingByKey(tenantID uint, key string) (*model.Setting, error) {
 	var s model.Setting
-	if err := storage.DB().Where("tenant_id = ? AND key = ?", tenantID, key).First(&s).Error; err != nil {
+	if err := storage.Default().DB().Where("tenant_id = ? AND key = ?", tenantID, key).First(&s).Error; err != nil {
 		return nil, err
 	}
 	return &s, nil
@@ -143,7 +143,7 @@ func findSettingByKey(tenantID uint, key string) (*model.Setting, error) {
 // listSettingsByTenant 列出租户已保存的全部配置项（保持原有不排序的取数方式）。
 func listSettingsByTenant(tenantID uint) ([]*model.Setting, error) {
 	var list []*model.Setting
-	if err := storage.DB().Where("tenant_id = ?", tenantID).Find(&list).Error; err != nil {
+	if err := storage.Default().DB().Where("tenant_id = ?", tenantID).Find(&list).Error; err != nil {
 		return nil, err
 	}
 	return list, nil
@@ -151,10 +151,10 @@ func listSettingsByTenant(tenantID uint) ([]*model.Setting, error) {
 
 // createSetting 新增配置项，成功后回填主键与时间戳。
 func createSetting(s *model.Setting) error {
-	return storage.DB().Create(s).Error
+	return storage.Default().DB().Create(s).Error
 }
 
 // saveSetting 保存配置项全字段（已存在配置的更新路径）。
 func saveSetting(s *model.Setting) error {
-	return storage.DB().Save(s).Error
+	return storage.Default().DB().Save(s).Error
 }

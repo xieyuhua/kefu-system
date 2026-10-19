@@ -10,9 +10,9 @@ package handler
 // —— 三端共用同一套口令与 token 语义，复制到端内只会让鉴权口径漂移，故留在公共层。
 
 import (
-	"kefu-server/internal/common/auth"
 	"kefu-server/internal/common/authctx"
 	"kefu-server/internal/common/dto"
+	"kefu-server/pkg/auth"
 	"kefu-server/pkg/cache"
 	"kefu-server/pkg/httpx"
 	"kefu-server/pkg/response"
@@ -35,24 +35,24 @@ func NewAuthHandler() *AuthHandler { return &AuthHandler{svc: service.NewAccount
 func (h *AuthHandler) LoginHandler(c *gin.Context) {
 	var req dto.LoginRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		response.Param(c, "请输入账号和密码")
+		response.Default().Param(c, "请输入账号和密码")
 		return
 	}
 	res, aerr := h.svc.Login(req)
 	if aerr != nil {
 		switch aerr.Status {
 		case "param":
-			response.Param(c, aerr.Msg)
+			response.Default().Param(c, aerr.Msg)
 		case "unauth":
-			response.Unauth(c, aerr.Msg)
+			response.Default().Unauth(c, aerr.Msg)
 		case "forbid":
-			response.Forbid(c, aerr.Msg)
+			response.Default().Forbid(c, aerr.Msg)
 		default:
-			response.Server(c, aerr.Msg)
+			response.Default().Server(c, aerr.Msg)
 		}
 		return
 	}
-	response.OK(c, res)
+	response.Default().OK(c, res)
 }
 
 // MeHandler 当前登录用户信息（前端刷新后恢复登录态用）。
@@ -63,10 +63,10 @@ func (h *AuthHandler) MeHandler(c *gin.Context) {
 	}
 	cur, err := h.svc.BuildCurrentUser(u)
 	if err != nil {
-		response.Server(c, err.Error())
+		response.Default().Server(c, err.Error())
 		return
 	}
-	response.OK(c, cur)
+	response.Default().OK(c, cur)
 }
 
 // LogoutHandler 退出登录：吊销 token 并置离线。
@@ -76,13 +76,13 @@ func (h *AuthHandler) LogoutHandler(c *gin.Context) {
 		token = token[7:]
 	}
 	if token != "" {
-		auth.RevokeToken(token)
+		auth.Default().RevokeToken(token)
 	}
 	if u := authctx.CurrentUser(c); u != nil {
 		_ = h.svc.SetOnline(u.TenantID, u.ID, false)
-		cache.Get().Del(cache.OnlineKey(u.TenantID, u.ID))
+		cache.Default().Get().Del(cache.Default().OnlineKey(u.TenantID, u.ID))
 	}
-	response.OK(c, true)
+	response.Default().OK(c, true)
 }
 
 // ---------------- 个人资料 ----------------
@@ -103,13 +103,13 @@ type ChangePasswordRequest struct {
 func authFail(c *gin.Context, e *service.AuthError) {
 	switch e.Status {
 	case "param":
-		response.Param(c, e.Msg)
+		response.Default().Param(c, e.Msg)
 	case "unauth":
-		response.Unauth(c, e.Msg)
+		response.Default().Unauth(c, e.Msg)
 	case "forbid":
-		response.Forbid(c, e.Msg)
+		response.Default().Forbid(c, e.Msg)
 	default:
-		response.Server(c, e.Msg)
+		response.Default().Server(c, e.Msg)
 	}
 }
 
@@ -117,11 +117,11 @@ func authFail(c *gin.Context, e *service.AuthError) {
 func (h *AuthHandler) UpdateProfileHandler(c *gin.Context) {
 	u := authctx.CurrentUser(c)
 	if u == nil {
-		response.Unauth(c, "未登录")
+		response.Default().Unauth(c, "未登录")
 		return
 	}
 	var req UpdateProfileRequest
-	if !httpx.BindJSON(c, &req) {
+	if !httpx.Default().BindJSON(c, &req) {
 		return
 	}
 	fresh, aerr := h.svc.UpdateProfile(u.TenantID, u.ID, req.Name, req.Avatar)
@@ -129,7 +129,7 @@ func (h *AuthHandler) UpdateProfileHandler(c *gin.Context) {
 		authFail(c, aerr)
 		return
 	}
-	response.OK(c, map[string]interface{}{
+	response.Default().OK(c, map[string]interface{}{
 		"id":      fresh.ID,
 		"name":    fresh.Name,
 		"avatar":  fresh.Avatar,
@@ -142,16 +142,16 @@ func (h *AuthHandler) UpdateProfileHandler(c *gin.Context) {
 func (h *AuthHandler) ChangePasswordHandler(c *gin.Context) {
 	u := authctx.CurrentUser(c)
 	if u == nil {
-		response.Unauth(c, "未登录")
+		response.Default().Unauth(c, "未登录")
 		return
 	}
 	var req ChangePasswordRequest
-	if !httpx.BindJSON(c, &req) {
+	if !httpx.Default().BindJSON(c, &req) {
 		return
 	}
 	if aerr := h.svc.ChangePassword(u.TenantID, u.ID, req.OldPassword, req.NewPassword); aerr != nil {
 		authFail(c, aerr)
 		return
 	}
-	response.OK(c, true)
+	response.Default().OK(c, true)
 }

@@ -30,7 +30,7 @@ func Notify(tenantID, userID uint, typ, title, body string, convID uint) {
 			"title":           n.Title,
 			"body":            n.Body,
 			"conversation_id": n.ConversationID,
-			"created_at":      util.FmtTime(n.CreatedAt),
+			"created_at":      util.Default().FmtTime(n.CreatedAt),
 		},
 	})
 

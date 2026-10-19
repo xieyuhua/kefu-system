@@ -5,7 +5,7 @@ package route_test
 // 说明（不改生产代码的前提下能测到什么）：
 //   - /health 不碰数据库，可以完整断言；
 //   - /api/* 由 middleware.JWTAuth 拦截，缺 token / 坏 token 都在进入业务 handler 之前返回，
-//     因此不需要数据库连接（storage.DB() 为 nil 也不会被触发）；
+//     因此不需要数据库连接（storage.Default().DB() 为 nil 也不会被触发）；
 //   - 需要数据库的业务接口（登录、会话列表等）不在本文件的覆盖范围，它们的测试属于集成测试，
 //     需要先注入 storage.SetDB，属于后续工作。
 //
@@ -20,10 +20,10 @@ import (
 	"testing"
 	"time"
 
-	"kefu-server/internal/common/auth"
 	"kefu-server/internal/common/config"
 	"kefu-server/internal/common/middleware"
 	"kefu-server/internal/route"
+	"kefu-server/pkg/auth"
 
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
@@ -45,6 +45,8 @@ func newTestEngine(t *testing.T) *gin.Engine {
 	if config.C.JWT.Expire <= 0 {
 		config.C.JWT.Expire = 1
 	}
+	// 鉴权 SDK 不认识 config 包：生产由 main 注入，测试在这里注入同一份配置。
+	auth.Default().Configure(config.C.JWT.Secret, time.Duration(config.C.JWT.Expire)*time.Hour)
 
 	t.Cleanup(func() {
 		config.C.Server.Mode = oldMode
@@ -219,12 +221,14 @@ func TestJWTAuthorizedPasses(t *testing.T) {
 	oldExpire := config.C.JWT.Expire
 	config.C.JWT.Secret = "unit-test-secret"
 	config.C.JWT.Expire = 1
+	// 同 newTestEngine：JWT 密钥与有效期由调用方注入 pkg/auth。
+	auth.Default().Configure(config.C.JWT.Secret, time.Duration(config.C.JWT.Expire)*time.Hour)
 	t.Cleanup(func() {
 		config.C.JWT.Secret = oldSecret
 		config.C.JWT.Expire = oldExpire
 	})
 
-	token, err := auth.GenerateToken(42, 7, "agent", "agent01")
+	token, err := auth.Default().GenerateToken(42, 7, "agent", "agent01")
 	if err != nil {
 		t.Fatalf("GenerateToken 失败: %v", err)
 	}
