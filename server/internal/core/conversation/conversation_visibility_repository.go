@@ -1,0 +1,108 @@
+// 「谁能看到哪些会话」属于数据访问规则的一部分：列表、统计、批量归档必须共用同一套条件，
+// 否则会出现「列表看不到、统计却算进去」的口径漂移。所以可见范围统一收敛在
+// applyVisibility 里，service 只负责把角色信息（userID / isAdmin / scope）传进来。
+
+package conversation
+
+import (
+	"database/sql"
+	"strings"
+
+	"kefu-server/internal/platform/model"
+	"kefu-server/pkg/storage"
+
+	"gorm.io/gorm"
+)
+
+// applyVisibility 施加角色可见范围条件：
+//   - scope=mine：只看自己接待的
+//   - 管理员：全量可见，不做额外过滤
+//   - 普通客服：自己接待的 + 自己可接待渠道下尚未被领取的（agent_id = 0）；
+//     已被同渠道其他客服领取的会话对其隐藏（实现互斥接待）
+//
+// 已归档过滤不在这里做（列表用 IncludeArchived 控制，统计恒为 false），由调用方自行施加。
+func (r *Repository) applyVisibility(q *gorm.DB, userID uint, isAdmin bool, scope string) *gorm.DB {
+	if scope == "mine" {
+		return q.Where("agent_id = ?", userID)
+	}
+	if isAdmin {
+		return q
+	}
+	var chIDs []uint
+	// 渠道集合查询失败按「无渠道」处理，退回只看自己的会话（与原逻辑一致）
+	storage.DB().Model(&model.AgentChannel{}).Where("user_id = ?", userID).Pluck("channel_id", &chIDs)
+	if len(chIDs) > 0 {
+		// 自己接待的，或（未接待 且 在自己渠道内）——别人已领取的自然被排除
+		return q.Where("agent_id = ? OR (agent_id = 0 AND channel_id IN ?)", userID, chIDs)
+	}
+	return q.Where("agent_id = ?", userID)
+}
+
+// QueryConversations 分页列出会话（按最近消息时间倒序），同时返回满足条件的总数。
+// 可见范围见 applyVisibility；默认不返回已归档会话。
+func (r *Repository) QueryConversations(tenantID, userID uint, isAdmin bool, f ConversationFilter) ([]*model.Conversation, int64, error) {
+	q := storage.DB().Model(&model.Conversation{}).Where("tenant_id = ?", tenantID)
+	// 默认不展示已归档会话；IncludeArchived 时一并返回（历史档案 / 统计用）
+	if !f.IncludeArchived {
+		q = q.Where("archived = ?", false)
+	}
+	if f.ChannelID > 0 {
+		q = q.Where("channel_id = ?", f.ChannelID)
+	}
+	if f.Status != "" && f.Status != "all" {
+		q = q.Where("status = ?", f.Status)
+	}
+	q = r.applyVisibility(q, userID, isAdmin, f.Scope)
+	if f.Keyword != "" {
+		like := "%" + strings.TrimSpace(f.Keyword) + "%"
+		q = q.Where(
+			"last_message LIKE ? OR customer_id IN (SELECT id FROM customers WHERE nickname LIKE ?)",
+			like, like)
+	}
+
+	var total int64
+	if err := q.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+	offset, limit := storage.Paginate(f.Page, f.PageSize)
+	var list []*model.Conversation
+	if err := q.Order("last_message_at desc").Offset(offset).Limit(limit).Find(&list).Error; err != nil {
+		return nil, 0, err
+	}
+	return list, total, nil
+}
+
+// CountVisibleConversations 统计当前角色可见、且未归档的会话数；status 为空表示不限状态。
+// 口径必须与 QueryConversations 保持一致（同一套可见范围 + 默认排除已归档），
+// 否则会出现「侧边栏显示未接待 1，点进去却是空的」。
+func (r *Repository) CountVisibleConversations(tenantID, userID uint, isAdmin bool, status string) (int64, error) {
+	q := storage.DB().Model(&model.Conversation{}).
+		Where("tenant_id = ?", tenantID).
+		Where("archived = ?", false)
+	q = r.applyVisibility(q, userID, isAdmin, "")
+	if status != "" {
+		q = q.Where("status = ?", status)
+	}
+	var n int64
+	if err := q.Count(&n).Error; err != nil {
+		return 0, err
+	}
+	return n, nil
+}
+
+// SumVisibleConversationUnread 把当前角色可见、未归档会话的 unread 求和。
+// 会话 unread 字段 = 该会话未读消息条数，因此这个和就是「未读消息总数」。
+func (r *Repository) SumVisibleConversationUnread(tenantID, userID uint, isAdmin bool) (int64, error) {
+	q := storage.DB().Model(&model.Conversation{}).
+		Where("tenant_id = ?", tenantID).
+		Where("archived = ?", false)
+	q = r.applyVisibility(q, userID, isAdmin, "")
+	var total sql.NullInt64
+	if err := q.Select("SUM(unread)").Row().Scan(&total); err != nil {
+		return 0, err
+	}
+	if !total.Valid {
+		return 0, nil
+	}
+	return total.Int64, nil
+}

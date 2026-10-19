@@ -1,5 +1,3 @@
-package account
-
 // 本文件是 core/account 的数据访问层。
 //
 // 说明：account 是全局唯一字段，因此「按账号查」与「账号查重」不带租户条件；
@@ -12,6 +10,8 @@ package account
 // 形态约定：所有数据访问都是 Repository 的方法（指针接收者）。
 // Repository 不持有 *gorm.DB 字段：本包的 init 会向 platform/authctx 注册鉴权回调，
 // 而连接是 main 启动后才注入 pkg/storage 的，因此每个方法现取 storage.DB()。
+
+package account
 
 import (
 	"kefu-server/internal/platform/model"
@@ -144,19 +144,6 @@ func (r *Repository) UpdateUserProfile(id uint, name, avatar string) error {
 	return storage.DB().Model(&model.User{}).Where("id = ?", id).Updates(updates).Error
 }
 
-// CountOpenConversations 统计某客服名下处于 open 状态的会话数（并发接待上限校验）。
-// 只统计租户内的会话，防止跨租户串号。
-func (r *Repository) CountOpenConversations(tenantID, agentID uint) (int64, error) {
-	var cnt int64
-	err := storage.DB().Model(&model.Conversation{}).
-		Where("tenant_id = ? AND agent_id = ? AND status = ?", tenantID, agentID, "open").
-		Count(&cnt).Error
-	if err != nil {
-		return 0, err
-	}
-	return cnt, nil
-}
-
 // DeleteAgentChannelsByUser 清空某账号的全部渠道分配（按账号批量设置渠道时先删后建）。
 // 与 DeleteAgentChannels（按渠道维度清空）方向相反，互不替代。
 func (r *Repository) DeleteAgentChannelsByUser(userID uint) error {
@@ -193,33 +180,4 @@ func (r *Repository) FindUserBriefByID(userID uint) (*model.User, error) {
 		return nil, err
 	}
 	return &u, nil
-}
-
-// ---------------- 租户（Tenant） ----------------
-
-// FindTenantByID 按主键取租户（登录/个人资料里拼租户名与 Logo）。
-func (r *Repository) FindTenantByID(id uint) (*model.Tenant, error) {
-	var t model.Tenant
-	if err := storage.DB().First(&t, id).Error; err != nil {
-		return nil, err
-	}
-	return &t, nil
-}
-
-// ---------------- 跨表只读：客服可见渠道 ----------------
-
-// listChannelsByTenant 列出租户的渠道（按 id 升序），只读 channels 表、不写。
-// isAdmin 为 false 时只返回该客服已被分配的渠道（agent_channels 关联）。
-// 之所以留在 account 模块：账号列表与登录响应都要回显这份数据，
-// 而 account 只允许依赖 platform，不能 import channel 模块。
-func (r *Repository) listChannelsByTenant(tenantID, agentID uint, isAdmin bool) ([]*model.Channel, error) {
-	var list []*model.Channel
-	q := storage.DB().Where("tenant_id = ?", tenantID)
-	if !isAdmin {
-		q = q.Where("id IN (SELECT channel_id FROM agent_channels WHERE user_id = ?)", agentID)
-	}
-	if err := q.Order("id asc").Find(&list).Error; err != nil {
-		return nil, err
-	}
-	return list, nil
 }
