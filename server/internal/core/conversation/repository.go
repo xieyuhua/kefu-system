@@ -425,3 +425,40 @@ func reverseMessages(list []*model.Message) {
 		list[i], list[j] = list[j], list[i]
 	}
 }
+
+// ---------------- 端侧离线同步（可见会话范围 / 批量消息） ----------------
+//
+// 这两条只读查询原在 modules/agent 的 repository 里，但读的是 conversations / messages 表，
+// 属于会话域；端与端之间不允许互相 import，故归位到本内核（SQL 与签名逐字不变）。
+
+// ListVisibleConversationIDs 列出客服可见范围内的会话 ID：
+// 自己接待的 + 自己渠道下尚未分配的（与原离线同步口径一致）。
+func (r *Repository) ListVisibleConversationIDs(tenantID, userID uint) ([]uint, error) {
+	var chIDs []uint
+	if err := storage.DB().Model(&model.AgentChannel{}).Where("user_id = ?", userID).
+		Pluck("channel_id", &chIDs).Error; err != nil {
+		return nil, err
+	}
+	var convIDs []uint
+	q := storage.DB().Model(&model.Conversation{}).Where("tenant_id = ?", tenantID)
+	if len(chIDs) > 0 {
+		q = q.Where("agent_id = ? OR (agent_id = 0 AND channel_id IN ?)", userID, chIDs)
+	} else {
+		q = q.Where("agent_id = ?", userID)
+	}
+	if err := q.Pluck("id", &convIDs).Error; err != nil {
+		return nil, err
+	}
+	return convIDs, nil
+}
+
+// ListMessagesOfConversations 取一批会话中 id > afterID 的消息，按 id 升序，最多 limit 条。
+// 调用方按「多取一条」判断是否还有更多（has_more）。
+func (r *Repository) ListMessagesOfConversations(tenantID uint, convIDs []uint, afterID uint, limit int) ([]*model.Message, error) {
+	var list []*model.Message
+	if err := storage.DB().Where("tenant_id = ? AND conversation_id IN ? AND id > ?", tenantID, convIDs, afterID).
+		Order("id asc").Limit(limit).Find(&list).Error; err != nil {
+		return nil, err
+	}
+	return list, nil
+}

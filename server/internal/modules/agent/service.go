@@ -1,13 +1,13 @@
 package agent
 
-// 本文件是客服端（modules/agent）的端内编排：设备推送注册、离线消息 / 提醒补拉、演示面板。
+// 本文件是客服端（modules/agent）的端内编排：离线消息补拉、演示面板。
 // 会话与消息的读写、客户与会话的定位、自动回复判定都在 core/*，这里只做「客服端专属」的组合。
 //
 // 依赖方向：modules/agent → core/* → platform → pkg。
 //
-// 数据访问说明：devices / notifications 两张表只服务客服端的「重连补拉 + 推送 token」，
-// 没有第二个端使用，因此读写就近放在本端 repository.go（端内分 handler / service / repository 三层）；
-// 跨表只读口径（可见会话范围）同样在那里，与 core/conversation 的可见范围判定保持一致。
+// 数据访问说明：设备与站内提醒已下沉到 core/notify（后台端推送自检也要用），
+// 本端不再持有 repository.go；会话 / 消息的只读查询统一走 core/conversation 的 Service 门面，
+// 因此本端没有自己的数据访问层。
 //
 // 形态约定：端内编排都是 Service 的方法（指针接收者），跨内核依赖在构造时建好；
 // 只有无状态的纯工具（randomNickname / randomPhone）保留为包级函数。
@@ -26,22 +26,19 @@ import (
 	"kefu-server/internal/platform/dto"
 	"kefu-server/internal/platform/model"
 	"kefu-server/internal/platform/realtime"
-	"kefu-server/pkg/util"
 )
 
-// Service 客服端的端内编排层，持有本端仓储与四个跨内核依赖。
+// Service 客服端的端内编排层，持有四个跨内核依赖（设备 / 提醒由 handler 直接走 core/notify）。
 type Service struct {
-	repo *Repository
 	conv *conversation.Service
 	cust *customer.Service
 	ch   *channel.Service
 	auto *automation.Service
 }
 
-// NewService 创建端内业务层实例（自带数据访问层与跨内核依赖）。
+// NewService 创建端内业务层实例（自带各内核依赖）。
 func NewService() *Service {
 	return &Service{
-		repo: NewRepository(),
 		conv: conversation.NewService(),
 		cust: customer.NewService(),
 		ch:   channel.NewService(),
@@ -49,49 +46,7 @@ func NewService() *Service {
 	}
 }
 
-// ---------------- Device（APP / PC 桌面端） ----------------
-
-func (s *Service) RegisterDevice(tenantID, userID uint, req dto.DeviceRequest) (*dto.DeviceVO, error) {
-	if req.Device == "" {
-		req.Device = "app"
-	}
-	d := &model.Device{
-		TenantID:  tenantID,
-		UserID:    userID,
-		Device:    req.Device,
-		Platform:  req.Platform,
-		PushToken: req.PushToken,
-		Name:      req.Name,
-	}
-	if err := s.repo.CreateDevice(d); err != nil {
-		return nil, err
-	}
-	return &dto.DeviceVO{
-		ID: d.ID, Device: d.Device, Platform: d.Platform,
-		Name: d.Name, PushToken: d.PushToken, CreatedAt: util.FmtTime(d.CreatedAt),
-	}, nil
-}
-
-func (s *Service) ListDevices(tenantID, userID uint) ([]dto.DeviceVO, error) {
-	list, err := s.repo.ListDevicesOfUser(tenantID, userID)
-	if err != nil {
-		return nil, err
-	}
-	out := make([]dto.DeviceVO, 0, len(list))
-	for _, d := range list {
-		out = append(out, dto.DeviceVO{
-			ID: d.ID, Device: d.Device, Platform: d.Platform,
-			Name: d.Name, PushToken: d.PushToken, CreatedAt: util.FmtTime(d.CreatedAt),
-		})
-	}
-	return out, nil
-}
-
-func (s *Service) DeleteDevice(tenantID, userID, id uint) error {
-	return s.repo.DeleteDeviceOfUser(tenantID, userID, id)
-}
-
-// ---------------- 离线消息 / 离线提醒 ----------------
+// ---------------- 离线消息 ----------------
 
 // OfflineMessages 供 APP / PC 桌面端断线重连后增量同步。sinceID 为端侧已收到的最大消息 ID。
 func (s *Service) OfflineMessages(tenantID, userID uint, sinceID uint, limit int) ([]dto.MessageVO, uint, bool, error) {
@@ -99,7 +54,7 @@ func (s *Service) OfflineMessages(tenantID, userID uint, sinceID uint, limit int
 		limit = 200
 	}
 	// 只同步该客服可见范围内的会话消息：自己接待的 + 自己渠道下未分配的
-	convIDs, err := s.repo.ListVisibleConversationIDs(tenantID, userID)
+	convIDs, err := s.conv.ListVisibleConversationIDs(tenantID, userID)
 	if err != nil {
 		return nil, sinceID, false, err
 	}
@@ -107,7 +62,7 @@ func (s *Service) OfflineMessages(tenantID, userID uint, sinceID uint, limit int
 		return []dto.MessageVO{}, sinceID, false, nil
 	}
 	// 多取一条用于判断是否还有更多
-	list, err := s.repo.ListMessagesOfConversations(tenantID, convIDs, sinceID, limit+1)
+	list, err := s.conv.ListMessagesOfConversations(tenantID, convIDs, sinceID, limit+1)
 	if err != nil {
 		return nil, sinceID, false, err
 	}
@@ -124,29 +79,6 @@ func (s *Service) OfflineMessages(tenantID, userID uint, sinceID uint, limit int
 		}
 	}
 	return out, latest, hasMore, nil
-}
-
-func (s *Service) OfflineNotifications(tenantID, userID uint, sinceID uint) ([]dto.NotificationVO, uint, error) {
-	list, err := s.repo.ListNotificationsAfter(tenantID, userID, sinceID, 200)
-	if err != nil {
-		return nil, sinceID, err
-	}
-	out := make([]dto.NotificationVO, 0, len(list))
-	latest := sinceID
-	for _, n := range list {
-		out = append(out, dto.NotificationVO{
-			ID: n.ID, Type: n.Type, Title: n.Title, Body: n.Body,
-			ConversationID: n.ConversationID, Read: n.Read, CreatedAt: util.FmtTime(n.CreatedAt),
-		})
-		if n.ID > latest {
-			latest = n.ID
-		}
-	}
-	return out, latest, nil
-}
-
-func (s *Service) MarkNotificationsRead(tenantID, userID uint, ids []uint) error {
-	return s.repo.SetNotificationsRead(tenantID, userID, ids)
 }
 
 // ---------------- 演示入口 ----------------

@@ -8,14 +8,16 @@ package agent
 // 依赖方向：modules/agent → core/* → platform → pkg。
 // 本包不 import modules/client、modules/admin，也不被 core/* import。
 //
-// 会话/消息、客户资料、渠道准入这些可复用能力全在 core/*，端内只保留
-// 「客服端专属的编排」（见 service.go：设备推送注册、离线补拉、演示入口）。
+// 会话/消息、客户资料、渠道准入、设备与站内提醒这些可复用能力全在 core/*，
+// 端内只保留「客服端专属的编排」（见 service.go：离线消息补拉、演示入口）；
+// 设备 / 离线提醒的端点直接调 core/notify 的 service，不在本端 service 里转调。
 
 import (
 	"net/http"
 	"strings"
 
 	"kefu-server/internal/core/conversation"
+	"kefu-server/internal/core/notify"
 	"kefu-server/internal/platform/auth"
 	"kefu-server/internal/platform/authctx"
 	"kefu-server/internal/platform/dto"
@@ -26,13 +28,17 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// Handler 客服端的 HTTP 层，持有本端 service（service 内已建好各内核依赖）。
+// Handler 客服端的 HTTP 层，持有本端 service（service 内已建好各内核依赖）
+// 与 core/notify 的 service（设备注册 / 离线提醒不再经本端中转）。
 type Handler struct {
-	svc *Service
+	svc    *Service
+	notify *notify.Service
 }
 
 // NewHandler 创建 HTTP 层实例（自带 service 依赖）。
-func NewHandler() *Handler { return &Handler{svc: NewService()} }
+func NewHandler() *Handler {
+	return &Handler{svc: NewService(), notify: notify.NewService()}
+}
 
 // ---------------- 会话 ----------------
 
@@ -282,7 +288,7 @@ func (h *Handler) RegisterDeviceHandler(c *gin.Context) {
 	if !httpx.BindJSON(c, &req) {
 		return
 	}
-	vo, err := h.svc.RegisterDevice(authctx.TenantID(c), authctx.UserID(c), req)
+	vo, err := h.notify.RegisterDevice(authctx.TenantID(c), authctx.UserID(c), req)
 	if err != nil {
 		response.Server(c, err.Error())
 		return
@@ -291,7 +297,7 @@ func (h *Handler) RegisterDeviceHandler(c *gin.Context) {
 }
 
 func (h *Handler) ListDevicesHandler(c *gin.Context) {
-	list, err := h.svc.ListDevices(authctx.TenantID(c), authctx.UserID(c))
+	list, err := h.notify.ListDevices(authctx.TenantID(c), authctx.UserID(c))
 	if err != nil {
 		response.Server(c, err.Error())
 		return
@@ -300,7 +306,7 @@ func (h *Handler) ListDevicesHandler(c *gin.Context) {
 }
 
 func (h *Handler) DeleteDeviceHandler(c *gin.Context) {
-	if err := h.svc.DeleteDevice(authctx.TenantID(c), authctx.UserID(c), httpx.UintParam(c, "id")); err != nil {
+	if err := h.notify.DeleteDevice(authctx.TenantID(c), authctx.UserID(c), httpx.UintParam(c, "id")); err != nil {
 		response.Server(c, err.Error())
 		return
 	}
@@ -323,7 +329,7 @@ func (h *Handler) OfflineMessagesHandler(c *gin.Context) {
 }
 
 func (h *Handler) OfflineNotificationsHandler(c *gin.Context) {
-	list, latest, err := h.svc.OfflineNotifications(authctx.TenantID(c), authctx.UserID(c), httpx.QueryUint(c, "since_id"))
+	list, latest, err := h.notify.OfflineNotifications(authctx.TenantID(c), authctx.UserID(c), httpx.QueryUint(c, "since_id"))
 	if err != nil {
 		response.Server(c, err.Error())
 		return
@@ -339,7 +345,7 @@ func (h *Handler) ReadNotificationsHandler(c *gin.Context) {
 		IDs []uint `json:"ids"`
 	}
 	_ = c.ShouldBindJSON(&req)
-	if err := h.svc.MarkNotificationsRead(authctx.TenantID(c), authctx.UserID(c), req.IDs); err != nil {
+	if err := h.notify.MarkNotificationsRead(authctx.TenantID(c), authctx.UserID(c), req.IDs); err != nil {
 		response.Server(c, err.Error())
 		return
 	}

@@ -14,7 +14,7 @@
 //     消息落库与会话摘要必须保持原有先后顺序，因此就近调用对方 service 门面。
 //
 // 形态约定：业务编排都是 Service 的方法（指针接收者），跨内核依赖在构造时建好；
-// 只有无状态的纯函数（messagePreview / IsCustomerOnline / orDefault）保留为包级函数。
+// 只有无状态的纯函数（messagePreview / IsCustomerOnline）保留为包级函数。
 package conversation
 
 import (
@@ -846,13 +846,6 @@ func (s *Service) agentName(id uint) string {
 	return "客服"
 }
 
-func orDefault(s, d string) string {
-	if strings.TrimSpace(s) == "" {
-		return d
-	}
-	return s
-}
-
 // ---------------- 供其它内核复用的通知辅助 ----------------
 
 // NotifyChannelAgents 通知该渠道下所有在线客服（转人工场景）。
@@ -900,4 +893,14 @@ func (s *Service) FindLatestConversationByCustomer(tenantID, customerID uint) (*
 // CreateConversation 新增会话（跨包写入门面，供演示入口新建会话）。
 func (s *Service) CreateConversation(c *model.Conversation) error {
 	return s.repo.CreateConversation(c)
+}
+
+// ListVisibleConversationIDs 列出客服可见范围内的会话 ID（跨包只读门面，供端侧离线同步）。
+func (s *Service) ListVisibleConversationIDs(tenantID, userID uint) ([]uint, error) {
+	return s.repo.ListVisibleConversationIDs(tenantID, userID)
+}
+
+// ListMessagesOfConversations 取一批会话中 id > afterID 的消息（跨包只读门面，供端侧离线同步）。
+func (s *Service) ListMessagesOfConversations(tenantID uint, convIDs []uint, afterID uint, limit int) ([]*model.Message, error) {
+	return s.repo.ListMessagesOfConversations(tenantID, convIDs, afterID, limit)
 }
