@@ -18,7 +18,7 @@ import (
 
 // AccessURL 生成渠道的完整用户端接入地址。
 // publicBase 为空时用配置的 public_base；两者都为空则回退成相对路径 /kefu/?channel=xxx。
-func AccessURL(c model.Channel, publicBase string) string {
+func AccessURL(c *model.Channel, publicBase string) string {
 	if publicBase == "" {
 		publicBase = config.C.Server.PublicBase
 	}
@@ -35,7 +35,7 @@ func AccessURLByAppID(tenantID, channelID uint, publicBase string) string {
 	if err != nil {
 		return ""
 	}
-	return AccessURL(*c, publicBase)
+	return AccessURL(c, publicBase)
 }
 
 // ChannelQR 生成渠道接入二维码（PNG bytes / base64）。
@@ -51,7 +51,7 @@ func ChannelQR(tenantID, channelID uint, publicBase string, size int) (*ChannelQ
 	if size > 1024 {
 		size = 1024
 	}
-	target := AccessURL(*c, publicBase)
+	target := AccessURL(c, publicBase)
 	png, err := qrcode.Encode(target, qrcode.Medium, size)
 	if err != nil {
 		return nil, err
@@ -61,7 +61,7 @@ func ChannelQR(tenantID, channelID uint, publicBase string, size int) (*ChannelQ
 		ChannelName: c.Name,
 		ChannelType: c.Type,
 		URL:         target,
-		Path:        AccessPath(*c),
+		Path:        AccessPath(c),
 		PNG:         png,
 		Base64:      "data:image/png;base64," + base64.StdEncoding.EncodeToString(png),
 		Size:        size,

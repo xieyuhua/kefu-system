@@ -16,8 +16,8 @@ func FindSettingByKey(tenantID uint, key string) (*model.Setting, error) {
 }
 
 // ListSettingsByTenant 列出租户已保存的全部配置项（保持原有不排序的取数方式）。
-func ListSettingsByTenant(tenantID uint) ([]model.Setting, error) {
-	var list []model.Setting
+func ListSettingsByTenant(tenantID uint) ([]*model.Setting, error) {
+	var list []*model.Setting
 	if err := db.Where("tenant_id = ?", tenantID).Find(&list).Error; err != nil {
 		return nil, err
 	}

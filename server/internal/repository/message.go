@@ -63,12 +63,12 @@ func MarkMessagesRead(tenantID, convID uint) error {
 // ListMessagesBefore 向前翻页：取 id < beforeID 的最近 limit 条，返回按 id 升序。
 // beforeID = 0 表示无游标（客户端首次进入会话），直接取最新 limit 条。
 // 内部先按 id desc 取最近若干条再整体反转，保证拿到的是紧邻的上一页。
-func ListMessagesBefore(tenantID, convID, beforeID uint, limit int) ([]model.Message, error) {
+func ListMessagesBefore(tenantID, convID, beforeID uint, limit int) ([]*model.Message, error) {
 	q := db.Where("tenant_id = ? AND conversation_id = ?", tenantID, convID)
 	if beforeID > 0 {
 		q = q.Where("id < ?", beforeID)
 	}
-	var list []model.Message
+	var list []*model.Message
 	if err := q.Order("id desc").Limit(limit).Find(&list).Error; err != nil {
 		return nil, err
 	}
@@ -78,8 +78,8 @@ func ListMessagesBefore(tenantID, convID, beforeID uint, limit int) ([]model.Mes
 
 // ListMessagesAfter 正向增量拉取：取 id > sinceID 的消息，按 id 升序。
 // 供用户端 / APP 离线同步补拉，与 ListMessagesBefore 的翻页方向相反。
-func ListMessagesAfter(tenantID, convID, sinceID uint, limit int) ([]model.Message, error) {
-	var list []model.Message
+func ListMessagesAfter(tenantID, convID, sinceID uint, limit int) ([]*model.Message, error) {
+	var list []*model.Message
 	if err := db.Where("tenant_id = ? AND conversation_id = ? AND id > ?", tenantID, convID, sinceID).
 		Order("id asc").Limit(limit).Find(&list).Error; err != nil {
 		return nil, err
@@ -110,8 +110,8 @@ func FindFirstUserMessage(convID uint) (*model.Message, error) {
 
 // SearchMessagesByContent 在会话内按内容关键词搜索：先按 id 倒序取最近 limit 条，再反转为升序，
 // 与消息流顺序保持一致。
-func SearchMessagesByContent(tenantID, convID uint, keyword string, limit int) ([]model.Message, error) {
-	var list []model.Message
+func SearchMessagesByContent(tenantID, convID uint, keyword string, limit int) ([]*model.Message, error) {
+	var list []*model.Message
 	if err := db.Where("tenant_id = ? AND conversation_id = ? AND content LIKE ?",
 		tenantID, convID, "%"+keyword+"%").
 		Order("id desc").Limit(limit).Find(&list).Error; err != nil {
@@ -122,7 +122,7 @@ func SearchMessagesByContent(tenantID, convID uint, keyword string, limit int) (
 }
 
 // reverseMessages 原地反转为 id 升序（列表均为 id desc 取出后使用）。
-func reverseMessages(list []model.Message) {
+func reverseMessages(list []*model.Message) {
 	for i, j := 0, len(list)-1; i < j; i, j = i+1, j-1 {
 		list[i], list[j] = list[j], list[i]
 	}

@@ -19,7 +19,7 @@ type Provider interface {
 	// Name 通道名，用于日志
 	Name() string
 	// Push 向单个设备下发一条提醒
-	Push(d model.Device, n model.Notification) error
+	Push(d *model.Device, n model.Notification) error
 }
 
 // PushGateway 推送网关：按设备平台路由到对应厂商通道

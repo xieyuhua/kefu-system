@@ -35,13 +35,13 @@ func ResolveGuestChannel(tenantID uint, key string) (*model.Channel, error) {
 	// ① app_id 精确匹配
 	for i := range list {
 		if list[i].AppID != "" && list[i].AppID == key {
-			return &list[i], nil
+			return list[i], nil
 		}
 	}
 	// ② 兼容：类型或数字 ID
 	for i := range list {
 		if list[i].Type == key || strconv.FormatUint(uint64(list[i].ID), 10) == key {
-			return &list[i], nil
+			return list[i], nil
 		}
 	}
 	return nil, ErrChannelNotFound
@@ -100,7 +100,7 @@ func LookupOrderCard(tenantID uint, orderNo string) map[string]interface{} {
 		return nil
 	}
 	var card map[string]interface{}
-	_ = json.Unmarshal([]byte(BuildOrderCard(*o)), &card)
+	_ = json.Unmarshal([]byte(BuildOrderCard(o)), &card)
 	return card
 }
 
@@ -111,7 +111,7 @@ func LookupProductCard(tenantID uint, pid string) map[string]interface{} {
 		return nil
 	}
 	var card map[string]interface{}
-	_ = json.Unmarshal([]byte(BuildProductCard(*p)), &card)
+	_ = json.Unmarshal([]byte(BuildProductCard(p)), &card)
 	return card
 }
 

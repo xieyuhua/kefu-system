@@ -145,7 +145,7 @@ func broadcastConversation(tenantID, convID uint) {
 	if err != nil {
 		return
 	}
-	vo := buildConversationVO(*c)
+	vo := buildConversationVO(c)
 	HubInstance().Publish(tenantID, nil, Event{Event: "conversation.updated", Data: vo})
 	HubInstance().PublishToGuest(tenantID, convID, Event{Event: "conversation.updated", Data: vo})
 }
@@ -191,7 +191,7 @@ func randomPhone() string {
 }
 
 // BuildOrderCard 把订单转成聊天卡片 JSON（供前端发送订单卡片）
-func BuildOrderCard(o model.Order) string {
+func BuildOrderCard(o *model.Order) string {
 	card := map[string]interface{}{
 		"order_no":   o.OrderNo,
 		"title":      o.Title,
@@ -207,7 +207,7 @@ func BuildOrderCard(o model.Order) string {
 }
 
 // BuildProductCard 商品卡片 JSON
-func BuildProductCard(p model.Product) string {
+func BuildProductCard(p *model.Product) string {
 	card := map[string]interface{}{
 		"id":    p.PID,
 		"title": p.Title,

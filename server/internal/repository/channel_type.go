@@ -25,8 +25,8 @@ func FindChannelTypeByID(tenantID, id uint) (*model.ChannelType, error) {
 }
 
 // ListChannelTypesByTenant 列出租户的渠道类型库（先按 sort 再按 id 升序）。
-func ListChannelTypesByTenant(tenantID uint) ([]model.ChannelType, error) {
-	var list []model.ChannelType
+func ListChannelTypesByTenant(tenantID uint) ([]*model.ChannelType, error) {
+	var list []*model.ChannelType
 	if err := db.Where("tenant_id = ?", tenantID).
 		Order("sort asc, id asc").Find(&list).Error; err != nil {
 		return nil, err

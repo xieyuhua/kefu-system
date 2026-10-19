@@ -167,7 +167,7 @@ func ReopenConversation(tenantID, convID uint) {
 const onlineWindow = 2 * time.Minute
 
 // IsCustomerOnline 按最近活跃时间推断客户是否在线
-func IsCustomerOnline(c model.Customer) bool {
+func IsCustomerOnline(c *model.Customer) bool {
 	if c.LastSeenAt == nil {
 		return false
 	}
@@ -177,7 +177,7 @@ func IsCustomerOnline(c model.Customer) bool {
 // ---------------- 消息搜索 ----------------
 
 // SearchMessages 在指定会话内按内容关键词搜索消息，返回升序结果
-func SearchMessages(tenantID, convID uint, keyword string, limit int) ([]model.Message, error) {
+func SearchMessages(tenantID, convID uint, keyword string, limit int) ([]*model.Message, error) {
 	kw := strings.TrimSpace(keyword)
 	if kw == "" {
 		return nil, errors.New("请输入搜索关键词")
@@ -283,7 +283,7 @@ func SearchConversations(tenantID uint, q ConversationRecordsQuery) ([]Conversat
 		}
 		// 首条消息（列表里预览对话开头）
 		if first, err := repository.FindFirstUserMessage(c.ID); err == nil {
-			rec.FirstMessage = messagePreview(*first)
+			rec.FirstMessage = messagePreview(first)
 			rec.FirstMessageAt = fmtTime(first.CreatedAt)
 		}
 		out = append(out, rec)

@@ -33,7 +33,7 @@ var (
 )
 
 // cityOrLookup 读取客户城市；库里为空但有 IP 时（历史数据）实时解析一次
-func cityOrLookup(cu model.Customer) string {
+func cityOrLookup(cu *model.Customer) string {
 	if cu.City != "" {
 		return cu.City
 	}

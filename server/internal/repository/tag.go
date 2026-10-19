@@ -9,8 +9,8 @@ import (
 // ---------------- 客户标签（Tag / CustomerTag）数据访问 ----------------
 
 // ListTagsByTenant 列出租户的标签库（先按 sort 再按 id 升序）。
-func ListTagsByTenant(tenantID uint) ([]model.Tag, error) {
-	var list []model.Tag
+func ListTagsByTenant(tenantID uint) ([]*model.Tag, error) {
+	var list []*model.Tag
 	if err := db.Where("tenant_id = ?", tenantID).Order("sort asc, id asc").Find(&list).Error; err != nil {
 		return nil, err
 	}
@@ -18,8 +18,8 @@ func ListTagsByTenant(tenantID uint) ([]model.Tag, error) {
 }
 
 // ListTagsByIDs 按主键批量取租户内的标签（按 sort 升序）。
-func ListTagsByIDs(tenantID uint, ids []uint) ([]model.Tag, error) {
-	var list []model.Tag
+func ListTagsByIDs(tenantID uint, ids []uint) ([]*model.Tag, error) {
+	var list []*model.Tag
 	if err := db.Where("tenant_id = ? AND id IN ?", tenantID, ids).Order("sort asc").Find(&list).Error; err != nil {
 		return nil, err
 	}
@@ -62,8 +62,8 @@ func DeleteTagWithUsages(tenantID, tagID uint) error {
 }
 
 // ListCustomerTags 列出某客户已打的标签关联。
-func ListCustomerTags(tenantID, customerID uint) ([]model.CustomerTag, error) {
-	var list []model.CustomerTag
+func ListCustomerTags(tenantID, customerID uint) ([]*model.CustomerTag, error) {
+	var list []*model.CustomerTag
 	if err := db.Where("tenant_id = ? AND customer_id = ?", tenantID, customerID).
 		Find(&list).Error; err != nil {
 		return nil, err

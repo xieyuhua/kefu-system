@@ -51,7 +51,7 @@ func GetSetting(tenantID uint, key string) string {
 
 // ListSettings 返回全部配置项（含默认值，便于后台渲染表单）
 func ListSettings(tenantID uint) ([]map[string]interface{}, error) {
-	rows := map[string]model.Setting{}
+	rows := map[string]*model.Setting{}
 	list, err := repository.ListSettingsByTenant(tenantID)
 	if err != nil {
 		return nil, err

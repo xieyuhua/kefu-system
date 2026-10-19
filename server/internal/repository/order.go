@@ -20,7 +20,7 @@ func FindOrderByNo(tenantID uint, orderNo string) (*model.Order, error) {
 
 // ListOrdersPaged 分页查询订单列表，按创建时间倒序。
 // customerID > 0 时只查该客户的订单；keyword 同时匹配订单号 / 标题。
-func ListOrdersPaged(tenantID, customerID uint, keyword string, page, pageSize int) ([]model.Order, int64, error) {
+func ListOrdersPaged(tenantID, customerID uint, keyword string, page, pageSize int) ([]*model.Order, int64, error) {
 	q := db.Model(&model.Order{}).Where("tenant_id = ?", tenantID)
 	if customerID > 0 {
 		q = q.Where("customer_id = ?", customerID)
@@ -33,7 +33,7 @@ func ListOrdersPaged(tenantID, customerID uint, keyword string, page, pageSize i
 	if err := q.Count(&total).Error; err != nil {
 		return nil, 0, err
 	}
-	var list []model.Order
+	var list []*model.Order
 	offset, limit := Paginate(page, pageSize)
 	if err := q.Order("created_at desc").Offset(offset).Limit(limit).Find(&list).Error; err != nil {
 		return nil, 0, err
@@ -52,8 +52,8 @@ func CountOrdersOfCustomer(customerID uint) (int64, error) {
 }
 
 // ListOrdersOfCustomer 取客户最近的若干条订单（历史档案），按创建时间倒序。
-func ListOrdersOfCustomer(customerID uint, limit int) ([]model.Order, error) {
-	var list []model.Order
+func ListOrdersOfCustomer(customerID uint, limit int) ([]*model.Order, error) {
+	var list []*model.Order
 	if err := db.Where("customer_id = ?", customerID).
 		Order("created_at desc").Limit(limit).Find(&list).Error; err != nil {
 		return nil, err

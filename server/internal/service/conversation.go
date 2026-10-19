@@ -56,11 +56,11 @@ func GetConversation(tenantID, id uint) (*dto.ConversationVO, error) {
 	if err != nil {
 		return nil, errors.New("会话不存在")
 	}
-	vo := buildConversationVO(*c)
+	vo := buildConversationVO(c)
 	return &vo, nil
 }
 
-func buildConversationVO(c model.Conversation) dto.ConversationVO {
+func buildConversationVO(c *model.Conversation) dto.ConversationVO {
 	vo := dto.ConversationVO{
 		ID: c.ID, ChannelID: c.ChannelID, Status: c.Status,
 		Unread: c.Unread, LastMessage: c.LastMessage,
@@ -80,9 +80,9 @@ func buildConversationVO(c model.Conversation) dto.ConversationVO {
 			Tags:   GetCustomerTags(c.TenantID, cu.ID),
 			Remark: cu.Remark,
 			IP:     cu.IP,
-			City:   cityOrLookup(*cu),
+			City:   cityOrLookup(cu),
 			// 客户在线状态：按最近活跃时间推断（2 分钟内活跃即在线）
-			Online:     IsCustomerOnline(*cu),
+			Online:     IsCustomerOnline(cu),
 			LastSeenAt: fmtTimePtr(cu.LastSeenAt),
 		}
 		vo.OrderCount = oc
@@ -169,7 +169,7 @@ func ClaimConversation(tenantID, id, agentID uint) (*dto.ConversationVO, error) 
 		return nil, err
 	}
 	addSystemMessage(tenantID, c.ID, agentName(agentID)+" 已接入会话")
-	vo := buildConversationVO(*c)
+	vo := buildConversationVO(c)
 	// 通知用户端：已有人工客服接入
 	if m := lastSystemMessage(tenantID, c.ID); m != nil {
 		HubInstance().PublishToGuest(tenantID, c.ID, Event{Event: "message.new", Data: *m})
@@ -184,7 +184,7 @@ func lastSystemMessage(tenantID, convID uint) *dto.MessageVO {
 	if err != nil {
 		return nil
 	}
-	vo := buildMessageVO(*m)
+	vo := buildMessageVO(m)
 	return &vo
 }
 
@@ -217,7 +217,7 @@ func TransferConversation(tenantID, id, fromAgentID, toAgentID uint) (*dto.Conve
 	}
 	addSystemMessage(tenantID, c.ID, fmt.Sprintf("会话已转接给 %s", target.Name))
 	Notify(tenantID, toAgentID, "conversation.transferred", "会话转接", "有一条会话被转接给你", c.ID)
-	vo := buildConversationVO(*c)
+	vo := buildConversationVO(c)
 	if m := lastSystemMessage(tenantID, c.ID); m != nil {
 		HubInstance().PublishToGuest(tenantID, c.ID, Event{Event: "message.new", Data: *m})
 	}
@@ -236,7 +236,7 @@ func CloseConversation(tenantID, id, agentID uint) (*dto.ConversationVO, error) 
 		return nil, err
 	}
 	addSystemMessage(tenantID, c.ID, "会话已结束，感谢您的咨询")
-	vo := buildConversationVO(*c)
+	vo := buildConversationVO(c)
 	if m := lastSystemMessage(tenantID, c.ID); m != nil {
 		HubInstance().PublishToGuest(tenantID, c.ID, Event{Event: "message.new", Data: *m})
 	}

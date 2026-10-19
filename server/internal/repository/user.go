@@ -34,8 +34,8 @@ func FindUserByID(tenantID, id uint) (*model.User, error) {
 
 // ListUsersByTenant 列出租户下全部后台账号（含 admin，按 id 升序）。
 // 注意与 ListTenantAgents 的区别：后者只返回 role = 'agent' 的子账号，供渠道分配使用。
-func ListUsersByTenant(tenantID uint) ([]model.User, error) {
-	var users []model.User
+func ListUsersByTenant(tenantID uint) ([]*model.User, error) {
+	var users []*model.User
 	if err := db.Where("tenant_id = ?", tenantID).Order("id asc").Find(&users).Error; err != nil {
 		return nil, err
 	}
@@ -149,7 +149,7 @@ func DeleteAgentChannelsByUser(userID uint) error {
 // ListAgentChannelIDsByUser 取某账号被分配（可接待）的渠道 ID 列表。
 // 登录响应与个人资料里的 channels 字段用它拼装。
 func ListAgentChannelIDsByUser(userID uint) ([]uint, error) {
-	var acs []model.AgentChannel
+	var acs []*model.AgentChannel
 	if err := db.Where("user_id = ?", userID).Find(&acs).Error; err != nil {
 		return nil, err
 	}

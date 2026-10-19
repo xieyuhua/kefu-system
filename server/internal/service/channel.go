@@ -64,12 +64,12 @@ func GenerateAppID(tenantID uint) string {
 // 使用 app_id 作为渠道标识：同一类型可配置多个渠道，只有 app_id 能唯一区分。
 // 例如 /kefu/?channel=kefu_a1b2c3d4
 // 旧的 /c 与 channel=<type|id> 仍可解析（向后兼容）。
-func AccessPath(c model.Channel) string {
+func AccessPath(c *model.Channel) string {
 	return "/kefu/?channel=" + url.QueryEscape(ChannelKey(c))
 }
 
 // ChannelKey 返回渠道在接入链接中使用的标识：有 app_id 用 app_id，否则退回 id。
-func ChannelKey(c model.Channel) string {
+func ChannelKey(c *model.Channel) string {
 	if key := strings.TrimSpace(c.AppID); key != "" {
 		return key
 	}

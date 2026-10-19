@@ -7,8 +7,8 @@ import (
 // ---------------- 自动回复规则（AutoReply）数据访问 ----------------
 
 // ListAutoRepliesByTenant 列出租户的全部规则，优先级高的在前、同优先级按 id 升序。
-func ListAutoRepliesByTenant(tenantID uint) ([]model.AutoReply, error) {
-	var list []model.AutoReply
+func ListAutoRepliesByTenant(tenantID uint) ([]*model.AutoReply, error) {
+	var list []*model.AutoReply
 	if err := db.Where("tenant_id = ?", tenantID).
 		Order("priority desc, id asc").Find(&list).Error; err != nil {
 		return nil, err
@@ -17,8 +17,8 @@ func ListAutoRepliesByTenant(tenantID uint) ([]model.AutoReply, error) {
 }
 
 // ListEnabledAutoReplies 列出参与关键词匹配的启用规则（enabled = true），排序同上。
-func ListEnabledAutoReplies(tenantID uint) ([]model.AutoReply, error) {
-	var list []model.AutoReply
+func ListEnabledAutoReplies(tenantID uint) ([]*model.AutoReply, error) {
+	var list []*model.AutoReply
 	if err := db.Where("tenant_id = ? AND enabled = ?", tenantID, true).
 		Order("priority desc, id asc").Find(&list).Error; err != nil {
 		return nil, err

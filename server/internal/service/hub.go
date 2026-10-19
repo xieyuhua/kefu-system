@@ -266,7 +266,7 @@ func releaseAgentConversations(tenantID, agentID uint) {
 		c.AgentID = 0
 		c.Status = "pending"
 		c.LastMessageAt = now
-		_ = repository.SaveConversation(&c)
+		_ = repository.SaveConversation(c)
 		addSystemMessage(tenantID, c.ID, agentName(agentID)+" 已离线，会话回到待接待")
 		vo := buildConversationVO(c)
 		HubInstance().Publish(tenantID, nil, Event{Event: "conversation.updated", Data: vo})

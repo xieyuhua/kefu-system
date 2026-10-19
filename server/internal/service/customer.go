@@ -53,7 +53,7 @@ func GetCustomerDetail(tenantID, id uint) (*dto.CustomerDetail, error) {
 			ID: c.ID, ExternalID: c.ExternalID, Nickname: c.Nickname,
 			Avatar: c.Avatar, Phone: c.Phone, Remark: c.Remark,
 			Tags: GetCustomerTags(tenantID, c.ID),
-			IP:   c.IP, City: cityOrLookup(*c),
+			IP:   c.IP, City: cityOrLookup(c),
 			CreatedAt: fmtTime(c.CreatedAt),
 		},
 		Orders:        []dto.OrderVO{},

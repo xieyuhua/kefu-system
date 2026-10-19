@@ -42,7 +42,7 @@ func FindCustomerByExternalID(tenantID uint, externalID string) (*model.Customer
 
 // ListCustomersPaged 分页查询客户列表，按最近活跃时间倒序。
 // keyword 同时匹配昵称 / 手机号 / 外部 ID；channelID > 0 时只查该渠道。
-func ListCustomersPaged(tenantID uint, keyword string, channelID uint, page, pageSize int) ([]model.Customer, int64, error) {
+func ListCustomersPaged(tenantID uint, keyword string, channelID uint, page, pageSize int) ([]*model.Customer, int64, error) {
 	q := db.Model(&model.Customer{}).Where("tenant_id = ?", tenantID)
 	if channelID > 0 {
 		q = q.Where("channel_id = ?", channelID)
@@ -55,7 +55,7 @@ func ListCustomersPaged(tenantID uint, keyword string, channelID uint, page, pag
 	if err := q.Count(&total).Error; err != nil {
 		return nil, 0, err
 	}
-	var list []model.Customer
+	var list []*model.Customer
 	offset, limit := Paginate(page, pageSize)
 	if err := q.Order("last_seen_at desc").Offset(offset).Limit(limit).Find(&list).Error; err != nil {
 		return nil, 0, err
@@ -114,8 +114,8 @@ func CreateDevice(d *model.Device) error {
 }
 
 // ListDevices 列出某客服已登记的推送设备（按 id 倒序）。
-func ListDevices(tenantID, userID uint) ([]model.Device, error) {
-	var list []model.Device
+func ListDevices(tenantID, userID uint) ([]*model.Device, error) {
+	var list []*model.Device
 	if err := db.Where("tenant_id = ? AND user_id = ?", tenantID, userID).
 		Order("id desc").Find(&list).Error; err != nil {
 		return nil, err
@@ -154,8 +154,8 @@ func ListVisibleConversationIDs(tenantID, userID uint) ([]uint, error) {
 
 // ListMessagesOfConversations 取一批会话中 id > afterID 的消息，按 id 升序，最多 limit 条。
 // 调用方按「多取一条」判断是否还有更多（has_more）。
-func ListMessagesOfConversations(tenantID uint, convIDs []uint, afterID uint, limit int) ([]model.Message, error) {
-	var list []model.Message
+func ListMessagesOfConversations(tenantID uint, convIDs []uint, afterID uint, limit int) ([]*model.Message, error) {
+	var list []*model.Message
 	if err := db.Where("tenant_id = ? AND conversation_id IN ? AND id > ?", tenantID, convIDs, afterID).
 		Order("id asc").Limit(limit).Find(&list).Error; err != nil {
 		return nil, err
@@ -164,8 +164,8 @@ func ListMessagesOfConversations(tenantID uint, convIDs []uint, afterID uint, li
 }
 
 // ListNotificationsAfter 取客服在 sinceID 之后新增的系统提醒（最多 limit 条，升序）。
-func ListNotificationsAfter(tenantID, userID, sinceID uint, limit int) ([]model.Notification, error) {
-	var list []model.Notification
+func ListNotificationsAfter(tenantID, userID, sinceID uint, limit int) ([]*model.Notification, error) {
+	var list []*model.Notification
 	if err := db.Where("tenant_id = ? AND user_id = ? AND id > ?", tenantID, userID, sinceID).
 		Order("id asc").Limit(limit).Find(&list).Error; err != nil {
 		return nil, err

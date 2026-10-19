@@ -57,8 +57,8 @@ func CountMessagesInRangeByDirection(tenantID uint, from, to time.Time, directio
 
 // ListUsersForStats 列出参与客服工作量统计的账号：admin 与 agent 都算（管理员常亲自坐席，
 // 不能只按 role='agent' 过滤），按 role 降序、id 升序返回。
-func ListUsersForStats(tenantID uint) ([]model.User, error) {
-	var users []model.User
+func ListUsersForStats(tenantID uint) ([]*model.User, error) {
+	var users []*model.User
 	if err := db.Where("tenant_id = ?", tenantID).
 		Order("role desc, id asc").Find(&users).Error; err != nil {
 		return nil, err
@@ -87,8 +87,8 @@ func CountAgentMessagesSince(tenantID, agentID uint, since time.Time) (int64, er
 }
 
 // ListChannelsForStats 列出参与渠道分布统计的渠道，按 id 升序返回。
-func ListChannelsForStats(tenantID uint) ([]model.Channel, error) {
-	var list []model.Channel
+func ListChannelsForStats(tenantID uint) ([]*model.Channel, error) {
+	var list []*model.Channel
 	if err := db.Where("tenant_id = ?", tenantID).Order("id asc").Find(&list).Error; err != nil {
 		return nil, err
 	}

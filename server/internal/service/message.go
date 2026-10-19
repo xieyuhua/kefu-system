@@ -47,9 +47,9 @@ func ListMessages(tenantID, convID uint, beforeID uint, limit int) ([]dto.Messag
 }
 
 // BuildMessageVO 导出版本，供其他包（如消息搜索）复用
-func BuildMessageVO(m model.Message) dto.MessageVO { return buildMessageVO(m) }
+func BuildMessageVO(m *model.Message) dto.MessageVO { return buildMessageVO(m) }
 
-func buildMessageVO(m model.Message) dto.MessageVO {
+func buildMessageVO(m *model.Message) dto.MessageVO {
 	vo := dto.MessageVO{
 		ID: m.ID, ConversationID: m.ConversationID, Type: m.Type,
 		Direction: m.Direction, Content: m.Content,
@@ -123,18 +123,18 @@ func SendMessage(tenantID, convID, senderID uint, req dto.SendMessageRequest) (*
 	if err := repository.CreateMessage(&m); err != nil {
 		return nil, nil, err
 	}
-	c.LastMessage = messagePreview(m)
+	c.LastMessage = messagePreview(&m)
 	c.LastMessageAt = now
 	c.MessageCount++
 	if err := repository.SaveConversation(c); err != nil {
 		return nil, nil, err
 	}
-	mvo := buildMessageVO(m)
-	cvo := buildConversationVO(*c)
+	mvo := buildMessageVO(&m)
+	cvo := buildConversationVO(c)
 	return &mvo, &cvo, nil
 }
 
-func messagePreview(m model.Message) string {
+func messagePreview(m *model.Message) string {
 	switch m.Type {
 	case "image":
 		return "[图片]"
@@ -190,7 +190,7 @@ func ReceiveMessage(tenantID, convID, customerID uint, msgType, content string) 
 		return nil, nil, err
 	}
 	now := time.Now()
-	c.LastMessage = messagePreview(m)
+	c.LastMessage = messagePreview(&m)
 	c.LastMessageAt = now
 	c.MessageCount++
 	c.Unread++
@@ -217,8 +217,8 @@ func ReceiveMessage(tenantID, convID, customerID uint, msgType, content string) 
 	// 活跃时间刷新失败不阻断发消息（与原逻辑一致）
 	_ = repository.UpdateCustomerColumns(customerID, map[string]interface{}{"last_seen_at": now})
 
-	mvo := buildMessageVO(m)
-	cvo := buildConversationVO(*c)
+	mvo := buildMessageVO(&m)
+	cvo := buildConversationVO(c)
 	return &mvo, &cvo, nil
 }
 

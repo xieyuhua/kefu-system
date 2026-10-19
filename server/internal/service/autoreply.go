@@ -44,7 +44,7 @@ func ListAutoReplies(tenantID uint) ([]AutoReplyVO, error) {
 	return out, nil
 }
 
-func toAutoReplyVO(r model.AutoReply) AutoReplyVO {
+func toAutoReplyVO(r *model.AutoReply) AutoReplyVO {
 	vo := AutoReplyVO{
 		ID: r.ID, Name: r.Name, ChannelID: r.ChannelID,
 		MatchType: r.MatchType, Keywords: r.Keywords, Reply: r.Reply,
@@ -89,7 +89,7 @@ func CreateAutoReply(tenantID uint, req AutoReplyRequest) (*AutoReplyVO, error) 
 	if err := repository.CreateAutoReply(&r); err != nil {
 		return nil, err
 	}
-	vo := toAutoReplyVO(r)
+	vo := toAutoReplyVO(&r)
 	return &vo, nil
 }
 
@@ -131,9 +131,9 @@ func DeleteAutoReply(tenantID, id uint) error {
 }
 
 // MatchRule 按优先级找出命中的规则（优先匹配指定渠道的规则，其次全渠道规则）
-func MatchRule(tenantID, channelID uint, question string) (model.AutoReply, bool) {
+func MatchRule(tenantID, channelID uint, question string) (*model.AutoReply, bool) {
 	if strings.TrimSpace(question) == "" {
-		return model.AutoReply{}, false
+		return nil, false
 	}
 	// 规则读取失败按「没有规则」处理，不影响消息主流程（与原逻辑一致）
 	rules, _ := repository.ListEnabledAutoReplies(tenantID)
@@ -153,7 +153,7 @@ func MatchRule(tenantID, channelID uint, question string) (model.AutoReply, bool
 			}
 		}
 	}
-	return model.AutoReply{}, false
+	return nil, false
 }
 
 // ReplyResult 自动回复判定结果
@@ -216,13 +216,13 @@ func ReplyNow(tenantID, convID, customerID, channelID uint, question string) *Re
 	_ = repository.UpdateAutoReplyConversation(convID, map[string]interface{}{
 		"last_message": reply, "last_message_at": time.Now(),
 	})
-	vo := buildMessageVO(m)
+	vo := buildMessageVO(&m)
 	HubInstance().Publish(tenantID, nil, Event{Event: "message.new", Data: vo})
 	HubInstance().PublishToGuest(tenantID, convID, Event{Event: "message.new", Data: vo})
 	return &ReplyResult{Transferred: false, Message: vo}
 }
 
-func matchKeywords(r model.AutoReply, lowerQ string) bool {
+func matchKeywords(r *model.AutoReply, lowerQ string) bool {
 	for _, kw := range strings.Split(r.Keywords, ",") {
 		kw = strings.ToLower(strings.TrimSpace(kw))
 		if kw == "" {

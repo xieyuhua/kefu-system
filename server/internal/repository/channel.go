@@ -19,8 +19,8 @@ func FindChannelByID(tenantID, id uint) (*model.Channel, error) {
 
 // ListChannelsByTenant 列出租户的渠道（按 id 升序）。
 // isAdmin 为 false 时只返回该客服已被分配的渠道（agent_channels 关联）。
-func ListChannelsByTenant(tenantID, agentID uint, isAdmin bool) ([]model.Channel, error) {
-	var list []model.Channel
+func ListChannelsByTenant(tenantID, agentID uint, isAdmin bool) ([]*model.Channel, error) {
+	var list []*model.Channel
 	q := db.Where("tenant_id = ?", tenantID)
 	if !isAdmin {
 		q = q.Where("id IN (SELECT channel_id FROM agent_channels WHERE user_id = ?)", agentID)
@@ -89,8 +89,8 @@ func DeleteChannelWithBindings(tenantID, id uint) error {
 // ---------------- 渠道 ↔ 接待账号 ----------------
 
 // ListAgentChannelsByChannel 列出某渠道已分配的账号关联，用于回显勾选状态。
-func ListAgentChannelsByChannel(channelID uint) ([]model.AgentChannel, error) {
-	var acs []model.AgentChannel
+func ListAgentChannelsByChannel(channelID uint) ([]*model.AgentChannel, error) {
+	var acs []*model.AgentChannel
 	if err := db.Where("channel_id = ?", channelID).Find(&acs).Error; err != nil {
 		return nil, err
 	}
@@ -98,8 +98,8 @@ func ListAgentChannelsByChannel(channelID uint) ([]model.AgentChannel, error) {
 }
 
 // ListTenantAgents 列出租户下所有客服子账号（role = agent，按 id 升序）。
-func ListTenantAgents(tenantID uint) ([]model.User, error) {
-	var users []model.User
+func ListTenantAgents(tenantID uint) ([]*model.User, error) {
+	var users []*model.User
 	if err := db.Where("tenant_id = ? AND role = 'agent'", tenantID).
 		Order("id asc").Find(&users).Error; err != nil {
 		return nil, err
@@ -108,8 +108,8 @@ func ListTenantAgents(tenantID uint) ([]model.User, error) {
 }
 
 // FindAgentUsersByIDs 按主键批量取租户内的客服账号，用于校验账号归属本租户。
-func FindAgentUsersByIDs(tenantID uint, ids []uint) ([]model.User, error) {
-	var users []model.User
+func FindAgentUsersByIDs(tenantID uint, ids []uint) ([]*model.User, error) {
+	var users []*model.User
 	if err := db.Where("tenant_id = ? AND id IN ?", tenantID, ids).Find(&users).Error; err != nil {
 		return nil, err
 	}

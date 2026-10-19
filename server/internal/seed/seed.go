@@ -180,14 +180,14 @@ func Run() error {
 				msgs = append(msgs, seedMsg{model.Message{
 					TenantID: tenant.ID, ConversationID: conv.ID, SenderID: cu.ID,
 					SenderRole: "customer", Type: "order", Direction: "in",
-					Content: service.BuildOrderCard(o),
+					Content: service.BuildOrderCard(&o),
 				}, now.Add(-17 * time.Minute)})
 			}
 			p := products[i%len(products)]
 			msgs = append(msgs, seedMsg{model.Message{
 				TenantID: tenant.ID, ConversationID: conv.ID, SenderID: agentID,
 				SenderRole: "user", Type: "product", Direction: "out",
-				Content: service.BuildProductCard(p), Read: true,
+				Content: service.BuildProductCard(&p), Read: true,
 			}, now.Add(-16 * time.Minute)})
 		}
 		msgs = append(msgs, seedMsg{model.Message{

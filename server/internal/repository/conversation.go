@@ -54,7 +54,7 @@ func applyVisibility(q *gorm.DB, userID uint, isAdmin bool, scope string) *gorm.
 
 // ListConversations 分页列出会话（按最近消息时间倒序），同时返回满足条件的总数。
 // 可见范围见 applyVisibility；默认不返回已归档会话。
-func ListConversations(tenantID, userID uint, isAdmin bool, f ConversationFilter) ([]model.Conversation, int64, error) {
+func ListConversations(tenantID, userID uint, isAdmin bool, f ConversationFilter) ([]*model.Conversation, int64, error) {
 	q := db.Model(&model.Conversation{}).Where("tenant_id = ?", tenantID)
 	// 默认不展示已归档会话；IncludeArchived 时一并返回（历史档案 / 统计用）
 	if !f.IncludeArchived {
@@ -79,7 +79,7 @@ func ListConversations(tenantID, userID uint, isAdmin bool, f ConversationFilter
 		return nil, 0, err
 	}
 	offset, limit := Paginate(f.Page, f.PageSize)
-	var list []model.Conversation
+	var list []*model.Conversation
 	if err := q.Order("last_message_at desc").Offset(offset).Limit(limit).Find(&list).Error; err != nil {
 		return nil, 0, err
 	}
@@ -144,11 +144,11 @@ func FindLatestConversationByCustomer(tenantID, customerID uint) (*model.Convers
 }
 
 // ListConversationsByCustomer 按客户列出历史会话（新的在前）；limit <= 0 时取 50 条。
-func ListConversationsByCustomer(tenantID, customerID uint, limit int) ([]model.Conversation, error) {
+func ListConversationsByCustomer(tenantID, customerID uint, limit int) ([]*model.Conversation, error) {
 	if limit <= 0 {
 		limit = 50
 	}
-	var list []model.Conversation
+	var list []*model.Conversation
 	if err := db.Where("tenant_id = ? AND customer_id = ?", tenantID, customerID).
 		Order("id desc").Limit(limit).Find(&list).Error; err != nil {
 		return nil, err
@@ -201,8 +201,8 @@ func ReopenArchivedConversation(tenantID, convID uint) error {
 
 // ListConversationAgentRefs 批量取会话的主键与归属客服。
 // 批量归档前用它判断哪些会话需要释放归属（agent_id = 0 回到待接待池）。
-func ListConversationAgentRefs(tenantID uint, ids []uint) ([]model.Conversation, error) {
-	var list []model.Conversation
+func ListConversationAgentRefs(tenantID uint, ids []uint) ([]*model.Conversation, error) {
+	var list []*model.Conversation
 	if err := db.Select("id", "agent_id").
 		Where("tenant_id = ? AND id IN ?", tenantID, ids).
 		Find(&list).Error; err != nil {
@@ -240,7 +240,7 @@ type ConversationRecordFilter struct {
 
 // SearchConversationRecords 跨会话检索对话记录（支持按消息内容全文匹配），
 // 返回当页会话与总数，按最近消息时间倒序。
-func SearchConversationRecords(tenantID uint, f ConversationRecordFilter) ([]model.Conversation, int64, error) {
+func SearchConversationRecords(tenantID uint, f ConversationRecordFilter) ([]*model.Conversation, int64, error) {
 	q := db.Model(&model.Conversation{}).Where("tenant_id = ?", tenantID)
 	if kw := strings.TrimSpace(f.Keyword); kw != "" {
 		like := "%" + kw + "%"
@@ -272,7 +272,7 @@ func SearchConversationRecords(tenantID uint, f ConversationRecordFilter) ([]mod
 		return nil, 0, err
 	}
 	offset, limit := Paginate(f.Page, f.PageSize)
-	var list []model.Conversation
+	var list []*model.Conversation
 	if err := q.Order("last_message_at desc").Offset(offset).Limit(limit).Find(&list).Error; err != nil {
 		return nil, 0, err
 	}
@@ -281,8 +281,8 @@ func SearchConversationRecords(tenantID uint, f ConversationRecordFilter) ([]mod
 
 // ListOpenConversationsByAgent 取某客服当前「进行中」的会话。
 // 用于客服离线时释放其占用的会话（回到待接待池）。
-func ListOpenConversationsByAgent(tenantID, agentID uint) ([]model.Conversation, error) {
-	var convs []model.Conversation
+func ListOpenConversationsByAgent(tenantID, agentID uint) ([]*model.Conversation, error) {
+	var convs []*model.Conversation
 	err := db.Where("tenant_id = ? AND agent_id = ? AND status = ?", tenantID, agentID, "open").
 		Find(&convs).Error
 	return convs, err

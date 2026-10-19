@@ -20,7 +20,7 @@ func FindProductByPID(tenantID uint, pid string) (*model.Product, error) {
 
 // ListProductsPaged 分页查询商品列表，按主键升序。
 // keyword 同时匹配标题 / 对外商品 ID / SKU。
-func ListProductsPaged(tenantID uint, keyword string, page, pageSize int) ([]model.Product, int64, error) {
+func ListProductsPaged(tenantID uint, keyword string, page, pageSize int) ([]*model.Product, int64, error) {
 	q := db.Model(&model.Product{}).Where("tenant_id = ?", tenantID)
 	if kw := strings.TrimSpace(keyword); kw != "" {
 		like := "%" + kw + "%"
@@ -30,7 +30,7 @@ func ListProductsPaged(tenantID uint, keyword string, page, pageSize int) ([]mod
 	if err := q.Count(&total).Error; err != nil {
 		return nil, 0, err
 	}
-	var list []model.Product
+	var list []*model.Product
 	offset, limit := Paginate(page, pageSize)
 	if err := q.Order("id asc").Offset(offset).Limit(limit).Find(&list).Error; err != nil {
 		return nil, 0, err
