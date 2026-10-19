@@ -9,7 +9,8 @@ package admin
 // 本包不 import modules/client、modules/agent，也不被 core/* import。
 //
 // 说明：渠道、子账号、客户标签、自动回复这些能力的 service 全在 core/*，
-// 后台端只负责「管理员视角的入参与鉴权分支」；概览统计是后台专属口径，见 service.go。
+// 后台端只负责「管理员视角的入参与鉴权分支」；概览统计的 SQL 与口径已下沉到 core/stats，
+// 本端 service 只做委派（见 service.go）。
 
 import (
 	"fmt"

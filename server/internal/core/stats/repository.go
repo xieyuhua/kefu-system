@@ -1,12 +1,19 @@
-package admin
+package stats
 
-// 本文件是后台端（modules/admin）的数据访问层：概览页的统计 SQL。
+// 本文件是共享统计内核（core/stats）的数据访问层：概览页的统计 SQL（跨域只读聚合）。
+//
+// 表范围：conversations / messages / customers / orders / users / channels 六张表的只读计数。
+// 这些口径原本落在 modules/admin 的 repository 里，但「会话/消息/客户/订单/账号/渠道」的
+// 只读聚合是各端都可能要看的数据（后台概览页、将来客服端的个人数据），端与端之间不允许
+// 互相 import，若各自复制 SQL 就会漂移，因此下沉为共享内核。
 //
 // 统计口径约定（改动前先对齐产品口径，这些条件一个字都不能动）：
 //   - 「已接待」= agent_id > 0；「已结束」= status = 'closed'；「未接待」= status = 'pending'
 //   - 时间窗口统一写 created_at >= from AND created_at < to（左闭右开）
 //   - 每一项计数都是一条独立 SQL，不复用条件：多个计数拼在同一条链上会互相污染条件，
 //     因此不要为了「省一次查询」把 pending/open/closed 合并成一条 SQL。
+//
+// 依赖方向：core/stats → platform → pkg。本内核只直接查表，不调用其它 core 包，也不 import 任何 modules。
 //
 // 形态约定：所有数据访问都是 Repository 的方法（指针接收者）。
 // Repository 不持有 *gorm.DB 字段，每个方法现取 pkg/storage 的全局连接。
@@ -20,7 +27,7 @@ import (
 	"gorm.io/gorm"
 )
 
-// Repository 后台端的数据访问层（无状态，可随时构造）。
+// Repository 统计内核的数据访问层（无状态，可随时构造）。
 type Repository struct{}
 
 // NewRepository 创建数据访问层实例。
