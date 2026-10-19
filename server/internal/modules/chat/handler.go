@@ -7,10 +7,11 @@ package chat
 import (
 	"strings"
 
+	"kefu-server/internal/platform/authctx"
 	"kefu-server/internal/platform/dto"
-	"kefu-server/internal/platform/httpx"
 	"kefu-server/internal/platform/realtime"
-	"kefu-server/internal/platform/response"
+	"kefu-server/pkg/httpx"
+	"kefu-server/pkg/response"
 
 	"github.com/gin-gonic/gin"
 )
@@ -27,7 +28,7 @@ func ListConversationsHandler(c *gin.Context) {
 		PageSize:        httpx.QueryInt(c, "page_size", 20),
 		IncludeArchived: c.Query("include_archived") == "1" || c.Query("include_archived") == "true",
 	}
-	paged, err := ListConversations(httpx.TenantID(c), httpx.UserID(c), httpx.IsAdmin(c), q)
+	paged, err := ListConversations(authctx.TenantID(c), authctx.UserID(c), authctx.IsAdmin(c), q)
 	if err != nil {
 		response.Server(c, err.Error())
 		return
@@ -36,7 +37,7 @@ func ListConversationsHandler(c *gin.Context) {
 }
 
 func GetConversationHandler(c *gin.Context) {
-	vo, err := GetConversation(httpx.TenantID(c), httpx.UintParam(c, "id"))
+	vo, err := GetConversation(authctx.TenantID(c), httpx.UintParam(c, "id"))
 	if err != nil {
 		response.NotFound(c, err.Error())
 		return
@@ -45,12 +46,12 @@ func GetConversationHandler(c *gin.Context) {
 }
 
 func ClaimConversationHandler(c *gin.Context) {
-	vo, err := ClaimConversation(httpx.TenantID(c), httpx.UintParam(c, "id"), httpx.UserID(c))
+	vo, err := ClaimConversation(authctx.TenantID(c), httpx.UintParam(c, "id"), authctx.UserID(c))
 	if err != nil {
 		response.Param(c, err.Error())
 		return
 	}
-	realtime.HubInstance().Publish(httpx.TenantID(c), nil, realtime.Event{Event: "conversation.updated", Data: vo})
+	realtime.HubInstance().Publish(authctx.TenantID(c), nil, realtime.Event{Event: "conversation.updated", Data: vo})
 	response.OK(c, vo)
 }
 
@@ -61,27 +62,27 @@ func TransferConversationHandler(c *gin.Context) {
 	if !httpx.BindJSON(c, &req) {
 		return
 	}
-	vo, err := TransferConversation(httpx.TenantID(c), httpx.UintParam(c, "id"), httpx.UserID(c), req.AgentID)
+	vo, err := TransferConversation(authctx.TenantID(c), httpx.UintParam(c, "id"), authctx.UserID(c), req.AgentID)
 	if err != nil {
 		response.Param(c, err.Error())
 		return
 	}
-	realtime.HubInstance().Publish(httpx.TenantID(c), nil, realtime.Event{Event: "conversation.updated", Data: vo})
+	realtime.HubInstance().Publish(authctx.TenantID(c), nil, realtime.Event{Event: "conversation.updated", Data: vo})
 	response.OK(c, vo)
 }
 
 func CloseConversationHandler(c *gin.Context) {
-	vo, err := CloseConversation(httpx.TenantID(c), httpx.UintParam(c, "id"), httpx.UserID(c))
+	vo, err := CloseConversation(authctx.TenantID(c), httpx.UintParam(c, "id"), authctx.UserID(c))
 	if err != nil {
 		response.Param(c, err.Error())
 		return
 	}
-	realtime.HubInstance().Publish(httpx.TenantID(c), nil, realtime.Event{Event: "conversation.updated", Data: vo})
+	realtime.HubInstance().Publish(authctx.TenantID(c), nil, realtime.Event{Event: "conversation.updated", Data: vo})
 	response.OK(c, vo)
 }
 
 func MarkReadHandler(c *gin.Context) {
-	if err := MarkRead(httpx.TenantID(c), httpx.UintParam(c, "id")); err != nil {
+	if err := MarkRead(authctx.TenantID(c), httpx.UintParam(c, "id")); err != nil {
 		response.Server(c, err.Error())
 		return
 	}
@@ -89,7 +90,7 @@ func MarkReadHandler(c *gin.Context) {
 }
 
 func ConversationStatsHandler(c *gin.Context) {
-	s, err := ConversationStats(httpx.TenantID(c), httpx.UserID(c), httpx.IsAdmin(c))
+	s, err := ConversationStats(authctx.TenantID(c), authctx.UserID(c), authctx.IsAdmin(c))
 	if err != nil {
 		response.Server(c, err.Error())
 		return
@@ -99,7 +100,7 @@ func ConversationStatsHandler(c *gin.Context) {
 
 // ArchiveConversationHandler 归档会话（客服清理工作台列表；客户再咨询会自动恢复）
 func ArchiveConversationHandler(c *gin.Context) {
-	if err := ArchiveConversation(httpx.TenantID(c), httpx.UintParam(c, "id"), httpx.UserID(c)); err != nil {
+	if err := ArchiveConversation(authctx.TenantID(c), httpx.UintParam(c, "id"), authctx.UserID(c)); err != nil {
 		response.Param(c, err.Error())
 		return
 	}
@@ -118,7 +119,7 @@ func ArchiveConversationsBulkHandler(c *gin.Context) {
 		Page:      httpx.QueryInt(c, "page", 1),
 		PageSize:  httpx.QueryInt(c, "page_size", 20),
 	}
-	n, err := ArchiveConversationsBulk(httpx.TenantID(c), httpx.UserID(c), httpx.IsAdmin(c), q)
+	n, err := ArchiveConversationsBulk(authctx.TenantID(c), authctx.UserID(c), authctx.IsAdmin(c), q)
 	if err != nil {
 		response.Server(c, err.Error())
 		return
@@ -128,7 +129,7 @@ func ArchiveConversationsBulkHandler(c *gin.Context) {
 
 // UnarchiveConversationHandler 取消归档
 func UnarchiveConversationHandler(c *gin.Context) {
-	if err := UnarchiveConversation(httpx.TenantID(c), httpx.UintParam(c, "id")); err != nil {
+	if err := UnarchiveConversation(authctx.TenantID(c), httpx.UintParam(c, "id")); err != nil {
 		response.Param(c, err.Error())
 		return
 	}
@@ -137,7 +138,7 @@ func UnarchiveConversationHandler(c *gin.Context) {
 
 // DeleteConversationHandler 彻底删除会话与消息（不可恢复）
 func DeleteConversationHandler(c *gin.Context) {
-	if err := DeleteConversation(httpx.TenantID(c), httpx.UintParam(c, "id")); err != nil {
+	if err := DeleteConversation(authctx.TenantID(c), httpx.UintParam(c, "id")); err != nil {
 		response.Param(c, err.Error())
 		return
 	}
@@ -152,7 +153,7 @@ func SearchConversationMessagesHandler(c *gin.Context) {
 		response.OK(c, []interface{}{})
 		return
 	}
-	rows, err := SearchMessages(httpx.TenantID(c), convID, keyword, httpx.QueryInt(c, "limit", 50))
+	rows, err := SearchMessages(authctx.TenantID(c), convID, keyword, httpx.QueryInt(c, "limit", 50))
 	if err != nil {
 		response.Server(c, err.Error())
 		return
@@ -177,7 +178,7 @@ func SearchConversationRecordsHandler(c *gin.Context) {
 		Page:      httpx.QueryInt(c, "page", 1),
 		PageSize:  httpx.QueryInt(c, "page_size", 20),
 	}
-	list, total, err := SearchConversations(httpx.TenantID(c), q)
+	list, total, err := SearchConversations(authctx.TenantID(c), q)
 	if err != nil {
 		response.Server(c, err.Error())
 		return
@@ -190,7 +191,7 @@ func SearchConversationRecordsHandler(c *gin.Context) {
 
 // GetConversationMessagesHandler 管理后台查看某个会话的完整消息（只读）
 func GetConversationMessagesHandler(c *gin.Context) {
-	list, err := ListMessages(httpx.TenantID(c), httpx.UintParam(c, "id"), 0, httpx.QueryInt(c, "limit", 200))
+	list, err := ListMessages(authctx.TenantID(c), httpx.UintParam(c, "id"), 0, httpx.QueryInt(c, "limit", 200))
 	if err != nil {
 		response.Server(c, err.Error())
 		return
@@ -201,7 +202,7 @@ func GetConversationMessagesHandler(c *gin.Context) {
 // ---------------- 消息 ----------------
 
 func ListMessagesHandler(c *gin.Context) {
-	list, err := ListMessages(httpx.TenantID(c), httpx.UintParam(c, "id"), httpx.QueryUint(c, "before_id"), httpx.QueryInt(c, "limit", 50))
+	list, err := ListMessages(authctx.TenantID(c), httpx.UintParam(c, "id"), httpx.QueryUint(c, "before_id"), httpx.QueryInt(c, "limit", 50))
 	if err != nil {
 		response.Server(c, err.Error())
 		return
@@ -214,11 +215,11 @@ func SendMessageHandler(c *gin.Context) {
 	if !httpx.BindJSON(c, &req) {
 		return
 	}
-	mvo, cvo, err := SendMessage(httpx.TenantID(c), httpx.UintParam(c, "id"), httpx.UserID(c), req)
+	mvo, cvo, err := SendMessage(authctx.TenantID(c), httpx.UintParam(c, "id"), authctx.UserID(c), req)
 	if err != nil {
 		response.Param(c, err.Error())
 		return
 	}
-	realtime.PublishMessage(httpx.TenantID(c), httpx.UintParam(c, "id"), mvo, cvo)
+	realtime.PublishMessage(authctx.TenantID(c), httpx.UintParam(c, "id"), mvo, cvo)
 	response.OK(c, mvo)
 }

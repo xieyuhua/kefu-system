@@ -13,8 +13,8 @@ import (
 	"kefu-server/internal/platform/dto"
 	"kefu-server/internal/platform/ipinfo"
 	"kefu-server/internal/platform/model"
-	"kefu-server/internal/platform/response"
-	"kefu-server/internal/platform/util"
+	"kefu-server/pkg/response"
+	"kefu-server/pkg/util"
 )
 
 // ---------------- Customer / 历史档案 ----------------

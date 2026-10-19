@@ -17,7 +17,7 @@ import (
 	"kefu-server/internal/platform/dto"
 	"kefu-server/internal/platform/idgen"
 	"kefu-server/internal/platform/model"
-	"kefu-server/internal/platform/util"
+	"kefu-server/pkg/util"
 
 	qrcode "github.com/skip2/go-qrcode"
 )

@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"kefu-server/internal/platform/cache"
+	"kefu-server/pkg/cache"
 
 	"github.com/gorilla/websocket"
 )

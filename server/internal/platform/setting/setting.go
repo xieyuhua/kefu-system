@@ -10,7 +10,7 @@ import (
 	"strings"
 
 	"kefu-server/internal/platform/model"
-	"kefu-server/internal/platform/storage"
+	"kefu-server/pkg/storage"
 )
 
 // ---------------- 设置项 Key ----------------

@@ -4,7 +4,7 @@ import (
 	"strings"
 
 	"kefu-server/internal/platform/auth"
-	"kefu-server/internal/platform/response"
+	"kefu-server/pkg/response"
 
 	"github.com/gin-gonic/gin"
 )

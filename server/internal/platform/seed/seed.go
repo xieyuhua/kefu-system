@@ -34,7 +34,7 @@ func Run() error {
 	}
 
 	// ---- 渠道 ----
-	channels := []model.Channel{
+	channels := []*model.Channel{
 		{TenantID: tenant.ID, Type: "wechat", Name: "微信公众号客服", Enabled: true},
 		{TenantID: tenant.ID, Type: "wecom", Name: "企业微信客服", Enabled: true},
 		{TenantID: tenant.ID, Type: "web", Name: "网页在线客服", Enabled: true},
@@ -45,7 +45,7 @@ func Run() error {
 	for i := range channels {
 		// 渠道标识（app_id）随机生成，作为接入链接里区分渠道来源的唯一标识
 		channels[i].AppID = idgen.GenerateAppID(tenant.ID)
-		db.DB.Create(&channels[i])
+		db.DB.Create(channels[i])
 	}
 
 	// ---- 账号 ----
@@ -81,7 +81,7 @@ func Run() error {
 	assign(kf2.ID, 1, 3, 5)
 
 	// ---- 标签 ----
-	tags := []model.Tag{
+	tags := []*model.Tag{
 		{TenantID: tenant.ID, Name: "VIP", Color: "red", Sort: 1},
 		{TenantID: tenant.ID, Name: "高价值", Color: "orange", Sort: 2},
 		{TenantID: tenant.ID, Name: "价格敏感", Color: "blue", Sort: 3},
@@ -89,18 +89,18 @@ func Run() error {
 		{TenantID: tenant.ID, Name: "需回访", Color: "green", Sort: 5},
 	}
 	for i := range tags {
-		db.DB.Create(&tags[i])
+		db.DB.Create(tags[i])
 	}
 
 	// ---- 商品 ----
-	products := []model.Product{
+	products := []*model.Product{
 		{TenantID: tenant.ID, PID: "P10086", Title: "2026春季新款 纯棉圆领T恤", Price: 99.5, Image: "/demo/product-1.svg", Stock: 128, SKU: "白色 / L", URL: "https://example.com/p/P10086"},
 		{TenantID: tenant.ID, PID: "P10087", Title: "轻薄透气运动跑鞋", Price: 329.0, Image: "/demo/product-2.svg", Stock: 56, SKU: "黑色 / 42", URL: "https://example.com/p/P10087"},
 		{TenantID: tenant.ID, PID: "P10088", Title: "无线蓝牙降噪耳机", Price: 499.0, Image: "/demo/product-3.svg", Stock: 12, SKU: "星空灰", URL: "https://example.com/p/P10088"},
 		{TenantID: tenant.ID, PID: "P10089", Title: "不锈钢保温杯 500ml", Price: 79.0, Image: "/demo/product-4.svg", Stock: 300, SKU: "雾霾蓝", URL: "https://example.com/p/P10089"},
 	}
 	for i := range products {
-		db.DB.Create(&products[i])
+		db.DB.Create(products[i])
 	}
 
 	// ---- 客户 + 订单 + 会话 + 消息 ----
@@ -188,7 +188,7 @@ func Run() error {
 			msgs = append(msgs, seedMsg{model.Message{
 				TenantID: tenant.ID, ConversationID: conv.ID, SenderID: agentID,
 				SenderRole: "user", Type: "product", Direction: "out",
-				Content: card.BuildProductCard(&p), Read: true,
+				Content: card.BuildProductCard(p), Read: true,
 			}, now.Add(-16 * time.Minute)})
 		}
 		msgs = append(msgs, seedMsg{model.Message{
@@ -212,7 +212,7 @@ func Run() error {
 	// ---- 自动回复规则 ----
 	all := uint(0)
 	transferTrue := true
-	replies := []model.AutoReply{
+	replies := []*model.AutoReply{
 		{TenantID: tenant.ID, ChannelID: all, Name: "问候语", MatchType: "contain",
 			Keywords: "你好,在吗,hi,hello", Reply: "您好，我是智能客服助手，很高兴为您服务～",
 			ReplyType: "text", Enabled: true, Priority: 10},
@@ -227,7 +227,7 @@ func Run() error {
 			TransferToHuman: true, Enabled: true, Priority: 100},
 	}
 	for i := range replies {
-		db.DB.Create(&replies[i])
+		db.DB.Create(replies[i])
 	}
 	_ = transferTrue
 

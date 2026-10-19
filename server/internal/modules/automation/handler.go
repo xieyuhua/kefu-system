@@ -4,14 +4,15 @@ package automation
 // handler 层不持有数据库连接：参数绑定 → 调本模块 service → 写响应。
 
 import (
-	"kefu-server/internal/platform/httpx"
-	"kefu-server/internal/platform/response"
+	"kefu-server/internal/platform/authctx"
+	"kefu-server/pkg/httpx"
+	"kefu-server/pkg/response"
 
 	"github.com/gin-gonic/gin"
 )
 
 func ListAutoRepliesHandler(c *gin.Context) {
-	list, err := ListAutoReplies(httpx.TenantID(c))
+	list, err := ListAutoReplies(authctx.TenantID(c))
 	if err != nil {
 		response.Server(c, err.Error())
 		return
@@ -20,7 +21,7 @@ func ListAutoRepliesHandler(c *gin.Context) {
 }
 
 func CreateAutoReplyHandler(c *gin.Context) {
-	if !httpx.IsAdmin(c) {
+	if !authctx.IsAdmin(c) {
 		response.Forbid(c, "仅管理员可操作")
 		return
 	}
@@ -28,7 +29,7 @@ func CreateAutoReplyHandler(c *gin.Context) {
 	if !httpx.BindJSON(c, &req) {
 		return
 	}
-	vo, err := CreateAutoReply(httpx.TenantID(c), req)
+	vo, err := CreateAutoReply(authctx.TenantID(c), req)
 	if err != nil {
 		response.Param(c, err.Error())
 		return
@@ -37,7 +38,7 @@ func CreateAutoReplyHandler(c *gin.Context) {
 }
 
 func UpdateAutoReplyHandler(c *gin.Context) {
-	if !httpx.IsAdmin(c) {
+	if !authctx.IsAdmin(c) {
 		response.Forbid(c, "仅管理员可操作")
 		return
 	}
@@ -45,7 +46,7 @@ func UpdateAutoReplyHandler(c *gin.Context) {
 	if !httpx.BindJSON(c, &req) {
 		return
 	}
-	if err := UpdateAutoReply(httpx.TenantID(c), httpx.UintParam(c, "id"), req); err != nil {
+	if err := UpdateAutoReply(authctx.TenantID(c), httpx.UintParam(c, "id"), req); err != nil {
 		response.Param(c, err.Error())
 		return
 	}
@@ -53,11 +54,11 @@ func UpdateAutoReplyHandler(c *gin.Context) {
 }
 
 func DeleteAutoReplyHandler(c *gin.Context) {
-	if !httpx.IsAdmin(c) {
+	if !authctx.IsAdmin(c) {
 		response.Forbid(c, "仅管理员可操作")
 		return
 	}
-	if err := DeleteAutoReply(httpx.TenantID(c), httpx.UintParam(c, "id")); err != nil {
+	if err := DeleteAutoReply(authctx.TenantID(c), httpx.UintParam(c, "id")); err != nil {
 		response.Server(c, err.Error())
 		return
 	}

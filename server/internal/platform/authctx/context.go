@@ -1,16 +1,15 @@
-package httpx
+package authctx
 
 import (
-	"strconv"
-
 	"kefu-server/internal/platform/auth"
 	"kefu-server/internal/platform/model"
-	"kefu-server/internal/platform/response"
 
 	"github.com/gin-gonic/gin"
 )
 
 // 说明：本包只依赖 platform 内的基础设施包，不反向依赖 handler/service/repository。
+// 与业务无关的 gin 通用辅助（路径/查询参数解析、JSON 绑定）已拆到 pkg/httpx，
+// 这里只保留依托登录态的鉴权相关能力。
 // 需要业务侧的账号加载能力时，由 service 包在 init 里通过 SetUserLoader 注入。
 
 // ctxClaims 从 gin 上下文取登录信息（由 middleware 注入）
@@ -37,7 +36,7 @@ func ClaimsFromContext(c *gin.Context) *ctxClaims {
 // userLoader 按「租户 + 账号 ID」载入账号，由 service 包启动时注入。
 var userLoader func(tenantID, userID uint) (*model.User, error)
 
-// SetUserLoader 注册账号加载实现（由 service 包 init 调用），避免 httpx 依赖业务包。
+// SetUserLoader 注册账号加载实现（由 service 包 init 调用），避免 authctx 依赖业务包。
 func SetUserLoader(fn func(tenantID, userID uint) (*model.User, error)) { userLoader = fn }
 
 // CurrentUser 取当前登录账号的完整信息；未登录或账号不存在时返回 nil
@@ -73,45 +72,4 @@ func TenantID(c *gin.Context) uint {
 		return cl.TenantID
 	}
 	return 0
-}
-
-// UintParam 解析路径参数为 uint；解析失败返回 0
-func UintParam(c *gin.Context, key string) uint {
-	v, _ := strconv.ParseUint(c.Param(key), 10, 64)
-	return uint(v)
-}
-
-// QueryInt 解析整型查询参数；缺省或非法时返回 def
-func QueryInt(c *gin.Context, key string, def int) int {
-	s := c.Query(key)
-	if s == "" {
-		return def
-	}
-	v, err := strconv.Atoi(s)
-	if err != nil {
-		return def
-	}
-	return v
-}
-
-// QueryUint 解析无符号整型查询参数；缺省或非法时返回 0
-func QueryUint(c *gin.Context, key string) uint {
-	s := c.Query(key)
-	if s == "" {
-		return 0
-	}
-	v, err := strconv.ParseUint(s, 10, 64)
-	if err != nil {
-		return 0
-	}
-	return uint(v)
-}
-
-// BindJSON 绑定请求体；失败时直接写回「参数格式错误」并返回 false
-func BindJSON(c *gin.Context, out interface{}) bool {
-	if err := c.ShouldBindJSON(out); err != nil {
-		response.Param(c, "参数格式错误")
-		return false
-	}
-	return true
 }

@@ -20,7 +20,7 @@ import (
 	"kefu-server/internal/platform/dto"
 	"kefu-server/internal/platform/model"
 	"kefu-server/internal/platform/realtime"
-	"kefu-server/internal/platform/util"
+	"kefu-server/pkg/util"
 )
 
 // ---------------- 数据统计 ----------------

@@ -2,7 +2,7 @@ package realtime
 
 import (
 	"kefu-server/internal/platform/model"
-	"kefu-server/internal/platform/storage"
+	"kefu-server/pkg/storage"
 )
 
 // ---------------- 基础设施层的数据落库例外 ----------------

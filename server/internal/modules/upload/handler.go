@@ -18,9 +18,9 @@ import (
 	"time"
 
 	"kefu-server/internal/modules/guest"
+	"kefu-server/internal/platform/authctx"
 	"kefu-server/internal/platform/config"
-	"kefu-server/internal/platform/httpx"
-	"kefu-server/internal/platform/response"
+	"kefu-server/pkg/response"
 
 	"github.com/gin-gonic/gin"
 )
@@ -58,7 +58,7 @@ func uploadKind(ext string) string {
 // 客服端与用户端共用；用户端走 /api/guest/upload（无需登录）。
 func UploadHandler(c *gin.Context) {
 	tenantID := uint(0)
-	if cl := httpx.ClaimsFromContext(c); cl != nil {
+	if cl := authctx.ClaimsFromContext(c); cl != nil {
 		tenantID = cl.TenantID
 	} else {
 		tenantID = guest.TenantID(c)

@@ -8,7 +8,7 @@ package channel
 
 import (
 	"kefu-server/internal/platform/model"
-	"kefu-server/internal/platform/storage"
+	"kefu-server/pkg/storage"
 
 	"gorm.io/gorm"
 )

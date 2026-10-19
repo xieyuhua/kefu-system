@@ -18,7 +18,7 @@ type Provider interface {
 	// Name 通道名，用于日志
 	Name() string
 	// Push 向单个设备下发一条提醒
-	Push(d *model.Device, n model.Notification) error
+	Push(d *model.Device, n *model.Notification) error
 }
 
 // PushGateway 推送网关：按设备平台路由到对应厂商通道
@@ -75,7 +75,7 @@ func (p *PushGateway) Enabled() bool { return config.C.Push.Enabled }
 
 // Send 向某用户的所有已注册设备下发一条提醒。
 // 调用入口统一在 platform/realtime/notify.go 的 Notify()，业务代码无需关心。
-func (p *PushGateway) Send(tenantID, userID uint, n model.Notification) {
+func (p *PushGateway) Send(tenantID, userID uint, n *model.Notification) {
 	devices, err := listDevicesForPush(tenantID, userID)
 	if err != nil {
 		log.Printf("[push] 查询设备失败: %v", err)

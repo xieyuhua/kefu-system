@@ -4,12 +4,18 @@
 ```
 kefu/
   server/
-    main.go              启动装配：config → db → seed → route
+    main.go              启动装配：config → db → cache → seed → route
+    pkg/                 通用层（可复用、不依赖 internal）
+      response           统一响应壳
+      storage            GORM 连接/事务/分页
+      cache              缓存抽象（Redis/内存降级，Init(Options)）
+      httpx              通用 gin 辅助（参数解析、JSON 绑定）
+      util               时间等通用工具
     internal/
       route/router.go    路由汇总（唯一真值来源）
       platform/          基础设施，被所有模块依赖
-                         model dto storage setting card idgen util httpx
-                         realtime ipinfo response middleware auth cache config db seed
+                         model dto setting card idgen authctx realtime ipinfo
+                         auth middleware config db seed
       modules/           业务模块，模块内含 handler / service / repository
         account/         登录、个人资料、子账号
         channel/         渠道、渠道类型、二维码

@@ -4,9 +4,9 @@
 //
 //	route              —— 路由汇总，调用各模块导出的处理器
 //	modules/<模块>      —— 模块内再技术分层：handler.go / service.go / repository.go
-//	platform/<基础设施> —— model / dto / response / middleware / auth / cache / config /
-//	                      db / seed / httpx / realtime / ipinfo / util / storage /
-//	                      setting / card / idgen
+//	pkg/<通用层>        —— response / storage / util / cache / httpx（不依赖 internal）
+//	platform/<基础设施> —— model / dto / middleware / auth / authctx / config /
+//	                      db / seed / realtime / ipinfo / setting / card / idgen
 //
 // 各模块的 repository 统一通过本包取连接：
 //

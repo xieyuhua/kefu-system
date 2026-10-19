@@ -8,7 +8,7 @@ import (
 	"encoding/json"
 
 	"kefu-server/internal/platform/model"
-	"kefu-server/internal/platform/util"
+	"kefu-server/pkg/util"
 )
 
 // BuildOrderCard 把订单转成聊天卡片 JSON（供前端发送订单卡片）

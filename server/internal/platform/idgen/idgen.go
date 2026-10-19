@@ -14,7 +14,7 @@ import (
 	"time"
 
 	"kefu-server/internal/platform/model"
-	"kefu-server/internal/platform/storage"
+	"kefu-server/pkg/storage"
 )
 
 // GenerateAppID 生成一个随机、可读的渠道业务标识。

@@ -5,8 +5,9 @@ package customer
 // handler 层不持有数据库连接：参数绑定 → 调本模块 service → 写响应。
 
 import (
-	"kefu-server/internal/platform/httpx"
-	"kefu-server/internal/platform/response"
+	"kefu-server/internal/platform/authctx"
+	"kefu-server/pkg/httpx"
+	"kefu-server/pkg/response"
 
 	"github.com/gin-gonic/gin"
 )
@@ -14,7 +15,7 @@ import (
 // ---------------- 客户 / 历史档案 ----------------
 
 func ListCustomersHandler(c *gin.Context) {
-	paged, err := ListCustomers(httpx.TenantID(c), c.Query("keyword"), httpx.QueryUint(c, "channel_id"),
+	paged, err := ListCustomers(authctx.TenantID(c), c.Query("keyword"), httpx.QueryUint(c, "channel_id"),
 		httpx.QueryInt(c, "page", 1), httpx.QueryInt(c, "page_size", 20))
 	if err != nil {
 		response.Server(c, err.Error())
@@ -24,7 +25,7 @@ func ListCustomersHandler(c *gin.Context) {
 }
 
 func GetCustomerHandler(c *gin.Context) {
-	detail, err := GetCustomerDetail(httpx.TenantID(c), httpx.UintParam(c, "id"))
+	detail, err := GetCustomerDetail(authctx.TenantID(c), httpx.UintParam(c, "id"))
 	if err != nil {
 		response.NotFound(c, err.Error())
 		return
@@ -35,7 +36,7 @@ func GetCustomerHandler(c *gin.Context) {
 // ---------------- 订单 / 商品 ----------------
 
 func ListOrdersHandler(c *gin.Context) {
-	paged, err := ListOrders(httpx.TenantID(c), httpx.QueryUint(c, "user_id"), c.Query("keyword"),
+	paged, err := ListOrders(authctx.TenantID(c), httpx.QueryUint(c, "user_id"), c.Query("keyword"),
 		httpx.QueryInt(c, "page", 1), httpx.QueryInt(c, "page_size", 20))
 	if err != nil {
 		response.Server(c, err.Error())
@@ -45,7 +46,7 @@ func ListOrdersHandler(c *gin.Context) {
 }
 
 func ListProductsHandler(c *gin.Context) {
-	paged, err := ListProducts(httpx.TenantID(c), c.Query("keyword"),
+	paged, err := ListProducts(authctx.TenantID(c), c.Query("keyword"),
 		httpx.QueryInt(c, "page", 1), httpx.QueryInt(c, "page_size", 20))
 	if err != nil {
 		response.Server(c, err.Error())
@@ -57,7 +58,7 @@ func ListProductsHandler(c *gin.Context) {
 // ---------------- 客户标签 ----------------
 
 func ListTagsHandler(c *gin.Context) {
-	list, err := ListTags(httpx.TenantID(c))
+	list, err := ListTags(authctx.TenantID(c))
 	if err != nil {
 		response.Server(c, err.Error())
 		return
@@ -70,7 +71,7 @@ func CreateTagHandler(c *gin.Context) {
 	if !httpx.BindJSON(c, &req) {
 		return
 	}
-	vo, err := CreateTag(httpx.TenantID(c), req)
+	vo, err := CreateTag(authctx.TenantID(c), req)
 	if err != nil {
 		response.Param(c, err.Error())
 		return
@@ -79,7 +80,7 @@ func CreateTagHandler(c *gin.Context) {
 }
 
 func DeleteTagHandler(c *gin.Context) {
-	if err := DeleteTag(httpx.TenantID(c), httpx.UintParam(c, "id")); err != nil {
+	if err := DeleteTag(authctx.TenantID(c), httpx.UintParam(c, "id")); err != nil {
 		response.Server(c, err.Error())
 		return
 	}
@@ -97,7 +98,7 @@ func SetCustomerTagsHandler(c *gin.Context) {
 	if req.TagIDs == nil {
 		req.TagIDs = []uint{}
 	}
-	tags, err := SetCustomerTags(httpx.TenantID(c), httpx.UintParam(c, "id"), httpx.UserID(c), req.TagIDs)
+	tags, err := SetCustomerTags(authctx.TenantID(c), httpx.UintParam(c, "id"), authctx.UserID(c), req.TagIDs)
 	if err != nil {
 		response.Param(c, err.Error())
 		return
@@ -112,7 +113,7 @@ func UpdateCustomerRemarkHandler(c *gin.Context) {
 	if !httpx.BindJSON(c, &req) {
 		return
 	}
-	if err := UpdateCustomerRemark(httpx.TenantID(c), httpx.UintParam(c, "id"), req.Remark); err != nil {
+	if err := UpdateCustomerRemark(authctx.TenantID(c), httpx.UintParam(c, "id"), req.Remark); err != nil {
 		response.Server(c, err.Error())
 		return
 	}

@@ -5,13 +5,13 @@ import (
 	"os"
 
 	"kefu-server/internal/modules/account"
-	"kefu-server/internal/platform/cache"
 	"kefu-server/internal/platform/config"
 	"kefu-server/internal/platform/db"
 	"kefu-server/internal/platform/realtime"
 	"kefu-server/internal/platform/seed"
-	"kefu-server/internal/platform/storage"
 	"kefu-server/internal/route"
+	"kefu-server/pkg/cache"
+	"kefu-server/pkg/storage"
 )
 
 func main() {
@@ -26,12 +26,19 @@ func main() {
 	if err := db.Init(); err != nil {
 		log.Fatalf("数据库初始化失败: %v", err)
 	}
-	// 数据访问层接管数据库连接（各模块 repository 统一通过 platform/storage 取连接）
+	// 数据访问层接管数据库连接（各模块 repository 统一通过 pkg/storage 取连接）
 	storage.SetDB(db.DB)
 	log.Printf("数据库就绪: driver=%s", config.C.Database.Driver)
 
 	// Redis（可选，未启用时自动降级为内存实现，单机无需依赖）
-	if err := cache.Init(); err != nil {
+	// 配置项由 main 转成 cache.Options：pkg/cache 不认识 config 包。
+	if err := cache.Init(cache.Options{
+		Enabled:  config.C.Redis.Enabled,
+		Addr:     config.C.Redis.Addr,
+		Password: config.C.Redis.Password,
+		DB:       config.C.Redis.DB,
+		Prefix:   config.C.Redis.Prefix,
+	}); err != nil {
 		log.Printf("缓存初始化警告: %v", err)
 	}
 	_ = os.MkdirAll(config.C.Upload.Dir, 0755)

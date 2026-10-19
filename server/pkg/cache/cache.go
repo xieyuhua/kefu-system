@@ -8,10 +8,17 @@ import (
 	"sync"
 	"time"
 
-	"kefu-server/internal/platform/config"
-
 	"github.com/redis/go-redis/v9"
 )
+
+// Options 缓存后端配置。由调用方（main）从应用配置填充，pkg 层不认识 config 包。
+type Options struct {
+	Enabled  bool
+	Addr     string
+	Password string
+	DB       int
+	Prefix   string
+}
 
 // Envelope 跨实例广播的信封（走 Redis Pub/Sub）。
 type Envelope struct {
@@ -46,19 +53,19 @@ func newInstanceID() string {
 }
 
 // Init 初始化驱动。Redis 未启用或连接失败时静默降级。
-func Init() error {
-	if !config.C.Redis.Enabled {
+func Init(opts Options) error {
+	if !opts.Enabled {
 		drv = &memoryDriver{m: map[string]item{}}
 		log.Println("[cache] redis disabled, using in-memory driver (single node mode)")
 		return nil
 	}
 	rd := &redisDriver{
 		client: redis.NewClient(&redis.Options{
-			Addr:     config.C.Redis.Addr,
-			Password: config.C.Redis.Password,
-			DB:       config.C.Redis.DB,
+			Addr:     opts.Addr,
+			Password: opts.Password,
+			DB:       opts.DB,
 		}),
-		prefix: config.C.Redis.Prefix,
+		prefix: opts.Prefix,
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
@@ -68,7 +75,7 @@ func Init() error {
 		return nil
 	}
 	drv = rd
-	log.Printf("[cache] redis connected: %s (distributed mode, instance=%s)", config.C.Redis.Addr, InstanceID)
+	log.Printf("[cache] redis connected: %s (distributed mode, instance=%s)", opts.Addr, InstanceID)
 	return nil
 }
 

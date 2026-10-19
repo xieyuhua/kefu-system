@@ -14,11 +14,11 @@ import (
 	"kefu-server/internal/modules/automation"
 	"kefu-server/internal/modules/chat"
 	"kefu-server/internal/platform/dto"
-	"kefu-server/internal/platform/httpx"
 	"kefu-server/internal/platform/ipinfo"
 	"kefu-server/internal/platform/model"
 	"kefu-server/internal/platform/realtime"
-	"kefu-server/internal/platform/response"
+	"kefu-server/pkg/httpx"
+	"kefu-server/pkg/response"
 
 	"github.com/gin-gonic/gin"
 )

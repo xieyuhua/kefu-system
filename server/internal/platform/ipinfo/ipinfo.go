@@ -9,10 +9,10 @@ import (
 	"sync"
 	"time"
 
-	"kefu-server/internal/platform/cache"
 	"kefu-server/internal/platform/config"
 	"kefu-server/internal/platform/model"
-	"kefu-server/internal/platform/storage"
+	"kefu-server/pkg/cache"
+	"kefu-server/pkg/storage"
 )
 
 // ---------------- IP 归属地解析 ----------------

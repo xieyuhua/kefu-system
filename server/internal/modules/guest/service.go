@@ -107,17 +107,17 @@ func LatestConversationOfCustomer(tenantID, customerID uint) (*model.Conversatio
 
 // FindGuestConversation 定位（或创建）某渠道下某个外部用户的客户与会话。
 // 用户端 WebSocket 与 guest/init 共用，保证两端拿到的是同一个会话。
-func FindGuestConversation(tenantID, channelID uint, externalID string) (model.Customer, uint, error) {
+func FindGuestConversation(tenantID, channelID uint, externalID string) (*model.Customer, uint, error) {
 	cu, err := customer.FindCustomerByChannelExternalID(tenantID, channelID, externalID)
 	if err != nil {
-		return model.Customer{}, 0, errors.New("会话不存在，请先调用 /api/guest/init")
+		return nil, 0, errors.New("会话不存在，请先调用 /api/guest/init")
 	}
 	// 复用最近一个会话（含 closed/archived，自动激活），保证聊天记录合并
 	conv, err := chat.FindOrCreateConversation(tenantID, cu.ID, channelID)
 	if err != nil {
-		return *cu, 0, err
+		return cu, 0, err
 	}
-	return *cu, conv.ID, nil
+	return cu, conv.ID, nil
 }
 
 // LookupOrderCard 按订单号取订单并转成聊天订单卡片；找不到返回 nil（响应里表现为 null）。

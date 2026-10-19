@@ -2,7 +2,7 @@ package realtime
 
 import (
 	"kefu-server/internal/platform/model"
-	"kefu-server/internal/platform/util"
+	"kefu-server/pkg/util"
 )
 
 // ---------------- 提醒与消息的统一出口 ----------------
@@ -36,7 +36,7 @@ func Notify(tenantID, userID uint, typ, title, body string, convID uint) {
 
 	// APP 厂商推送（预留）：此处按设备 token 调用推送网关，
 	// 实际接入 APNs/极光/个推时在 pushGateway 里实现即可。
-	pushGateway.Send(tenantID, userID, n)
+	pushGateway.Send(tenantID, userID, &n)
 }
 
 // PublishMessage 把一条新消息同时推给客服端与用户端（访客）。

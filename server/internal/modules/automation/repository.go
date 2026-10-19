@@ -9,7 +9,7 @@ package automation
 
 import (
 	"kefu-server/internal/platform/model"
-	"kefu-server/internal/platform/storage"
+	"kefu-server/pkg/storage"
 )
 
 // ---------------- 自动回复规则（AutoReply）数据访问 ----------------

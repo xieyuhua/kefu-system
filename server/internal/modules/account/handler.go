@@ -6,10 +6,11 @@ package account
 
 import (
 	"kefu-server/internal/platform/auth"
-	"kefu-server/internal/platform/cache"
+	"kefu-server/internal/platform/authctx"
 	"kefu-server/internal/platform/dto"
-	"kefu-server/internal/platform/httpx"
-	"kefu-server/internal/platform/response"
+	"kefu-server/pkg/cache"
+	"kefu-server/pkg/httpx"
+	"kefu-server/pkg/response"
 
 	"github.com/gin-gonic/gin"
 )
@@ -42,7 +43,7 @@ func LoginHandler(c *gin.Context) {
 
 // MeHandler 当前登录用户信息（前端刷新后恢复登录态用）。
 func MeHandler(c *gin.Context) {
-	u := httpx.CurrentUser(c)
+	u := authctx.CurrentUser(c)
 	if u == nil {
 		return
 	}
@@ -63,7 +64,7 @@ func LogoutHandler(c *gin.Context) {
 	if token != "" {
 		auth.RevokeToken(token)
 	}
-	if u := httpx.CurrentUser(c); u != nil {
+	if u := authctx.CurrentUser(c); u != nil {
 		_ = SetOnline(u.TenantID, u.ID, false)
 		cache.Get().Del(cache.OnlineKey(u.TenantID, u.ID))
 	}
@@ -100,7 +101,7 @@ func authFail(c *gin.Context, e *AuthError) {
 
 // UpdateProfileHandler 修改当前登录账号的昵称与头像
 func UpdateProfileHandler(c *gin.Context) {
-	u := httpx.CurrentUser(c)
+	u := authctx.CurrentUser(c)
 	if u == nil {
 		response.Unauth(c, "未登录")
 		return
@@ -125,7 +126,7 @@ func UpdateProfileHandler(c *gin.Context) {
 
 // ChangePasswordHandler 修改当前登录账号的密码
 func ChangePasswordHandler(c *gin.Context) {
-	u := httpx.CurrentUser(c)
+	u := authctx.CurrentUser(c)
 	if u == nil {
 		response.Unauth(c, "未登录")
 		return
@@ -147,20 +148,20 @@ func ChangePasswordHandler(c *gin.Context) {
 //   - admin：看全部
 //   - agent：带 ?scope=transfer 时可看「与自己接待渠道有交集」的在线客服（用于会话转接）
 func ListAgentsHandler(c *gin.Context) {
-	if !httpx.IsAdmin(c) && c.Query("scope") != "transfer" {
+	if !authctx.IsAdmin(c) && c.Query("scope") != "transfer" {
 		response.Forbid(c, "仅管理员可查看")
 		return
 	}
-	list, err := ListAgents(httpx.TenantID(c))
+	list, err := ListAgents(authctx.TenantID(c))
 	if err != nil {
 		response.Server(c, err.Error())
 		return
 	}
-	if !httpx.IsAdmin(c) {
+	if !authctx.IsAdmin(c) {
 		// 非管理员只返回在线、且未停用的同事
 		filtered := make([]dto.AgentVO, 0, len(list))
 		for _, a := range list {
-			if a.Online && a.Enabled && a.ID != httpx.UserID(c) {
+			if a.Online && a.Enabled && a.ID != authctx.UserID(c) {
 				filtered = append(filtered, a)
 			}
 		}
@@ -170,7 +171,7 @@ func ListAgentsHandler(c *gin.Context) {
 }
 
 func CreateAgentHandler(c *gin.Context) {
-	if !httpx.IsAdmin(c) {
+	if !authctx.IsAdmin(c) {
 		response.Forbid(c, "仅管理员可操作")
 		return
 	}
@@ -178,7 +179,7 @@ func CreateAgentHandler(c *gin.Context) {
 	if !httpx.BindJSON(c, &req) {
 		return
 	}
-	vo, err := CreateAgent(httpx.TenantID(c), req)
+	vo, err := CreateAgent(authctx.TenantID(c), req)
 	if err != nil {
 		response.Param(c, err.Error())
 		return
@@ -187,7 +188,7 @@ func CreateAgentHandler(c *gin.Context) {
 }
 
 func UpdateAgentHandler(c *gin.Context) {
-	if !httpx.IsAdmin(c) {
+	if !authctx.IsAdmin(c) {
 		response.Forbid(c, "仅管理员可操作")
 		return
 	}
@@ -195,7 +196,7 @@ func UpdateAgentHandler(c *gin.Context) {
 	if !httpx.BindJSON(c, &req) {
 		return
 	}
-	if err := UpdateAgent(httpx.TenantID(c), httpx.UintParam(c, "id"), req); err != nil {
+	if err := UpdateAgent(authctx.TenantID(c), httpx.UintParam(c, "id"), req); err != nil {
 		response.Param(c, err.Error())
 		return
 	}
@@ -203,11 +204,11 @@ func UpdateAgentHandler(c *gin.Context) {
 }
 
 func DeleteAgentHandler(c *gin.Context) {
-	if !httpx.IsAdmin(c) {
+	if !authctx.IsAdmin(c) {
 		response.Forbid(c, "仅管理员可操作")
 		return
 	}
-	if err := DeleteAgent(httpx.TenantID(c), httpx.UintParam(c, "id")); err != nil {
+	if err := DeleteAgent(authctx.TenantID(c), httpx.UintParam(c, "id")); err != nil {
 		response.Server(c, err.Error())
 		return
 	}
@@ -220,7 +221,7 @@ func SetOnlineHandler(c *gin.Context) {
 	}
 	_ = c.ShouldBindJSON(&body)
 	target := httpx.UintParam(c, "id")
-	cl := httpx.ClaimsFromContext(c)
+	cl := authctx.ClaimsFromContext(c)
 	if cl == nil {
 		return
 	}
@@ -228,7 +229,7 @@ func SetOnlineHandler(c *gin.Context) {
 		response.Forbid(c, "只能修改自己的在线状态")
 		return
 	}
-	if err := SetOnline(httpx.TenantID(c), target, body.Online); err != nil {
+	if err := SetOnline(authctx.TenantID(c), target, body.Online); err != nil {
 		response.Server(c, err.Error())
 		return
 	}

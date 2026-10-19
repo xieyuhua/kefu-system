@@ -9,9 +9,10 @@ import (
 	"net/http"
 	"net/url"
 
+	"kefu-server/internal/platform/authctx"
 	"kefu-server/internal/platform/dto"
-	"kefu-server/internal/platform/httpx"
-	"kefu-server/internal/platform/response"
+	"kefu-server/pkg/httpx"
+	"kefu-server/pkg/response"
 
 	"github.com/gin-gonic/gin"
 )
@@ -19,7 +20,7 @@ import (
 // ---------------- 渠道 ----------------
 
 func ListChannelsHandler(c *gin.Context) {
-	list, err := ListChannels(httpx.TenantID(c), httpx.UserID(c), httpx.IsAdmin(c))
+	list, err := ListChannels(authctx.TenantID(c), authctx.UserID(c), authctx.IsAdmin(c))
 	if err != nil {
 		response.Server(c, err.Error())
 		return
@@ -28,7 +29,7 @@ func ListChannelsHandler(c *gin.Context) {
 }
 
 func CreateChannelHandler(c *gin.Context) {
-	if !httpx.IsAdmin(c) {
+	if !authctx.IsAdmin(c) {
 		response.Forbid(c, "仅管理员可操作")
 		return
 	}
@@ -36,7 +37,7 @@ func CreateChannelHandler(c *gin.Context) {
 	if !httpx.BindJSON(c, &req) {
 		return
 	}
-	vo, err := CreateChannel(httpx.TenantID(c), req)
+	vo, err := CreateChannel(authctx.TenantID(c), req)
 	if err != nil {
 		response.Param(c, err.Error())
 		return
@@ -45,7 +46,7 @@ func CreateChannelHandler(c *gin.Context) {
 }
 
 func UpdateChannelHandler(c *gin.Context) {
-	if !httpx.IsAdmin(c) {
+	if !authctx.IsAdmin(c) {
 		response.Forbid(c, "仅管理员可操作")
 		return
 	}
@@ -53,7 +54,7 @@ func UpdateChannelHandler(c *gin.Context) {
 	if !httpx.BindJSON(c, &req) {
 		return
 	}
-	if err := UpdateChannel(httpx.TenantID(c), httpx.UintParam(c, "id"), req); err != nil {
+	if err := UpdateChannel(authctx.TenantID(c), httpx.UintParam(c, "id"), req); err != nil {
 		response.Param(c, err.Error())
 		return
 	}
@@ -61,11 +62,11 @@ func UpdateChannelHandler(c *gin.Context) {
 }
 
 func DeleteChannelHandler(c *gin.Context) {
-	if !httpx.IsAdmin(c) {
+	if !authctx.IsAdmin(c) {
 		response.Forbid(c, "仅管理员可操作")
 		return
 	}
-	if err := DeleteChannel(httpx.TenantID(c), httpx.UintParam(c, "id")); err != nil {
+	if err := DeleteChannel(authctx.TenantID(c), httpx.UintParam(c, "id")); err != nil {
 		response.Server(c, err.Error())
 		return
 	}
@@ -74,14 +75,14 @@ func DeleteChannelHandler(c *gin.Context) {
 
 // ResetChannelAppIDHandler 重置渠道标识（app_id），生成新的随机值
 func ResetChannelAppIDHandler(c *gin.Context) {
-	appID, err := ResetChannelAppID(httpx.TenantID(c), httpx.UintParam(c, "id"))
+	appID, err := ResetChannelAppID(authctx.TenantID(c), httpx.UintParam(c, "id"))
 	if err != nil {
 		response.Param(c, err.Error())
 		return
 	}
 	response.OK(c, map[string]interface{}{
 		"app_id":     appID,
-		"access_url": AccessURLByAppID(httpx.TenantID(c), httpx.UintParam(c, "id"), ""),
+		"access_url": AccessURLByAppID(authctx.TenantID(c), httpx.UintParam(c, "id"), ""),
 	})
 }
 
@@ -89,7 +90,7 @@ func ResetChannelAppIDHandler(c *gin.Context) {
 
 // ChannelQRPNGHandler 返回 PNG 图片本身，便于前端直接下载（GET /api/channels/:id/qr.png?size=320）
 func ChannelQRPNGHandler(c *gin.Context) {
-	vo, err := ChannelQR(httpx.TenantID(c), httpx.UintParam(c, "id"),
+	vo, err := ChannelQR(authctx.TenantID(c), httpx.UintParam(c, "id"),
 		c.Query("base"), httpx.QueryInt(c, "size", 320))
 	if err != nil {
 		response.Param(c, err.Error())
@@ -102,7 +103,7 @@ func ChannelQRPNGHandler(c *gin.Context) {
 
 // ChannelQRInfoHandler 返回 base64 + 地址，便于页面内联展示与复制
 func ChannelQRInfoHandler(c *gin.Context) {
-	vo, err := ChannelQR(httpx.TenantID(c), httpx.UintParam(c, "id"),
+	vo, err := ChannelQR(authctx.TenantID(c), httpx.UintParam(c, "id"),
 		c.Query("base"), httpx.QueryInt(c, "size", 320))
 	if err != nil {
 		response.Param(c, err.Error())
@@ -114,7 +115,7 @@ func ChannelQRInfoHandler(c *gin.Context) {
 // ---------------- 渠道接待账号快速设置 ----------------
 
 func ListChannelAgentsHandler(c *gin.Context) {
-	list, err := ListChannelAgents(httpx.TenantID(c), httpx.UintParam(c, "id"))
+	list, err := ListChannelAgents(authctx.TenantID(c), httpx.UintParam(c, "id"))
 	if err != nil {
 		response.Param(c, err.Error())
 		return
@@ -123,7 +124,7 @@ func ListChannelAgentsHandler(c *gin.Context) {
 }
 
 func SetChannelAgentsHandler(c *gin.Context) {
-	if !httpx.IsAdmin(c) {
+	if !authctx.IsAdmin(c) {
 		response.Forbid(c, "仅管理员可操作")
 		return
 	}
@@ -136,7 +137,7 @@ func SetChannelAgentsHandler(c *gin.Context) {
 	if req.UserIDs == nil {
 		req.UserIDs = []uint{}
 	}
-	list, err := SetChannelAgents(httpx.TenantID(c), httpx.UintParam(c, "id"), req.UserIDs)
+	list, err := SetChannelAgents(authctx.TenantID(c), httpx.UintParam(c, "id"), req.UserIDs)
 	if err != nil {
 		response.Param(c, err.Error())
 		return
@@ -147,7 +148,7 @@ func SetChannelAgentsHandler(c *gin.Context) {
 // ---------------- 渠道类型库（可自定义，不限制枚举） ----------------
 
 func ListChannelTypesHandler(c *gin.Context) {
-	list, err := ListChannelTypes(httpx.TenantID(c))
+	list, err := ListChannelTypes(authctx.TenantID(c))
 	if err != nil {
 		response.Server(c, err.Error())
 		return
@@ -160,7 +161,7 @@ func CreateChannelTypeHandler(c *gin.Context) {
 	if !httpx.BindJSON(c, &req) {
 		return
 	}
-	vo, err := CreateChannelType(httpx.TenantID(c), req)
+	vo, err := CreateChannelType(authctx.TenantID(c), req)
 	if err != nil {
 		response.Param(c, err.Error())
 		return
@@ -173,7 +174,7 @@ func UpdateChannelTypeHandler(c *gin.Context) {
 	if !httpx.BindJSON(c, &req) {
 		return
 	}
-	if err := UpdateChannelType(httpx.TenantID(c), httpx.UintParam(c, "id"), req); err != nil {
+	if err := UpdateChannelType(authctx.TenantID(c), httpx.UintParam(c, "id"), req); err != nil {
 		response.Param(c, err.Error())
 		return
 	}
@@ -181,7 +182,7 @@ func UpdateChannelTypeHandler(c *gin.Context) {
 }
 
 func DeleteChannelTypeHandler(c *gin.Context) {
-	if err := DeleteChannelType(httpx.TenantID(c), httpx.UintParam(c, "id")); err != nil {
+	if err := DeleteChannelType(authctx.TenantID(c), httpx.UintParam(c, "id")); err != nil {
 		response.Param(c, err.Error())
 		return
 	}

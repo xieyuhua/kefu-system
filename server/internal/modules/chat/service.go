@@ -23,24 +23,24 @@ import (
 	"kefu-server/internal/modules/account"
 	"kefu-server/internal/modules/channel"
 	"kefu-server/internal/modules/customer"
+	"kefu-server/internal/platform/authctx"
 	"kefu-server/internal/platform/dto"
-	"kefu-server/internal/platform/httpx"
 	"kefu-server/internal/platform/ipinfo"
 	"kefu-server/internal/platform/model"
 	"kefu-server/internal/platform/realtime"
-	"kefu-server/internal/platform/response"
-	"kefu-server/internal/platform/util"
+	"kefu-server/pkg/response"
+	"kefu-server/pkg/util"
 )
 
 // ---------------- 基础设施层回调注册 ----------------
 // platform 下的包不反向依赖业务模块，涉及业务逻辑的部分在这里注册回调：
 //   - realtime：客服最后一个连接断开 → 释放其接待中的会话
-//   - httpx：按租户 + 账号 ID 载入账号（httpx.CurrentUser 用）
+//   - authctx：按租户 + 账号 ID 载入账号（authctx.CurrentUser 用）
 // 这两个回调用到的是 chat / account 的能力，因此注册点落在 chat 模块的 init 里。
 
 func init() {
 	realtime.SetAgentOfflineHook(releaseAgentConversations)
-	httpx.SetUserLoader(account.LoadUser)
+	authctx.SetUserLoader(account.LoadUser)
 }
 
 // releaseAgentConversations 把某客服正在接待的会话全部置回「待接待」。

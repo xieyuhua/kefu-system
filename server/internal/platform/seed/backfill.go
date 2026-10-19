@@ -20,7 +20,7 @@ func EnsureDemoAssets() {
 // 老渠道的 app_id 为空，接入链接无法区分同类型的多个渠道，这里启动时自动补一个。
 // 幂等：已有 app_id 的渠道不会改动，因此重启不会让已分发的链接失效。
 func BackfillChannelAppID() {
-	var list []model.Channel
+	var list []*model.Channel
 	if err := db.DB.Find(&list).Error; err != nil {
 		return
 	}
