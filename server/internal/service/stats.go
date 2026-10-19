@@ -3,7 +3,7 @@ package service
 import (
 	"time"
 
-	"kefu-server/internal/model"
+	"kefu-server/internal/repository"
 )
 
 // ---------------- 数据统计 ----------------
@@ -83,81 +83,60 @@ func StatsOverviewData(tenantID uint, days int) (*StatsOverview, error) {
 		to := from.AddDate(0, 0, 1)
 		p := DailyPoint{Date: from.Format("2006-01-02")}
 
-		gormDB().Model(&model.Conversation{}).
-			Where("tenant_id = ? AND created_at >= ? AND created_at < ?", tenantID, from, to).Count(&p.Total)
-		gormDB().Model(&model.Conversation{}).
-			Where("tenant_id = ? AND created_at >= ? AND created_at < ? AND agent_id > 0", tenantID, from, to).Count(&p.Handled)
-		gormDB().Model(&model.Conversation{}).
-			Where("tenant_id = ? AND created_at >= ? AND created_at < ? AND status = 'closed'", tenantID, from, to).Count(&p.Closed)
-		gormDB().Model(&model.Conversation{}).
-			Where("tenant_id = ? AND created_at >= ? AND created_at < ? AND status = 'pending'", tenantID, from, to).Count(&p.Pending)
-		gormDB().Model(&model.Message{}).
-			Where("tenant_id = ? AND created_at >= ? AND created_at < ?", tenantID, from, to).Count(&p.Messages)
-		gormDB().Model(&model.Message{}).
-			Where("tenant_id = ? AND created_at >= ? AND created_at < ? AND direction = 'in'", tenantID, from, to).Count(&p.CustomerMs)
-		gormDB().Model(&model.Message{}).
-			Where("tenant_id = ? AND created_at >= ? AND created_at < ? AND direction = 'out'", tenantID, from, to).Count(&p.AgentMs)
+		// 每项都是一条独立查询：pending/open/closed 不能合并，避免条件互相污染。
+		// 单项统计失败按 0 处理，概览页始终可渲染（与原实现一致的容错口径）。
+		p.Total, _ = repository.CountConversationsInRange(tenantID, from, to)
+		p.Handled, _ = repository.CountHandledConversationsInRange(tenantID, from, to)
+		p.Closed, _ = repository.CountConversationsInRangeByStatus(tenantID, from, to, "closed")
+		p.Pending, _ = repository.CountConversationsInRangeByStatus(tenantID, from, to, "pending")
+		p.Messages, _ = repository.CountMessagesInRange(tenantID, from, to)
+		p.CustomerMs, _ = repository.CountMessagesInRangeByDirection(tenantID, from, to, "in")
+		p.AgentMs, _ = repository.CountMessagesInRangeByDirection(tenantID, from, to, "out")
 
 		out.Trend = append(out.Trend, p)
 	}
 
 	// 客服工作量：包含所有接待过会话的账号（admin 也算）
 	// 注意：不能简单按 role='agent' 过滤 —— SAAS 管理员常常也亲自坐席
-	var users []model.User
-	gormDB().Where("tenant_id = ?", tenantID).Order("role desc, id asc").Find(&users)
+	users, _ := repository.ListUsersForStats(tenantID)
 	for _, u := range users {
 		// 跳过完全没有参与接待的客服，表格更精炼
-		var handled int64
-		gormDB().Model(&model.Conversation{}).
-			Where("tenant_id = ? AND agent_id = ?", tenantID, u.ID).Count(&handled)
+		handled, _ := repository.CountAgentConversations(tenantID, u.ID)
 		if handled == 0 && !u.Online {
 			continue
 		}
 		s := AgentStat{AgentID: u.ID, Name: u.Name, Avatar: u.Avatar, Role: u.Role}
 		s.Handled = handled
-		gormDB().Model(&model.Conversation{}).
-			Where("tenant_id = ? AND agent_id = ? AND status = 'closed'", tenantID, u.ID).Count(&s.Closed)
-		gormDB().Model(&model.Conversation{}).
-			Where("tenant_id = ? AND agent_id = ? AND status = 'open'", tenantID, u.ID).Count(&s.ActiveNow)
+		s.Closed, _ = repository.CountAgentConversationsByStatus(tenantID, u.ID, "closed")
+		s.ActiveNow, _ = repository.CountAgentConversationsByStatus(tenantID, u.ID, "open")
 		// 最近 N 天的消息数（与表头 "最近 N 天" 对齐）
-		gormDB().Model(&model.Message{}).
-			Where("tenant_id = ? AND sender_id = ? AND sender_role = 'user' AND created_at >= ?",
-				tenantID, u.ID, start).Count(&s.Messages)
+		s.Messages, _ = repository.CountAgentMessagesSince(tenantID, u.ID, start)
 		out.Agents = append(out.Agents, s)
 	}
 
 	// 渠道分布：最近 N 天的会话（与趋势图、客服工作量时间口径一致）
-	var chs []model.Channel
-	gormDB().Where("tenant_id = ?", tenantID).Order("id asc").Find(&chs)
+	chs, _ := repository.ListChannelsForStats(tenantID)
 	for _, c := range chs {
 		s := ChannelStat{ChannelID: c.ID, Name: c.Name, Type: c.Type}
-		gormDB().Model(&model.Conversation{}).
-			Where("tenant_id = ? AND channel_id = ? AND created_at >= ?", tenantID, c.ID, start).Count(&s.Total)
-		gormDB().Model(&model.Conversation{}).
-			Where("tenant_id = ? AND channel_id = ? AND status = 'pending' AND created_at >= ?", tenantID, c.ID, start).Count(&s.Pending)
-		gormDB().Model(&model.Conversation{}).
-			Where("tenant_id = ? AND channel_id = ? AND status = 'open' AND created_at >= ?", tenantID, c.ID, start).Count(&s.Open)
-		gormDB().Model(&model.Conversation{}).
-			Where("tenant_id = ? AND channel_id = ? AND status = 'closed' AND created_at >= ?", tenantID, c.ID, start).Count(&s.Closed)
+		s.Total, _ = repository.CountChannelConversationsSince(tenantID, c.ID, start)
+		s.Pending, _ = repository.CountChannelConversationsSinceByStatus(tenantID, c.ID, start, "pending")
+		s.Open, _ = repository.CountChannelConversationsSinceByStatus(tenantID, c.ID, start, "open")
+		s.Closed, _ = repository.CountChannelConversationsSinceByStatus(tenantID, c.ID, start, "closed")
 		out.Channels = append(out.Channels, s)
 	}
 
 	// 汇总
-	gormDB().Model(&model.Conversation{}).Where("tenant_id = ?", tenantID).Count(&out.Summary.TotalConversations)
-	var handled int64
-	gormDB().Model(&model.Conversation{}).Where("tenant_id = ? AND agent_id > 0", tenantID).Count(&handled)
+	out.Summary.TotalConversations, _ = repository.CountTenantConversations(tenantID)
+	handled, _ := repository.CountTenantHandledConversations(tenantID)
 	if out.Summary.TotalConversations > 0 {
 		out.Summary.HandledRate = float64(handled) / float64(out.Summary.TotalConversations) * 100
-		var msgCount int64
-		gormDB().Model(&model.Message{}).Where("tenant_id = ?", tenantID).Count(&msgCount)
+		msgCount, _ := repository.CountTenantMessages(tenantID)
 		out.Summary.AvgMessages = float64(msgCount) / float64(out.Summary.TotalConversations)
 	}
-	gormDB().Model(&model.Customer{}).Where("tenant_id = ?", tenantID).Count(&out.Summary.Customers)
-	gormDB().Model(&model.Customer{}).
-		Where("tenant_id = ? AND created_at >= ?", tenantID, start).Count(&out.Summary.NewCustomers)
-	gormDB().Model(&model.Order{}).Where("tenant_id = ?", tenantID).Count(&out.Summary.Orders)
-	gormDB().Model(&model.User{}).
-		Where("tenant_id = ? AND online = ?", tenantID, true).Count(&out.Summary.OnlineAgents)
+	out.Summary.Customers, _ = repository.CountTenantCustomers(tenantID)
+	out.Summary.NewCustomers, _ = repository.CountNewCustomersSince(tenantID, start)
+	out.Summary.Orders, _ = repository.CountTenantOrders(tenantID)
+	out.Summary.OnlineAgents, _ = repository.CountOnlineAgents(tenantID)
 
 	return out, nil
 }

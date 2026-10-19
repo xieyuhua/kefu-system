@@ -1,10 +1,8 @@
-package api
+package handler
 
 import (
-	"encoding/json"
 	"errors"
 	"strings"
-	"time"
 
 	"kefu-server/internal/dto"
 	"kefu-server/internal/model"
@@ -16,28 +14,18 @@ import (
 
 // 用户端（客户端）接口：所有参数通过 GET query 传递，便于运营直接拼链接投放。
 //   /c?channel=web&uid=u_10001&nickname=王小明&order_no=SO...&pid=P10086
+//
+// 本文件只做参数解析与响应包装：客户识别、会话定位、订单 / 商品卡片查询都在 service 层。
 
 var errNoChannel = errors.New("渠道不存在")
 
-// resolveChannel 解析用户端接入参数 channel。
-//
-// 优先按 app_id 匹配 —— 这是渠道的业务唯一标识（同一类型可配多个渠道，只有它能区分）。
-// 同时兼容历史写法：渠道类型（wechat / web / ...）与数字渠道 ID。
+// resolveChannel 解析用户端接入参数 channel（用户端页面与 WebSocket 共用）。
 func resolveChannel(c *gin.Context, tenantID uint) (*model.Channel, error) {
-	key := strings.TrimSpace(c.Query("channel"))
-	if key == "" {
+	ch, err := service.ResolveGuestChannel(tenantID, c.Query("channel"))
+	if err != nil {
 		return nil, errNoChannel
 	}
-	var ch model.Channel
-	// ① app_id 精确匹配
-	if err := db.Where("tenant_id = ? AND app_id = ?", tenantID, key).First(&ch).Error; err == nil {
-		return &ch, nil
-	}
-	// ② 兼容：类型或数字 ID
-	if err := db.Where("tenant_id = ? AND (type = ? OR id = ?)", tenantID, key, key).First(&ch).Error; err == nil {
-		return &ch, nil
-	}
-	return nil, errNoChannel
+	return ch, nil
 }
 
 // GuestInit 用户端页面初始化：拿到渠道、客户、会话、欢迎语、上下文卡片
@@ -58,22 +46,12 @@ func GuestInit(c *gin.Context) {
 	}
 
 	// 找到或创建客户
-	var cu model.Customer
-	if err := gormDB().Where("tenant_id = ? AND channel_id = ? AND external_id = ?",
-		tenantID, ch.ID, uid).First(&cu).Error; err != nil {
-		nickname := strings.TrimSpace(c.Query("nickname"))
-		if nickname == "" {
-			nickname = "游客" + uid[len(uid)-4:]
-		}
-		now := time.Now()
-		cu = model.Customer{
-			TenantID: tenantID, ChannelID: ch.ID, ExternalID: uid,
-			Nickname: nickname, Avatar: c.Query("avatar"), Phone: c.Query("phone"),
-			IP:         service.ClientIP(c.Request.RemoteAddr, c.Request.Header),
-			LastSeenAt: &now,
-		}
-		gormDB().Create(&cu)
-		service.RecordCustomerIP(cu.ID, cu.IP)
+	ip := service.ClientIP(c.Request.RemoteAddr, c.Request.Header)
+	cu, err := service.EnsureGuestCustomer(tenantID, ch, uid,
+		c.Query("nickname"), c.Query("avatar"), c.Query("phone"), ip)
+	if err != nil {
+		response.Server(c, err.Error())
+		return
 	}
 
 	// 定位或创建会话：同一客户始终复用最近一个会话（closed/archived 自动激活），
@@ -84,26 +62,14 @@ func GuestInit(c *gin.Context) {
 		return
 	}
 
-	// 上下文：订单 / 商品
-	var orderCard map[string]interface{}
-	if no := strings.TrimSpace(c.Query("order_no")); no != "" {
-		var o model.Order
-		if gormDB().Where("tenant_id = ? AND order_no = ?", tenantID, no).First(&o).Error == nil {
-			_ = json.Unmarshal([]byte(service.BuildOrderCard(o)), &orderCard)
-		}
-	}
-	var productCard map[string]interface{}
-	if pid := strings.TrimSpace(c.Query("pid")); pid != "" {
-		var p model.Product
-		if gormDB().Where("tenant_id = ? AND p_id = ?", tenantID, pid).First(&p).Error == nil {
-			_ = json.Unmarshal([]byte(service.BuildProductCard(p)), &productCard)
-		}
-	}
+	// 上下文卡片：订单 / 商品
+	orderCard := service.LookupOrderCard(tenantID, strings.TrimSpace(c.Query("order_no")))
+	productCard := service.LookupProductCard(tenantID, strings.TrimSpace(c.Query("pid")))
 
 	history, _ := service.ListMessages(tenantID, conv.ID, 0, 20)
 
 	// 每次访问都刷新 IP 与归属城市（展示在客服工作台的会话列表）
-	service.RecordCustomerIP(cu.ID, service.ClientIP(c.Request.RemoteAddr, c.Request.Header))
+	service.RecordCustomerIP(cu.ID, ip)
 
 	response.OK(c, gin.H{
 		"channel": gin.H{
@@ -147,10 +113,8 @@ func GuestSend(c *gin.Context) {
 		return
 	}
 
-	uid := strings.TrimSpace(c.Query("uid"))
-	var cu model.Customer
-	if err := gormDB().Where("tenant_id = ? AND channel_id = ? AND external_id = ?",
-		tenantID, ch.ID, uid).First(&cu).Error; err != nil {
+	cu, err := service.FindGuestCustomer(tenantID, ch.ID, strings.TrimSpace(c.Query("uid")))
+	if err != nil {
 		response.Param(c, "请先调用 /api/guest/init 初始化会话")
 		return
 	}
@@ -189,15 +153,13 @@ func GuestMessages(c *gin.Context) {
 		response.Param(c, "缺少租户参数 tenant")
 		return
 	}
-	var cu model.Customer
-	if err := gormDB().Where("tenant_id = ? AND external_id = ?", tenantID, c.Query("uid")).
-		First(&cu).Error; err != nil {
+	cu, err := service.FindGuestCustomerByExternalID(tenantID, c.Query("uid"))
+	if err != nil {
 		response.OK(c, []interface{}{})
 		return
 	}
-	var conv model.Conversation
-	if err := gormDB().Where("tenant_id = ? AND customer_id = ?", tenantID, cu.ID).
-		Order("id desc").First(&conv).Error; err != nil {
+	conv, err := service.LatestConversationOfCustomer(tenantID, cu.ID)
+	if err != nil {
 		response.OK(c, []interface{}{})
 		return
 	}
@@ -210,7 +172,6 @@ func GuestMessages(c *gin.Context) {
 	limit := queryInt(c, "limit", 20)
 
 	var list []dto.MessageVO
-	var err error
 	switch {
 	case beforeID > 0:
 		list, err = service.ListMessages(tenantID, conv.ID, beforeID, limit)
@@ -232,9 +193,5 @@ func guestTenantID(c *gin.Context) uint {
 	if t := queryUint(c, "tenant"); t > 0 {
 		return t
 	}
-	var t model.Tenant
-	if err := gormDB().Order("id asc").First(&t).Error; err != nil {
-		return 0
-	}
-	return t.ID
+	return service.DefaultTenantID()
 }

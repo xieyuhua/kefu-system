@@ -12,6 +12,7 @@ import (
 	"kefu-server/internal/cache"
 	"kefu-server/internal/config"
 	"kefu-server/internal/model"
+	"kefu-server/internal/repository"
 )
 
 // ---------------- IP 归属地解析 ----------------
@@ -46,8 +47,10 @@ func RecordCustomerIP(customerID uint, ip string) {
 	if customerID == 0 || ip == "" || isPrivateIP(ip) {
 		return
 	}
-	gormDB().Model(&model.Customer{}).Where("id = ?", customerID).
-		Updates(map[string]interface{}{"ip": ip, "city": ResolveCity(ip)})
+	// 只更新 ip / city 两列，不动其它字段
+	_ = repository.UpdateCustomerColumns(customerID, map[string]interface{}{
+		"ip": ip, "city": ResolveCity(ip),
+	})
 }
 
 // ipKey 缓存 key：同一租户共用一份 IP→城市 结果

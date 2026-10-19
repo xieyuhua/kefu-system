@@ -7,6 +7,7 @@ import (
 
 	"kefu-server/internal/dto"
 	"kefu-server/internal/model"
+	"kefu-server/internal/repository"
 )
 
 // ---------------- 自动回复规则 ----------------
@@ -32,9 +33,8 @@ type AutoReplyVO struct {
 type AutoReplyRequest = dto.AutoReplyRequest
 
 func ListAutoReplies(tenantID uint) ([]AutoReplyVO, error) {
-	var list []model.AutoReply
-	if err := gormDB().Where("tenant_id = ?", tenantID).
-		Order("priority desc, id asc").Find(&list).Error; err != nil {
+	list, err := repository.ListAutoRepliesByTenant(tenantID)
+	if err != nil {
 		return nil, err
 	}
 	out := make([]AutoReplyVO, 0, len(list))
@@ -53,8 +53,8 @@ func toAutoReplyVO(r model.AutoReply) AutoReplyVO {
 		CreatedAt: fmtTime(r.CreatedAt), ChannelName: "全渠道",
 	}
 	if r.ChannelID > 0 {
-		var ch model.Channel
-		if gormDB().First(&ch, r.ChannelID).Error == nil {
+		// 渠道名查不到时保留"全渠道"兜底文案，不影响规则列表展示（与原逻辑一致）
+		if ch, err := repository.FindAutoReplyChannel(r.ChannelID); err == nil {
 			vo.ChannelName = ch.Name
 		}
 	}
@@ -86,7 +86,7 @@ func CreateAutoReply(tenantID uint, req AutoReplyRequest) (*AutoReplyVO, error) 
 	if req.Enabled != nil {
 		r.Enabled = *req.Enabled
 	}
-	if err := gormDB().Create(&r).Error; err != nil {
+	if err := repository.CreateAutoReply(&r); err != nil {
 		return nil, err
 	}
 	vo := toAutoReplyVO(r)
@@ -94,8 +94,8 @@ func CreateAutoReply(tenantID uint, req AutoReplyRequest) (*AutoReplyVO, error) 
 }
 
 func UpdateAutoReply(tenantID, id uint, req AutoReplyRequest) error {
-	var r model.AutoReply
-	if err := gormDB().Where("tenant_id = ? AND id = ?", tenantID, id).First(&r).Error; err != nil {
+	r, err := repository.FindAutoReplyByID(tenantID, id)
+	if err != nil {
 		return errors.New("规则不存在")
 	}
 	if req.Name != "" {
@@ -123,11 +123,11 @@ func UpdateAutoReply(tenantID, id uint, req AutoReplyRequest) error {
 		r.Enabled = *req.Enabled
 	}
 	r.Priority = req.Priority
-	return gormDB().Save(&r).Error
+	return repository.SaveAutoReply(r)
 }
 
 func DeleteAutoReply(tenantID, id uint) error {
-	return gormDB().Where("tenant_id = ? AND id = ?", tenantID, id).Delete(&model.AutoReply{}).Error
+	return repository.DeleteAutoReply(tenantID, id)
 }
 
 // MatchRule 按优先级找出命中的规则（优先匹配指定渠道的规则，其次全渠道规则）
@@ -135,9 +135,8 @@ func MatchRule(tenantID, channelID uint, question string) (model.AutoReply, bool
 	if strings.TrimSpace(question) == "" {
 		return model.AutoReply{}, false
 	}
-	var rules []model.AutoReply
-	gormDB().Where("tenant_id = ? AND enabled = ?", tenantID, true).
-		Order("priority desc, id asc").Find(&rules)
+	// 规则读取失败按「没有规则」处理，不影响消息主流程（与原逻辑一致）
+	rules, _ := repository.ListEnabledAutoReplies(tenantID)
 	q := strings.ToLower(strings.TrimSpace(question))
 
 	// 先渠道专属，再全渠道
@@ -148,7 +147,8 @@ func MatchRule(tenantID, channelID uint, question string) (model.AutoReply, bool
 			}
 			if matchKeywords(r, q) {
 				r.HitCount++
-				gormDB().Model(&model.AutoReply{}).Where("id = ?", r.ID).Update("hit_count", r.HitCount)
+				// 命中次数回写失败不阻断自动回复（与原逻辑一致）
+				_ = repository.UpdateAutoReplyHitCount(r.ID, r.HitCount)
 				return r, true
 			}
 		}
@@ -164,8 +164,8 @@ type ReplyResult struct {
 
 // ReplyNow 同步执行一次自动回复判定（用户端接口即时返回用）
 func ReplyNow(tenantID, convID, customerID, channelID uint, question string) *ReplyResult {
-	var conv model.Conversation
-	if err := gormDB().Where("tenant_id = ? AND id = ?", tenantID, convID).First(&conv).Error; err != nil {
+	conv, err := repository.FindAutoReplyConversation(tenantID, convID)
+	if err != nil {
 		return nil
 	}
 	if conv.AgentID > 0 && conv.Status == "open" {
@@ -180,8 +180,10 @@ func ReplyNow(tenantID, convID, customerID, channelID uint, question string) *Re
 			desc = "（命中：" + rule.Name + "）"
 		}
 		addSystemMessage(tenantID, convID, "客户请求人工客服"+desc+"，正在为您转接，请稍候")
-		gormDB().Model(&model.Conversation{}).Where("id = ?", convID).
-			Updates(map[string]interface{}{"status": "pending", "agent_id": 0})
+		// 转人工：置为待接待并清空接待人（失败不阻断，后续由客服端手动接入）
+		_ = repository.UpdateAutoReplyConversation(convID, map[string]interface{}{
+			"status": "pending", "agent_id": 0,
+		})
 		notifyChannelAgents(tenantID, channelID, convID, "待接待提醒", "有客户请求人工客服，请尽快接入")
 		broadcastConversation(tenantID, convID)
 		HubInstance().PublishToGuest(tenantID, convID, Event{
@@ -195,8 +197,7 @@ func ReplyNow(tenantID, convID, customerID, channelID uint, question string) *Re
 	if matched {
 		reply = rule.Reply
 	} else {
-		var ch model.Channel
-		if gormDB().First(&ch, channelID).Error == nil && ch.RobotEnabled {
+		if ch, err := repository.FindAutoReplyChannel(channelID); err == nil && ch.RobotEnabled {
 			reply = robotAnswer(question)
 		}
 	}
@@ -208,11 +209,13 @@ func ReplyNow(tenantID, convID, customerID, channelID uint, question string) *Re
 		SenderRole: "user", SenderID: 0,
 		Type: "text", Direction: "out", Content: reply, Read: true,
 	}
-	if err := gormDB().Create(&m).Error; err != nil {
+	if err := repository.CreateAutoReplyMessage(&m); err != nil {
 		return &ReplyResult{Transferred: false}
 	}
-	gormDB().Model(&model.Conversation{}).Where("id = ?", convID).
-		Updates(map[string]interface{}{"last_message": reply, "last_message_at": time.Now()})
+	// 回写会话摘要（失败不阻断，消息本身已入库）
+	_ = repository.UpdateAutoReplyConversation(convID, map[string]interface{}{
+		"last_message": reply, "last_message_at": time.Now(),
+	})
 	vo := buildMessageVO(m)
 	HubInstance().Publish(tenantID, nil, Event{Event: "message.new", Data: vo})
 	HubInstance().PublishToGuest(tenantID, convID, Event{Event: "message.new", Data: vo})

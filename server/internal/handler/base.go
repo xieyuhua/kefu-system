@@ -1,4 +1,4 @@
-package api
+package handler
 
 import (
 	"strconv"
@@ -10,15 +10,10 @@ import (
 	"kefu-server/internal/service"
 
 	"github.com/gin-gonic/gin"
-	"gorm.io/gorm"
 )
 
-var db *gorm.DB
-
-// gormDB 语义化别名，业务代码里统一用它，避免与 db 包名混淆
-func gormDB() *gorm.DB { return db }
-
-func SetDB(g *gorm.DB) { db = g }
+// 说明：handler 层不持有数据库连接（分层约定见 docs/架构分层.md）。
+// 所有数据访问经由 service → repository。
 
 // ClaimsFromContext 从 gin 上下文取登录信息（由 middleware 注入）
 type ctxClaims struct {
@@ -45,11 +40,11 @@ func currentUser(c *gin.Context) *model.User {
 	if cl == nil {
 		return nil
 	}
-	var u model.User
-	if err := db.First(&u, cl.UserID).Error; err != nil {
+	u, err := service.LoadUser(cl.TenantID, cl.UserID)
+	if err != nil || u == nil {
 		return nil
 	}
-	return &u
+	return u
 }
 
 func isAdmin(c *gin.Context) bool {

@@ -10,13 +10,14 @@ import (
 
 	"kefu-server/internal/dto"
 	"kefu-server/internal/model"
+	"kefu-server/internal/repository"
 )
 
 // DemoIncoming 模拟客户从某个渠道发起咨询（一键体验）。
 // 命中自动回复规则时机器人先答；命中转人工关键词则直接转为待人工接待。
 func DemoIncoming(tenantID uint, req dto.DemoIncomingRequest) (*dto.ConversationVO, *dto.MessageVO, error) {
-	var ch model.Channel
-	if err := gormDB().Where("tenant_id = ? AND id = ?", tenantID, req.ChannelID).First(&ch).Error; err != nil {
+	ch, err := repository.FindChannelByID(tenantID, req.ChannelID)
+	if err != nil {
 		return nil, nil, errors.New("渠道不存在")
 	}
 	nickname := strings.TrimSpace(req.Nickname)
@@ -27,31 +28,25 @@ func DemoIncoming(tenantID uint, req dto.DemoIncomingRequest) (*dto.Conversation
 	// ① 指定了 uid：复用该渠道下已存在的客户与会话（可对同一用户反复发消息）
 	if uid != "" {
 		externalID := "demo_" + ch.Type + "_" + uid
-		var cu model.Customer
-		if err := gormDB().
-			Where("tenant_id = ? AND channel_id = ? AND external_id = ?", tenantID, ch.ID, externalID).
-			First(&cu).Error; err == nil {
+		if cu, err := repository.FindCustomerByChannelExternalID(tenantID, ch.ID, externalID); err == nil {
 			// 昵称有填则更新
 			if nickname != "" {
-				gormDB().Model(&model.Customer{}).Where("id = ?", cu.ID).Update("nickname", nickname)
+				_ = repository.UpdateCustomerColumns(cu.ID, map[string]interface{}{"nickname": nickname})
 			}
-			gormDB().Model(&model.Customer{}).Where("id = ?", cu.ID).Update("last_seen_at", now)
+			_ = repository.UpdateCustomerColumns(cu.ID, map[string]interface{}{"last_seen_at": now})
 
 			// 复用未结束的会话；全部结束则重开一个
-			var conv model.Conversation
-			if e := gormDB().
-				Where("tenant_id = ? AND customer_id = ? AND status != 'closed' AND archived = ?", tenantID, cu.ID, false).
-				Order("id desc").First(&conv).Error; e == nil {
-				return sendDemoMessage(tenantID, &conv, &cu, req)
+			if conv, err := repository.FindActiveConversationOfCustomer(tenantID, cu.ID); err == nil {
+				return sendDemoMessage(tenantID, conv, cu, req)
 			}
-			conv = model.Conversation{
+			conv := &model.Conversation{
 				TenantID: tenantID, ChannelID: ch.ID, CustomerID: cu.ID,
 				Status: "pending", LastMessageAt: now,
 			}
-			if err := gormDB().Create(&conv).Error; err != nil {
+			if err := repository.CreateConversation(conv); err != nil {
 				return nil, nil, err
 			}
-			return sendDemoMessage(tenantID, &conv, &cu, req)
+			return sendDemoMessage(tenantID, conv, cu, req)
 		}
 	}
 
@@ -64,7 +59,7 @@ func DemoIncoming(tenantID uint, req dto.DemoIncomingRequest) (*dto.Conversation
 		externalID = "demo_" + ch.Type + "_" + uid
 	}
 
-	cu := model.Customer{
+	cu := &model.Customer{
 		TenantID:   tenantID,
 		ChannelID:  ch.ID,
 		ExternalID: externalID,
@@ -73,21 +68,21 @@ func DemoIncoming(tenantID uint, req dto.DemoIncomingRequest) (*dto.Conversation
 		Phone:      randomPhone(),
 	}
 	cu.LastSeenAt = &now
-	if err := gormDB().Create(&cu).Error; err != nil {
+	if err := repository.CreateCustomer(cu); err != nil {
 		return nil, nil, err
 	}
 
-	conv := model.Conversation{
+	conv := &model.Conversation{
 		TenantID:      tenantID,
 		ChannelID:     ch.ID,
 		CustomerID:    cu.ID,
 		Status:        "pending",
 		LastMessageAt: now,
 	}
-	if err := gormDB().Create(&conv).Error; err != nil {
+	if err := repository.CreateConversation(conv); err != nil {
 		return nil, nil, err
 	}
-	return sendDemoMessage(tenantID, &conv, &cu, req)
+	return sendDemoMessage(tenantID, conv, cu, req)
 }
 
 // sendDemoMessage 往指定会话追加一条客户消息并广播
@@ -123,76 +118,22 @@ func sendDemoMessage(
 //  1. 命中"转人工"关键词 → 会话置为 pending 并通知该渠道在线客服
 //  2. 命中自动回复规则   → 机器人回复
 //  3. 渠道开启机器人且无规则命中 → 兜底回复
+//
+// 判定逻辑与用户端接口的同步判定（ReplyNow）完全一致，这里只保留演示入口的延迟下发。
 func HandleIncoming(tenantID, convID, customerID, channelID uint, question string) {
 	time.Sleep(800 * time.Millisecond)
-
-	var conv model.Conversation
-	if err := gormDB().Where("tenant_id = ? AND id = ?", tenantID, convID).First(&conv).Error; err != nil {
-		return
-	}
-	// 已被人工接入的会话不再自动回复
-	if conv.AgentID > 0 && conv.Status == "open" {
-		return
-	}
-
-	rule, matched := MatchRule(tenantID, channelID, question)
-
-	// 1) 转人工
-	if matched && rule.TransferToHuman {
-		desc := ""
-		if rule.Name != "" {
-			desc = "（命中：" + rule.Name + "）"
-		}
-		addSystemMessage(tenantID, convID, "客户请求人工客服"+desc+"，正在为您转接，请稍候")
-		gormDB().Model(&model.Conversation{}).Where("id = ?", convID).
-			Updates(map[string]interface{}{"status": "pending", "agent_id": 0})
-		notifyChannelAgents(tenantID, channelID, convID, "待接待提醒", "有客户请求人工客服，请尽快接入")
-		broadcastConversation(tenantID, convID)
-		return
-	}
-
-	// 2) 自动回复
-	var reply string
-	if matched {
-		reply = rule.Reply
-	} else {
-		var ch model.Channel
-		if gormDB().First(&ch, channelID).Error == nil && ch.RobotEnabled {
-			reply = robotAnswer(question)
-		}
-	}
-	if reply == "" {
-		return
-	}
-
-	m := model.Message{
-		TenantID:       tenantID,
-		ConversationID: convID,
-		SenderRole:     "user",
-		SenderID:       0,
-		Type:           "text",
-		Direction:      "out",
-		Content:        reply,
-		Read:           true,
-	}
-	if err := gormDB().Create(&m).Error; err != nil {
-		return
-	}
-	gormDB().Model(&model.Conversation{}).Where("id = ?", convID).
-		Updates(map[string]interface{}{"last_message": reply, "last_message_at": time.Now()})
-	vo := buildMessageVO(m)
-	// 客服端 + 用户端同时收到机器人回复
-	HubInstance().Publish(tenantID, nil, Event{Event: "message.new", Data: vo})
-	HubInstance().PublishToGuest(tenantID, convID, Event{Event: "message.new", Data: vo})
+	ReplyNow(tenantID, convID, customerID, channelID, question)
 }
 
 // notifyChannelAgents 通知该渠道下所有在线客服（转人工场景）
 func notifyChannelAgents(tenantID, channelID, convID uint, title, body string) {
-	var acs []model.AgentChannel
-	gormDB().Where("channel_id = ?", channelID).Find(&acs)
+	acs, err := repository.ListAgentChannelsByChannel(channelID)
+	if err != nil {
+		return
+	}
 	for _, ac := range acs {
-		var u model.User
-		if gormDB().First(&u, ac.UserID).Error != nil {
+		u, err := repository.FindUserBriefByID(ac.UserID)
+		if err != nil {
 			continue
 		}
 		Notify(tenantID, u.ID, "conversation.pending", title, body, convID)
@@ -200,11 +141,11 @@ func notifyChannelAgents(tenantID, channelID, convID uint, title, body string) {
 }
 
 func broadcastConversation(tenantID, convID uint) {
-	var c model.Conversation
-	if err := gormDB().Where("tenant_id = ? AND id = ?", tenantID, convID).First(&c).Error; err != nil {
+	c, err := repository.FindConversationByID(tenantID, convID)
+	if err != nil {
 		return
 	}
-	vo := buildConversationVO(c)
+	vo := buildConversationVO(*c)
 	HubInstance().Publish(tenantID, nil, Event{Event: "conversation.updated", Data: vo})
 	HubInstance().PublishToGuest(tenantID, convID, Event{Event: "conversation.updated", Data: vo})
 }
@@ -212,17 +153,16 @@ func broadcastConversation(tenantID, convID uint) {
 // FindGuestConversation 定位（或创建）某渠道下某个外部用户的客户与会话。
 // 用户端 WebSocket 与 guest/init 共用，保证两端拿到的是同一个会话。
 func FindGuestConversation(tenantID, channelID uint, externalID string) (model.Customer, uint, error) {
-	var cu model.Customer
-	if err := gormDB().Where("tenant_id = ? AND channel_id = ? AND external_id = ?",
-		tenantID, channelID, externalID).First(&cu).Error; err != nil {
-		return cu, 0, errors.New("会话不存在，请先调用 /api/guest/init")
+	cu, err := repository.FindCustomerByChannelExternalID(tenantID, channelID, externalID)
+	if err != nil {
+		return model.Customer{}, 0, errors.New("会话不存在，请先调用 /api/guest/init")
 	}
 	// 复用最近一个会话（含 closed/archived，自动激活），保证聊天记录合并
 	conv, err := FindOrCreateConversation(tenantID, cu.ID, channelID)
 	if err != nil {
-		return cu, 0, err
+		return *cu, 0, err
 	}
-	return cu, conv.ID, nil
+	return *cu, conv.ID, nil
 }
 
 func robotAnswer(q string) string {

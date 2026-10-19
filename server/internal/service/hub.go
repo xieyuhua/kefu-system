@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"kefu-server/internal/cache"
-	"kefu-server/internal/model"
+	"kefu-server/internal/repository"
 
 	"github.com/gorilla/websocket"
 )
@@ -197,7 +197,7 @@ func (h *Hub) Add(c *Client) {
 	h.mu.Unlock()
 	// 标记客服在线（供列表展示「在线/离线」小圆点）
 	if c.UserID > 0 {
-		gormDB().Model(&model.User{}).Where("id = ?", c.UserID).Update("online", true)
+		_ = repository.UpdateUserOnlineByID(c.UserID, true)
 	}
 }
 
@@ -237,7 +237,7 @@ func (h *Hub) Remove(c *Client) {
 	// 客服端断开：若该客服没有其它在线连接，则标记离线并释放其正在接待的会话，
 	// 让同渠道的其他客服可以接手（管理员离线同样释放）。
 	if c.UserID > 0 && !h.IsUserOnline(c.UserID) {
-		gormDB().Model(&model.User{}).Where("id = ?", c.UserID).Update("online", false)
+		_ = repository.UpdateUserOnlineByID(c.UserID, false)
 		releaseAgentConversations(c.TenantID, c.UserID)
 	}
 }
@@ -257,10 +257,8 @@ func (h *Hub) IsUserOnline(userID uint) bool {
 // releaseAgentConversations 把某客服正在接待的会话全部置回「待接待」。
 // 用于客服（含管理员）离线后自动释放，避免会话被已离线的人长期占用。
 func releaseAgentConversations(tenantID, agentID uint) {
-	var convs []model.Conversation
-	if err := gormDB().
-		Where("tenant_id = ? AND agent_id = ? AND status = ?", tenantID, agentID, "open").
-		Find(&convs).Error; err != nil || len(convs) == 0 {
+	convs, err := repository.ListOpenConversationsByAgent(tenantID, agentID)
+	if err != nil || len(convs) == 0 {
 		return
 	}
 	now := time.Now()
@@ -268,7 +266,7 @@ func releaseAgentConversations(tenantID, agentID uint) {
 		c.AgentID = 0
 		c.Status = "pending"
 		c.LastMessageAt = now
-		_ = gormDB().Save(&c).Error
+		_ = repository.SaveConversation(&c)
 		addSystemMessage(tenantID, c.ID, agentName(agentID)+" 已离线，会话回到待接待")
 		vo := buildConversationVO(c)
 		HubInstance().Publish(tenantID, nil, Event{Event: "conversation.updated", Data: vo})

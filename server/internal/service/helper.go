@@ -2,14 +2,9 @@ package service
 
 import (
 	"kefu-server/internal/auth"
-	"kefu-server/internal/db"
 	"kefu-server/internal/model"
-
-	"gorm.io/gorm"
+	"kefu-server/internal/repository"
 )
-
-// gormDB 返回全局数据库连接。包内统一用此函数避免与 db 包名冲突。
-func gormDB() *gorm.DB { return db.DB }
 
 func hashPwd(p string) (string, error) { return auth.HashPassword(p) }
 
@@ -23,7 +18,7 @@ func Notify(tenantID, userID uint, typ, title, body string, convID uint) {
 		Body:           body,
 		ConversationID: convID,
 	}
-	gormDB().Create(&n)
+	_ = repository.CreateNotification(&n)
 
 	// 实时推送（Web/PC/APP 在线时立即收到；离线则由端侧重连后拉取离线列表）
 	HubInstance().Publish(tenantID, []uint{userID}, Event{

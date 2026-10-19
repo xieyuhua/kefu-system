@@ -5,8 +5,8 @@ import (
 	"log"
 
 	"kefu-server/internal/config"
-	"kefu-server/internal/db"
 	"kefu-server/internal/model"
+	"kefu-server/internal/repository"
 )
 
 // ---------------- 厂商推送网关 ----------------
@@ -77,8 +77,8 @@ func (p *PushGateway) Enabled() bool { return config.C.Push.Enabled }
 // Send 向某用户的所有已注册设备下发一条提醒。
 // 调用入口统一在 service/helper.go 的 Notify()，业务代码无需关心。
 func (p *PushGateway) Send(tenantID, userID uint, n model.Notification) {
-	var devices []model.Device
-	if err := db.DB.Where("tenant_id = ? AND user_id = ?", tenantID, userID).Find(&devices).Error; err != nil {
+	devices, err := repository.ListDevices(tenantID, userID)
+	if err != nil {
 		log.Printf("[push] 查询设备失败: %v", err)
 		return
 	}

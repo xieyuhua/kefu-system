@@ -3,10 +3,22 @@
 ## 工程结构
 ```
 kefu/
-  server/           Go 后端 (Gin + GORM + WebSocket)，端口 8480
-  web/              Vue3 + Vite + TS + Element Plus 客服工作台 (端口 5173)
-  docs/API.md       ★ 前后端唯一契约，所有字段以此为准
+  server/
+    main.go              启动装配：config → db → cache → seed → route
+    internal/
+      route/             路由注册（原 router/）
+      handler/           HTTP 层：参数解析 + 响应（原 api/），不直接访问数据库
+      service/           业务层：校验、编排、事务边界、DTO 组装
+      repository/        数据访问层：所有 GORM 查询与写入
+      model/             数据实体
+      dto/ response/ middleware/ auth/ cache/ config/ db/ seed/
+  web/                   Vue3 + Vite + TS + Element Plus（三端独立入口）
+  docs/API.md            ★ 前后端唯一契约，所有字段以此为准
+  docs/架构分层.md        后端分层约定与新增接口的标准动作
 ```
+
+后端分层依赖方向：`route → handler → service → repository → model`，
+上层可依赖下层，**下层不得反向依赖上层**。详见 [架构分层.md](架构分层.md)。
 
 ## 角色与权限
 - `admin`：租户管理员，可管理渠道、子账号，可看全部会话

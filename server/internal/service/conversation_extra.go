@@ -8,6 +8,7 @@ import (
 
 	"kefu-server/internal/dto"
 	"kefu-server/internal/model"
+	"kefu-server/internal/repository"
 )
 
 // FindOrCreateConversation 定位或创建会话。
@@ -18,9 +19,7 @@ import (
 //
 // 供 GuestInit / GuestSend / WebSocket 访客连接三处统一使用，避免各自写不一致的过滤条件。
 func FindOrCreateConversation(tenantID, customerID, channelID uint) (*model.Conversation, error) {
-	var conv model.Conversation
-	if err := gormDB().Where("tenant_id = ? AND customer_id = ?", tenantID, customerID).
-		Order("id desc").First(&conv).Error; err == nil {
+	if conv, err := repository.FindLatestConversationByCustomer(tenantID, customerID); err == nil {
 		// 复用最近一个会话；已关闭 / 已归档的重新激活
 		needSave := false
 		if conv.Status == "closed" {
@@ -35,23 +34,23 @@ func FindOrCreateConversation(tenantID, customerID, channelID uint) (*model.Conv
 			needSave = true
 		}
 		if needSave {
-			if err := gormDB().Save(&conv).Error; err != nil {
+			if err := repository.SaveConversation(conv); err != nil {
 				return nil, err
 			}
 		}
-		return &conv, nil
+		return conv, nil
 	}
 
 	// 首次咨询：新建会话
 	now := time.Now()
-	conv = model.Conversation{
+	conv := &model.Conversation{
 		TenantID: tenantID, ChannelID: channelID, CustomerID: customerID,
 		Status: "pending", LastMessageAt: now,
 	}
-	if err := gormDB().Create(&conv).Error; err != nil {
+	if err := repository.CreateConversation(conv); err != nil {
 		return nil, err
 	}
-	return &conv, nil
+	return conv, nil
 }
 
 // ---------------- 会话归档 / 删除 ----------------
@@ -59,8 +58,8 @@ func FindOrCreateConversation(tenantID, customerID, channelID uint) (*model.Conv
 // ArchiveConversation 归档会话（客服主动清理工作台列表）。
 // 仅隐藏，不删除数据；客户再次发消息会自动恢复（见 UnarchiveOnNewMessage）。
 func ArchiveConversation(tenantID, convID, operatorID uint) error {
-	var c model.Conversation
-	if err := gormDB().Where("tenant_id = ? AND id = ?", tenantID, convID).First(&c).Error; err != nil {
+	c, err := repository.FindConversationByID(tenantID, convID)
+	if err != nil {
 		return errors.New("会话不存在")
 	}
 	now := time.Now()
@@ -74,7 +73,7 @@ func ArchiveConversation(tenantID, convID, operatorID uint) error {
 		updates["agent_id"] = 0
 		updates["status"] = "pending"
 	}
-	return gormDB().Model(&model.Conversation{}).Where("id = ?", c.ID).Updates(updates).Error
+	return repository.UpdateConversationByID(c.ID, updates)
 }
 
 // ArchiveConversationsBulk 批量归档会话（一键清空工作台列表）。
@@ -116,10 +115,8 @@ func ArchiveConversationsBulk(tenantID, userID uint, isAdmin bool, q ConvQuery) 
 
 	now := time.Now()
 	// 先查出归属，用于判断哪些需要释放回待接待池
-	var rows []model.Conversation
-	if err := gormDB().Select("id", "agent_id").
-		Where("tenant_id = ? AND id IN ?", tenantID, ids).
-		Find(&rows).Error; err != nil {
+	rows, err := repository.ListConversationAgentRefs(tenantID, ids)
+	if err != nil {
 		return 0, err
 	}
 
@@ -135,8 +132,7 @@ func ArchiveConversationsBulk(tenantID, userID uint, isAdmin bool, q ConvQuery) 
 			updates["agent_id"] = 0
 			updates["status"] = "pending"
 		}
-		if err := gormDB().Model(&model.Conversation{}).
-			Where("id = ?", c.ID).Updates(updates).Error; err != nil {
+		if err := repository.UpdateConversationByID(c.ID, updates); err != nil {
 			continue
 		}
 		n++
@@ -146,27 +142,23 @@ func ArchiveConversationsBulk(tenantID, userID uint, isAdmin bool, q ConvQuery) 
 
 // UnarchiveConversation 取消归档，恢复到工作台列表
 func UnarchiveConversation(tenantID, convID uint) error {
-	return gormDB().Model(&model.Conversation{}).
-		Where("tenant_id = ? AND id = ?", tenantID, convID).
-		Updates(map[string]interface{}{"archived": false, "archived_at": nil}).Error
+	return repository.UnarchiveConversation(tenantID, convID)
 }
 
 // DeleteConversation 彻底删除会话及其消息（不可恢复）
 func DeleteConversation(tenantID, convID uint) error {
-	var c model.Conversation
-	if err := gormDB().Where("tenant_id = ? AND id = ?", tenantID, convID).First(&c).Error; err != nil {
+	c, err := repository.FindConversationByID(tenantID, convID)
+	if err != nil {
 		return errors.New("会话不存在")
 	}
-	gormDB().Where("tenant_id = ? AND conversation_id = ?", tenantID, c.ID).Delete(&model.Message{})
-	return gormDB().Where("tenant_id = ? AND id = ?", tenantID, c.ID).Delete(&model.Conversation{}).Error
+	return repository.DeleteConversationWithMessages(tenantID, c.ID)
 }
 
 // ReopenConversation 客户重新发起咨询时调用：
 // 若会话被归档，则取消归档并回到「未接待」状态（消息不丢）。
 func ReopenConversation(tenantID, convID uint) {
-	gormDB().Model(&model.Conversation{}).
-		Where("tenant_id = ? AND id = ? AND archived = ?", tenantID, convID, true).
-		Updates(map[string]interface{}{"archived": false, "archived_at": nil})
+	// 仅命中已归档的会话，重复调用无副作用；失败不阻断（与原逻辑一致）
+	_ = repository.ReopenArchivedConversation(tenantID, convID)
 }
 
 // ---------------- 客户在线状态（活跃度推断） ----------------
@@ -193,18 +185,8 @@ func SearchMessages(tenantID, convID uint, keyword string, limit int) ([]model.M
 	if limit <= 0 || limit > 200 {
 		limit = 50
 	}
-	var list []model.Message
-	err := gormDB().
-		Where("tenant_id = ? AND conversation_id = ? AND content LIKE ?", tenantID, convID, "%"+kw+"%").
-		Order("id desc").Limit(limit).Find(&list).Error
-	if err != nil {
-		return nil, err
-	}
-	// 反转为升序，与消息流顺序一致
-	for i, j := 0, len(list)-1; i < j; i, j = i+1, j-1 {
-		list[i], list[j] = list[j], list[i]
-	}
-	return list, nil
+	// repository 内部按 id 倒序取最近 limit 条后反转为升序，与消息流顺序一致
+	return repository.SearchMessagesByContent(tenantID, convID, kw, limit)
 }
 
 // ---------------- 全局对话记录查询（管理后台） ----------------
@@ -250,46 +232,29 @@ func SearchConversations(tenantID uint, q ConversationRecordsQuery) ([]Conversat
 	if q.PageSize <= 0 || q.PageSize > 100 {
 		q.PageSize = 20
 	}
-	dbq := gormDB().Model(&model.Conversation{}).Where("tenant_id = ?", tenantID)
-
-	if kw := strings.TrimSpace(q.Keyword); kw != "" {
-		like := "%" + kw + "%"
-		// 昵称/手机号/外部ID 匹配，或该会话下存在内容匹配的消息
-		dbq = dbq.Where(
-			"(customer_id IN (SELECT id FROM customers WHERE nickname LIKE ? OR phone LIKE ? OR external_id LIKE ?) "+
-				"OR id IN (SELECT conversation_id FROM messages WHERE content LIKE ?))",
-			like, like, like, like,
-		)
+	f := repository.ConversationRecordFilter{
+		Keyword:   q.Keyword,
+		ChannelID: q.ChannelID,
+		Status:    q.Status,
+		AgentID:   q.AgentID,
+		Page:      q.Page,
+		PageSize:  q.PageSize,
 	}
-	if q.ChannelID > 0 {
-		dbq = dbq.Where("channel_id = ?", q.ChannelID)
-	}
-	if q.Status != "" && q.Status != "all" {
-		dbq = dbq.Where("status = ?", q.Status)
-	}
-	if q.AgentID > 0 {
-		dbq = dbq.Where("agent_id = ?", q.AgentID)
-	}
+	// 日期按天解析：起始含当天零点，结束取次日零点做开区间，避免漏掉当天最后一秒
 	if q.Start != "" {
 		if t, err := time.Parse("2006-01-02", q.Start); err == nil {
-			dbq = dbq.Where("created_at >= ?", t)
+			f.From = &t
 		}
 	}
 	if q.End != "" {
 		if t, err := time.Parse("2006-01-02", q.End); err == nil {
-			dbq = dbq.Where("created_at < ?", t.AddDate(0, 0, 1))
+			next := t.AddDate(0, 0, 1)
+			f.To = &next
 		}
 	}
 
-	var total int64
-	if err := dbq.Count(&total).Error; err != nil {
-		return nil, 0, err
-	}
-
-	var list []model.Conversation
-	if err := dbq.Order("last_message_at desc").
-		Offset((q.Page - 1) * q.PageSize).Limit(q.PageSize).
-		Find(&list).Error; err != nil {
+	list, total, err := repository.SearchConversationRecords(tenantID, f)
+	if err != nil {
 		return nil, 0, err
 	}
 
@@ -302,28 +267,23 @@ func SearchConversations(tenantID uint, q ConversationRecordsQuery) ([]Conversat
 			LastMessageAt: fmtTime(c.LastMessageAt), CreatedAt: fmtTime(c.CreatedAt),
 			FirstMessageAt: "",
 		}
-		var cu model.Customer
-		if gormDB().First(&cu, c.CustomerID).Error == nil {
+		if cu, err := repository.FindCustomerByID(c.CustomerID); err == nil {
 			rec.CustomerName = cu.Nickname
 			rec.CustomerAvatar = cu.Avatar
 		}
-		var ch model.Channel
-		if gormDB().First(&ch, c.ChannelID).Error == nil {
+		if ch, err := repository.FindChannelByID(c.TenantID, c.ChannelID); err == nil {
 			rec.ChannelName = ch.Name
 			rec.ChannelType = ch.Type
 		}
 		rec.AgentName = "未分配"
 		if c.AgentID > 0 {
-			var u model.User
-			if gormDB().First(&u, c.AgentID).Error == nil {
+			if u, err := repository.FindUserBriefByID(c.AgentID); err == nil {
 				rec.AgentName = u.Name
 			}
 		}
 		// 首条消息（列表里预览对话开头）
-		var first model.Message
-		if gormDB().Where("conversation_id = ? AND type != 'system'", c.ID).
-			Order("id asc").First(&first).Error == nil {
-			rec.FirstMessage = messagePreview(first)
+		if first, err := repository.FindFirstUserMessage(c.ID); err == nil {
+			rec.FirstMessage = messagePreview(*first)
 			rec.FirstMessageAt = fmtTime(first.CreatedAt)
 		}
 		out = append(out, rec)

@@ -9,6 +9,7 @@ import (
 	"kefu-server/internal/config"
 	"kefu-server/internal/dto"
 	"kefu-server/internal/model"
+	"kefu-server/internal/repository"
 
 	qrcode "github.com/skip2/go-qrcode"
 )
@@ -30,18 +31,18 @@ func AccessURL(c model.Channel, publicBase string) string {
 
 // AccessURLByAppID 按渠道 ID 取完整接入地址（重置 app_id 后返回新地址）
 func AccessURLByAppID(tenantID, channelID uint, publicBase string) string {
-	var c model.Channel
-	if err := gormDB().Where("tenant_id = ? AND id = ?", tenantID, channelID).First(&c).Error; err != nil {
+	c, err := repository.FindChannelByID(tenantID, channelID)
+	if err != nil {
 		return ""
 	}
-	return AccessURL(c, publicBase)
+	return AccessURL(*c, publicBase)
 }
 
 // ChannelQR 生成渠道接入二维码（PNG bytes / base64）。
 // size 为图片边长像素，建议 256~512。
 func ChannelQR(tenantID, channelID uint, publicBase string, size int) (*ChannelQRVO, error) {
-	var c model.Channel
-	if err := gormDB().Where("tenant_id = ? AND id = ?", tenantID, channelID).First(&c).Error; err != nil {
+	c, err := repository.FindChannelByID(tenantID, channelID)
+	if err != nil {
 		return nil, errors.New("渠道不存在")
 	}
 	if size <= 0 {
@@ -50,7 +51,7 @@ func ChannelQR(tenantID, channelID uint, publicBase string, size int) (*ChannelQ
 	if size > 1024 {
 		size = 1024
 	}
-	target := AccessURL(c, publicBase)
+	target := AccessURL(*c, publicBase)
 	png, err := qrcode.Encode(target, qrcode.Medium, size)
 	if err != nil {
 		return nil, err
@@ -60,7 +61,7 @@ func ChannelQR(tenantID, channelID uint, publicBase string, size int) (*ChannelQ
 		ChannelName: c.Name,
 		ChannelType: c.Type,
 		URL:         target,
-		Path:        AccessPath(c),
+		Path:        AccessPath(*c),
 		PNG:         png,
 		Base64:      "data:image/png;base64," + base64.StdEncoding.EncodeToString(png),
 		Size:        size,
@@ -84,18 +85,15 @@ type ChannelQRVO struct {
 
 // ListChannelAgents 列出某渠道可分配的客服账号及当前是否已分配
 func ListChannelAgents(tenantID, channelID uint) ([]dto.ChannelAgentVO, error) {
-	var c model.Channel
-	if err := gormDB().Where("tenant_id = ? AND id = ?", tenantID, channelID).First(&c).Error; err != nil {
+	if _, err := repository.FindChannelByID(tenantID, channelID); err != nil {
 		return nil, errors.New("渠道不存在")
 	}
-	var users []model.User
-	if err := gormDB().Where("tenant_id = ? AND role = 'agent'", tenantID).
-		Order("id asc").Find(&users).Error; err != nil {
+	users, err := repository.ListTenantAgents(tenantID)
+	if err != nil {
 		return nil, err
 	}
 	selected := map[uint]bool{}
-	var acs []model.AgentChannel
-	gormDB().Where("channel_id = ?", channelID).Find(&acs)
+	acs, _ := repository.ListAgentChannelsByChannel(channelID)
 	for _, ac := range acs {
 		selected[ac.UserID] = true
 	}
@@ -111,25 +109,25 @@ func ListChannelAgents(tenantID, channelID uint) ([]dto.ChannelAgentVO, error) {
 
 // SetChannelAgents 批量设置某渠道的接待账号（全量覆盖）
 func SetChannelAgents(tenantID, channelID uint, userIDs []uint) ([]dto.ChannelAgentVO, error) {
-	var c model.Channel
-	if err := gormDB().Where("tenant_id = ? AND id = ?", tenantID, channelID).First(&c).Error; err != nil {
+	if _, err := repository.FindChannelByID(tenantID, channelID); err != nil {
 		return nil, errors.New("渠道不存在")
 	}
 	// 校验账号归属本租户
 	valid := map[uint]bool{}
 	if len(userIDs) > 0 {
-		var users []model.User
-		gormDB().Where("tenant_id = ? AND id IN ?", tenantID, userIDs).Find(&users)
+		// 校验失败按「无账号通过校验」处理，与原逻辑一致
+		users, _ := repository.FindAgentUsersByIDs(tenantID, userIDs)
 		for _, u := range users {
 			valid[u.ID] = true
 		}
 	}
-	gormDB().Where("channel_id = ?", channelID).Delete(&model.AgentChannel{})
+	// 覆盖式写入：清空旧分配后逐个重建（写入失败由后续列表查询体现，与原逻辑一致）
+	_ = repository.DeleteAgentChannels(channelID)
 	for _, id := range userIDs {
 		if !valid[id] {
 			continue
 		}
-		gormDB().Create(&model.AgentChannel{UserID: id, ChannelID: channelID})
+		_ = repository.CreateAgentChannel(&model.AgentChannel{UserID: id, ChannelID: channelID})
 	}
 	return ListChannelAgents(tenantID, channelID)
 }

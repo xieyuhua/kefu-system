@@ -1,4 +1,4 @@
-package api
+package handler
 
 import (
 	"kefu-server/internal/dto"

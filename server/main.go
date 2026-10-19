@@ -4,12 +4,11 @@ import (
 	"log"
 	"os"
 
-	"kefu-server/internal/api"
 	"kefu-server/internal/cache"
 	"kefu-server/internal/config"
 	"kefu-server/internal/db"
-	"kefu-server/internal/model"
-	"kefu-server/internal/router"
+	"kefu-server/internal/repository"
+	"kefu-server/internal/route"
 	"kefu-server/internal/seed"
 	"kefu-server/internal/service"
 )
@@ -26,8 +25,8 @@ func main() {
 	if err := db.Init(); err != nil {
 		log.Fatalf("数据库初始化失败: %v", err)
 	}
-	// 把连接注入 api 层
-	api.SetDB(db.DB)
+	// 数据访问层接管数据库连接（handler/service 不再直接持有 GORM 句柄）
+	repository.SetDB(db.DB)
 	log.Printf("数据库就绪: driver=%s", config.C.Database.Driver)
 
 	// Redis（可选，未启用时自动降级为内存实现，单机无需依赖）
@@ -48,9 +47,11 @@ func main() {
 	// 补齐演示静态资源（幂等，防止 data/demo 被清理后图片全部 404）
 	seed.EnsureDemoAssets()
 	// 重启后没有任何 WebSocket 连接，把所有客服重置为离线
-	db.DB.Model(&model.User{}).Where("online = ?", true).Update("online", false)
+	if err := repository.ResetAllOnline(); err != nil {
+		log.Printf("重置在线状态失败: %v", err)
+	}
 
-	r := router.Setup()
+	r := route.Setup()
 	addr := ":" + config.C.Server.Port
 	log.Printf("客服系统后端启动: http://127.0.0.1%s  (mode=%s, redis=%v)", addr, config.C.Server.Mode, cache.Get().Enabled())
 	if err := r.Run(addr); err != nil {

@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"kefu-server/internal/model"
+	"kefu-server/internal/repository"
 )
 
 // ---------------- 渠道类型库 ----------------
@@ -50,11 +51,10 @@ var builtinChannelTypes = []struct {
 // EnsureBuiltinChannelTypes 为租户补齐内置类型（幂等）
 func EnsureBuiltinChannelTypes(tenantID uint) {
 	for _, b := range builtinChannelTypes {
-		var exist model.ChannelType
-		if err := gormDB().Where("tenant_id = ? AND code = ?", tenantID, b.Code).First(&exist).Error; err == nil {
+		if _, err := repository.FindChannelTypeByCode(tenantID, b.Code); err == nil {
 			continue
 		}
-		gormDB().Create(&model.ChannelType{
+		repository.CreateChannelType(&model.ChannelType{
 			TenantID: tenantID, Code: b.Code, Name: b.Name,
 			Color: b.Color, Icon: b.Icon, Sort: b.Sort, BuiltIn: true,
 		})
@@ -63,16 +63,14 @@ func EnsureBuiltinChannelTypes(tenantID uint) {
 
 func ListChannelTypes(tenantID uint) ([]ChannelTypeVO, error) {
 	EnsureBuiltinChannelTypes(tenantID)
-	var list []model.ChannelType
-	if err := gormDB().Where("tenant_id = ?", tenantID).
-		Order("sort asc, id asc").Find(&list).Error; err != nil {
+	list, err := repository.ListChannelTypesByTenant(tenantID)
+	if err != nil {
 		return nil, err
 	}
 	out := make([]ChannelTypeVO, 0, len(list))
 	for _, t := range list {
-		var used int64
-		gormDB().Model(&model.Channel{}).
-			Where("tenant_id = ? AND type = ?", tenantID, t.Code).Count(&used)
+		// 使用数统计失败不阻断列表展示，与原逻辑一致
+		used, _ := repository.CountChannelsOfType(tenantID, t.Code)
 		out = append(out, ChannelTypeVO{
 			ID: t.ID, Code: t.Code, Name: t.Name, Color: t.Color,
 			Icon: t.Icon, Sort: t.Sort, BuiltIn: t.BuiltIn,
@@ -95,8 +93,7 @@ func CreateChannelType(tenantID uint, req ChannelTypeRequest) (*ChannelTypeVO, e
 	if code == "" {
 		return nil, errors.New("渠道类型不能为空")
 	}
-	var exist model.ChannelType
-	if gormDB().Where("tenant_id = ? AND code = ?", tenantID, code).First(&exist).Error == nil {
+	if _, err := repository.FindChannelTypeByCode(tenantID, code); err == nil {
 		return nil, errors.New("该渠道类型已存在")
 	}
 	color := req.Color
@@ -107,7 +104,7 @@ func CreateChannelType(tenantID uint, req ChannelTypeRequest) (*ChannelTypeVO, e
 		TenantID: tenantID, Code: code, Name: name,
 		Color: color, Icon: req.Icon, Sort: req.Sort,
 	}
-	if err := gormDB().Create(&t).Error; err != nil {
+	if err := repository.CreateChannelType(&t); err != nil {
 		return nil, err
 	}
 	return &ChannelTypeVO{
@@ -117,8 +114,8 @@ func CreateChannelType(tenantID uint, req ChannelTypeRequest) (*ChannelTypeVO, e
 }
 
 func UpdateChannelType(tenantID, id uint, req ChannelTypeRequest) error {
-	var t model.ChannelType
-	if err := gormDB().Where("tenant_id = ? AND id = ?", tenantID, id).First(&t).Error; err != nil {
+	t, err := repository.FindChannelTypeByID(tenantID, id)
+	if err != nil {
 		return errors.New("渠道类型不存在")
 	}
 	if req.Name != "" {
@@ -134,20 +131,18 @@ func UpdateChannelType(tenantID, id uint, req ChannelTypeRequest) error {
 		t.Icon = req.Icon
 	}
 	t.Sort = req.Sort
-	return gormDB().Save(&t).Error
+	return repository.SaveChannelType(t)
 }
 
 func DeleteChannelType(tenantID, id uint) error {
-	var t model.ChannelType
-	if err := gormDB().Where("tenant_id = ? AND id = ?", tenantID, id).First(&t).Error; err != nil {
+	t, err := repository.FindChannelTypeByID(tenantID, id)
+	if err != nil {
 		return errors.New("渠道类型不存在")
 	}
-	var used int64
-	gormDB().Model(&model.Channel{}).
-		Where("tenant_id = ? AND type = ?", tenantID, t.Code).Count(&used)
+	// 使用数统计失败按「未被引用」处理，与原逻辑一致
+	used, _ := repository.CountChannelsOfType(tenantID, t.Code)
 	if used > 0 {
 		return errors.New("该类型下还有渠道，无法删除")
 	}
-	return gormDB().Where("tenant_id = ? AND id = ?", tenantID, id).
-		Delete(&model.ChannelType{}).Error
+	return repository.DeleteChannelType(tenantID, id)
 }

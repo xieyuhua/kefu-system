@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"kefu-server/internal/model"
+	"kefu-server/internal/repository"
 )
 
 // ---------------- 租户系统配置（默认图片等） ----------------
@@ -36,8 +37,8 @@ var settingDefaults = map[string]struct {
 
 // GetSetting 读取配置项，不存在时返回默认值
 func GetSetting(tenantID uint, key string) string {
-	var s model.Setting
-	if err := gormDB().Where("tenant_id = ? AND key = ?", tenantID, key).First(&s).Error; err == nil {
+	// 查不到（ErrRecordNotFound）或读库失败都落到默认值，与原逻辑一致
+	if s, err := repository.FindSettingByKey(tenantID, key); err == nil {
 		if v := strings.TrimSpace(s.Value); v != "" {
 			return v
 		}
@@ -51,8 +52,8 @@ func GetSetting(tenantID uint, key string) string {
 // ListSettings 返回全部配置项（含默认值，便于后台渲染表单）
 func ListSettings(tenantID uint) ([]map[string]interface{}, error) {
 	rows := map[string]model.Setting{}
-	var list []model.Setting
-	if err := gormDB().Where("tenant_id = ?", tenantID).Find(&list).Error; err != nil {
+	list, err := repository.ListSettingsByTenant(tenantID)
+	if err != nil {
 		return nil, err
 	}
 	for _, s := range list {
@@ -99,18 +100,17 @@ func SaveSetting(tenantID uint, key, value string) error {
 	}
 	value = strings.TrimSpace(value)
 
-	var s model.Setting
-	err := gormDB().Where("tenant_id = ? AND key = ?", tenantID, key).First(&s).Error
+	s, err := repository.FindSettingByKey(tenantID, key)
 	if err != nil {
 		// 不存在则新建
-		s = model.Setting{TenantID: tenantID, Key: key, Value: value}
+		row := model.Setting{TenantID: tenantID, Key: key, Value: value}
 		if d, ok := settingDefaults[key]; ok {
-			s.Remark = d.Remark
+			row.Remark = d.Remark
 		}
-		return gormDB().Create(&s).Error
+		return repository.CreateSetting(&row)
 	}
 	s.Value = value
-	return gormDB().Save(&s).Error
+	return repository.SaveSetting(s)
 }
 
 // DefaultImageURL 默认图片地址（供前端兜底）

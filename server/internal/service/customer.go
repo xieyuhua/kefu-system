@@ -2,10 +2,10 @@ package service
 
 import (
 	"errors"
-	"strings"
 
 	"kefu-server/internal/dto"
 	"kefu-server/internal/model"
+	"kefu-server/internal/repository"
 	"kefu-server/internal/response"
 )
 
@@ -18,27 +18,15 @@ func ListCustomers(tenantID uint, keyword string, channelID uint, page, pageSize
 	if pageSize <= 0 {
 		pageSize = 20
 	}
-	q := gormDB().Model(&model.Customer{}).Where("tenant_id = ?", tenantID)
-	if channelID > 0 {
-		q = q.Where("channel_id = ?", channelID)
-	}
-	if kw := strings.TrimSpace(keyword); kw != "" {
-		like := "%" + kw + "%"
-		q = q.Where("nickname LIKE ? OR phone LIKE ? OR external_id LIKE ?", like, like, like)
-	}
-	var total int64
-	if err := q.Count(&total).Error; err != nil {
-		return nil, err
-	}
-	var list []model.Customer
-	if err := q.Order("last_seen_at desc").Offset((page - 1) * pageSize).Limit(pageSize).Find(&list).Error; err != nil {
+	list, total, err := repository.ListCustomersPaged(tenantID, keyword, channelID, page, pageSize)
+	if err != nil {
 		return nil, err
 	}
 	vos := make([]interface{}, 0, len(list))
 	for _, c := range list {
-		var oc, cc int64
-		gormDB().Model(&model.Order{}).Where("customer_id = ?", c.ID).Count(&oc)
-		gormDB().Model(&model.Conversation{}).Where("customer_id = ?", c.ID).Count(&cc)
+		// 统计失败不阻断列表展示，与原逻辑一致
+		oc, _ := repository.CountOrdersOfCustomer(c.ID)
+		cc, _ := repository.CountConversationsOfCustomer(c.ID)
 		item := dto.CustomerListItem{
 			ID: c.ID, ExternalID: c.ExternalID, Nickname: c.Nickname,
 			Avatar: c.Avatar, Phone: c.Phone, Remark: c.Remark,
@@ -47,8 +35,7 @@ func ListCustomers(tenantID uint, keyword string, channelID uint, page, pageSize
 			OrderCount: oc, ConversationCount: cc,
 			LastSeenAt: fmtTimePtr(c.LastSeenAt), CreatedAt: fmtTime(c.CreatedAt),
 		}
-		var ch model.Channel
-		if gormDB().First(&ch, c.ChannelID).Error == nil {
+		if ch, err := repository.FindChannelByID(tenantID, c.ChannelID); err == nil {
 			item.Channel = &dto.ChannelRef{ID: ch.ID, Type: ch.Type, Name: ch.Name}
 		}
 		vos = append(vos, item)
@@ -57,8 +44,8 @@ func ListCustomers(tenantID uint, keyword string, channelID uint, page, pageSize
 }
 
 func GetCustomerDetail(tenantID, id uint) (*dto.CustomerDetail, error) {
-	var c model.Customer
-	if err := gormDB().Where("tenant_id = ? AND id = ?", tenantID, id).First(&c).Error; err != nil {
+	c, err := repository.FindCustomerInTenant(tenantID, id)
+	if err != nil {
 		return nil, errors.New("客户不存在")
 	}
 	detail := dto.CustomerDetail{
@@ -66,21 +53,20 @@ func GetCustomerDetail(tenantID, id uint) (*dto.CustomerDetail, error) {
 			ID: c.ID, ExternalID: c.ExternalID, Nickname: c.Nickname,
 			Avatar: c.Avatar, Phone: c.Phone, Remark: c.Remark,
 			Tags: GetCustomerTags(tenantID, c.ID),
-			IP:   c.IP, City: cityOrLookup(c),
+			IP:   c.IP, City: cityOrLookup(*c),
 			CreatedAt: fmtTime(c.CreatedAt),
 		},
 		Orders:        []dto.OrderVO{},
 		Conversations: []dto.HistoryConversationVO{},
 	}
-	gormDB().Model(&model.Order{}).Where("customer_id = ?", c.ID).Count(&detail.User.OrderCount)
+	// 统计失败按 0 处理，与原逻辑一致
+	detail.User.OrderCount, _ = repository.CountOrdersOfCustomer(c.ID)
 
-	var ch model.Channel
-	if gormDB().First(&ch, c.ChannelID).Error == nil {
+	if ch, err := repository.FindChannelByID(tenantID, c.ChannelID); err == nil {
 		detail.User.Channel = &dto.ChannelRef{ID: ch.ID, Type: ch.Type, Name: ch.Name}
 	}
 
-	var orders []model.Order
-	gormDB().Where("customer_id = ?", c.ID).Order("created_at desc").Limit(50).Find(&orders)
+	orders, _ := repository.ListOrdersOfCustomer(c.ID, 50)
 	for _, o := range orders {
 		detail.Orders = append(detail.Orders, dto.OrderVO{
 			ID: o.ID, OrderNo: o.OrderNo, Title: o.Title, Status: o.Status,
@@ -89,22 +75,18 @@ func GetCustomerDetail(tenantID, id uint) (*dto.CustomerDetail, error) {
 		})
 	}
 
-	var convs []model.Conversation
-	gormDB().Where("tenant_id = ? AND customer_id = ?", tenantID, c.ID).
-		Order("created_at desc").Limit(50).Find(&convs)
+	convs, _ := repository.ListConversationsByCustomer(tenantID, c.ID, 50)
 	for _, cv := range convs {
 		item := dto.HistoryConversationVO{
 			ID: cv.ID, Status: cv.Status, MessageCount: cv.MessageCount,
 			Summary: cv.Summary, CreatedAt: fmtTime(cv.CreatedAt),
 			ClosedAt: fmtTimePtr(cv.ClosedAt), LastMessageAt: fmtTime(cv.LastMessageAt),
 		}
-		var cn model.Channel
-		if gormDB().First(&cn, cv.ChannelID).Error == nil {
+		if cn, err := repository.FindChannelByID(tenantID, cv.ChannelID); err == nil {
 			item.Channel = &dto.ChannelRef{ID: cn.ID, Type: cn.Type, Name: cn.Name}
 		}
 		if cv.AgentID > 0 {
-			var u model.User
-			if gormDB().First(&u, cv.AgentID).Error == nil {
+			if u, err := repository.FindUserBriefByID(cv.AgentID); err == nil {
 				item.Agent = &dto.UserBrief{ID: u.ID, Name: u.Name, Avatar: u.Avatar, Role: u.Role}
 			}
 		}
@@ -122,20 +104,8 @@ func ListOrders(tenantID uint, customerID uint, keyword string, page, pageSize i
 	if pageSize <= 0 {
 		pageSize = 20
 	}
-	q := gormDB().Model(&model.Order{}).Where("tenant_id = ?", tenantID)
-	if customerID > 0 {
-		q = q.Where("customer_id = ?", customerID)
-	}
-	if kw := strings.TrimSpace(keyword); kw != "" {
-		like := "%" + kw + "%"
-		q = q.Where("order_no LIKE ? OR title LIKE ?", like, like)
-	}
-	var total int64
-	if err := q.Count(&total).Error; err != nil {
-		return nil, err
-	}
-	var list []model.Order
-	if err := q.Order("created_at desc").Offset((page - 1) * pageSize).Limit(pageSize).Find(&list).Error; err != nil {
+	list, total, err := repository.ListOrdersPaged(tenantID, customerID, keyword, page, pageSize)
+	if err != nil {
 		return nil, err
 	}
 	vos := make([]interface{}, 0, len(list))
@@ -158,17 +128,8 @@ func ListProducts(tenantID uint, keyword string, page, pageSize int) (*response.
 	if pageSize <= 0 {
 		pageSize = 20
 	}
-	q := gormDB().Model(&model.Product{}).Where("tenant_id = ?", tenantID)
-	if kw := strings.TrimSpace(keyword); kw != "" {
-		like := "%" + kw + "%"
-		q = q.Where("title LIKE ? OR p_id LIKE ? OR sku LIKE ?", like, like, like)
-	}
-	var total int64
-	if err := q.Count(&total).Error; err != nil {
-		return nil, err
-	}
-	var list []model.Product
-	if err := q.Order("id asc").Offset((page - 1) * pageSize).Limit(pageSize).Find(&list).Error; err != nil {
+	list, total, err := repository.ListProductsPaged(tenantID, keyword, page, pageSize)
+	if err != nil {
 		return nil, err
 	}
 	vos := make([]interface{}, 0, len(list))
@@ -195,7 +156,7 @@ func RegisterDevice(tenantID, userID uint, req dto.DeviceRequest) (*dto.DeviceVO
 		PushToken: req.PushToken,
 		Name:      req.Name,
 	}
-	if err := gormDB().Create(&d).Error; err != nil {
+	if err := repository.CreateDevice(&d); err != nil {
 		return nil, err
 	}
 	return &dto.DeviceVO{
@@ -205,9 +166,8 @@ func RegisterDevice(tenantID, userID uint, req dto.DeviceRequest) (*dto.DeviceVO
 }
 
 func ListDevices(tenantID, userID uint) ([]dto.DeviceVO, error) {
-	var list []model.Device
-	if err := gormDB().Where("tenant_id = ? AND user_id = ?", tenantID, userID).
-		Order("id desc").Find(&list).Error; err != nil {
+	list, err := repository.ListDevices(tenantID, userID)
+	if err != nil {
 		return nil, err
 	}
 	out := make([]dto.DeviceVO, 0, len(list))
@@ -221,8 +181,7 @@ func ListDevices(tenantID, userID uint) ([]dto.DeviceVO, error) {
 }
 
 func DeleteDevice(tenantID, userID, id uint) error {
-	return gormDB().Where("tenant_id = ? AND user_id = ? AND id = ?", tenantID, userID, id).
-		Delete(&model.Device{}).Error
+	return repository.DeleteDevice(tenantID, userID, id)
 }
 
 // ---------------- 离线消息 / 离线提醒 ----------------
@@ -233,23 +192,16 @@ func OfflineMessages(tenantID, userID uint, sinceID uint, limit int) ([]dto.Mess
 		limit = 200
 	}
 	// 只同步该客服可见范围内的会话消息：自己接待的 + 自己渠道下未分配的
-	var chIDs []uint
-	gormDB().Model(&model.AgentChannel{}).Where("user_id = ?", userID).Pluck("channel_id", &chIDs)
-
-	var convIDs []uint
-	qc := gormDB().Model(&model.Conversation{}).Where("tenant_id = ?", tenantID)
-	if len(chIDs) > 0 {
-		qc = qc.Where("agent_id = ? OR (agent_id = 0 AND channel_id IN ?)", userID, chIDs)
-	} else {
-		qc = qc.Where("agent_id = ?", userID)
+	convIDs, err := repository.ListVisibleConversationIDs(tenantID, userID)
+	if err != nil {
+		return nil, sinceID, false, err
 	}
-	qc.Pluck("id", &convIDs)
 	if len(convIDs) == 0 {
 		return []dto.MessageVO{}, sinceID, false, nil
 	}
-	var list []model.Message
-	q := gormDB().Where("tenant_id = ? AND conversation_id IN ? AND id > ?", tenantID, convIDs, sinceID)
-	if err := q.Order("id asc").Limit(limit + 1).Find(&list).Error; err != nil {
+	// 多取一条用于判断是否还有更多
+	list, err := repository.ListMessagesOfConversations(tenantID, convIDs, sinceID, limit+1)
+	if err != nil {
 		return nil, sinceID, false, err
 	}
 	hasMore := len(list) > limit
@@ -268,9 +220,8 @@ func OfflineMessages(tenantID, userID uint, sinceID uint, limit int) ([]dto.Mess
 }
 
 func OfflineNotifications(tenantID, userID uint, sinceID uint) ([]dto.NotificationVO, uint, error) {
-	var list []model.Notification
-	if err := gormDB().Where("tenant_id = ? AND user_id = ? AND id > ?", tenantID, userID, sinceID).
-		Order("id asc").Limit(200).Find(&list).Error; err != nil {
+	list, err := repository.ListNotificationsAfter(tenantID, userID, sinceID, 200)
+	if err != nil {
 		return nil, sinceID, err
 	}
 	out := make([]dto.NotificationVO, 0, len(list))
@@ -288,9 +239,5 @@ func OfflineNotifications(tenantID, userID uint, sinceID uint) ([]dto.Notificati
 }
 
 func MarkNotificationsRead(tenantID, userID uint, ids []uint) error {
-	q := gormDB().Model(&model.Notification{}).Where("tenant_id = ? AND user_id = ?", tenantID, userID)
-	if len(ids) > 0 {
-		q = q.Where("id IN ?", ids)
-	}
-	return q.Update("read", true).Error
+	return repository.MarkNotificationsRead(tenantID, userID, ids)
 }
