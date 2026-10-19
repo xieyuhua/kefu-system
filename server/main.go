@@ -4,7 +4,7 @@ import (
 	"log"
 	"os"
 
-	"kefu-server/internal/modules/account"
+	"kefu-server/internal/core/account"
 	"kefu-server/internal/platform/config"
 	"kefu-server/internal/platform/db"
 	"kefu-server/internal/platform/realtime"

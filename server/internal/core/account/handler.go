@@ -1,8 +1,12 @@
 package account
 
-// 本文件是 account 模块的 HTTP 层（原 handler/auth.go + profile.go + base.go 的渠道/子账号部分）。
+// 本文件是 core/account 的 HTTP 层。
 // handler 层不持有数据库连接：参数绑定 → 调本模块 service → 写响应。
 // 命名约定：同包内 service 与 handler 会重名（如 Login），因此所有 HTTP 处理器统一带 Handler 后缀。
+//
+// 跨端端点（客服端 modules/agent 与后台端 modules/admin 各自登录页/资料弹窗都调）：
+// LoginHandler / MeHandler / LogoutHandler / UpdateProfileHandler / ChangePasswordHandler
+// —— 三端共用同一套口令与 token 语义，复制到端内只会让鉴权口径漂移，故留在账号内核。
 
 import (
 	"kefu-server/internal/platform/auth"
@@ -140,102 +144,4 @@ func ChangePasswordHandler(c *gin.Context) {
 		return
 	}
 	response.OK(c, true)
-}
-
-// ---------------- 子账号 ----------------
-
-// ListAgentsHandler 客服列表。
-//   - admin：看全部
-//   - agent：带 ?scope=transfer 时可看「与自己接待渠道有交集」的在线客服（用于会话转接）
-func ListAgentsHandler(c *gin.Context) {
-	if !authctx.IsAdmin(c) && c.Query("scope") != "transfer" {
-		response.Forbid(c, "仅管理员可查看")
-		return
-	}
-	list, err := ListAgents(authctx.TenantID(c))
-	if err != nil {
-		response.Server(c, err.Error())
-		return
-	}
-	if !authctx.IsAdmin(c) {
-		// 非管理员只返回在线、且未停用的同事
-		filtered := make([]dto.AgentVO, 0, len(list))
-		for _, a := range list {
-			if a.Online && a.Enabled && a.ID != authctx.UserID(c) {
-				filtered = append(filtered, a)
-			}
-		}
-		list = filtered
-	}
-	response.OK(c, list)
-}
-
-func CreateAgentHandler(c *gin.Context) {
-	if !authctx.IsAdmin(c) {
-		response.Forbid(c, "仅管理员可操作")
-		return
-	}
-	var req dto.AgentRequest
-	if !httpx.BindJSON(c, &req) {
-		return
-	}
-	vo, err := CreateAgent(authctx.TenantID(c), req)
-	if err != nil {
-		response.Param(c, err.Error())
-		return
-	}
-	response.OK(c, vo)
-}
-
-func UpdateAgentHandler(c *gin.Context) {
-	if !authctx.IsAdmin(c) {
-		response.Forbid(c, "仅管理员可操作")
-		return
-	}
-	var req dto.AgentRequest
-	if !httpx.BindJSON(c, &req) {
-		return
-	}
-	if err := UpdateAgent(authctx.TenantID(c), httpx.UintParam(c, "id"), req); err != nil {
-		response.Param(c, err.Error())
-		return
-	}
-	response.OK(c, true)
-}
-
-func DeleteAgentHandler(c *gin.Context) {
-	if !authctx.IsAdmin(c) {
-		response.Forbid(c, "仅管理员可操作")
-		return
-	}
-	if err := DeleteAgent(authctx.TenantID(c), httpx.UintParam(c, "id")); err != nil {
-		response.Server(c, err.Error())
-		return
-	}
-	response.OK(c, true)
-}
-
-func SetOnlineHandler(c *gin.Context) {
-	var body struct {
-		Online bool `json:"online"`
-	}
-	_ = c.ShouldBindJSON(&body)
-	target := httpx.UintParam(c, "id")
-	cl := authctx.ClaimsFromContext(c)
-	if cl == nil {
-		return
-	}
-	if target != cl.UserID && cl.Role != "admin" {
-		response.Forbid(c, "只能修改自己的在线状态")
-		return
-	}
-	if err := SetOnline(authctx.TenantID(c), target, body.Online); err != nil {
-		response.Server(c, err.Error())
-		return
-	}
-	status := "offline"
-	if body.Online {
-		status = "online"
-	}
-	response.OK(c, map[string]interface{}{"online": body.Online, "status": status})
 }

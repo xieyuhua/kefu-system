@@ -1,16 +1,18 @@
-// Package chat 会话模块：conversations、messages、WebSocket 实时通道。
-// 模块内按 handler / service / repository 分层（ws.go 放 WebSocket 处理器）。
+// Package conversation 会话内核：conversations、messages、WebSocket 实时通道。
+// 模块内按 service / repository 分层，ws.go 放 WebSocket 升级器等共用件，
+// HTTP 层在各端模块（客服端 modules/agent、用户端 modules/client）。
 //
-// 依赖方向：chat → customer（客户信息）、account（客服昵称/在线/并发上限）、channel（渠道与准入）。
-// 跨模块调用约定：
+// 依赖方向：core/conversation → core/{account,channel,customer} → platform → pkg。
+// 内核层内不允许出现环：本包可以依赖上述三个内核包，反之不行。
+// 跨内核调用约定：
 //   - 业务编排走对方导出的 service 函数（如 customer.GetCustomerTags）；
 //   - 组装 VO 所需的单表读取直接调用对方导出的仓储函数（customer.FindCustomerByID /
 //     customer.CountOrdersOfCustomer / channel.FindChannelByID / channel.HasAgentChannel /
 //     account.FindUserBriefByID / account.FindUserByID / account.CountOpenConversations），
 //     原因：这些只是一次主键查询，包一层 service 只会增加无意义的转发；
-//   - 唯一一处跨模块写入是「刷新客户最近活跃时间」（customer.UpdateCustomerColumns），
+//   - 唯一一处跨内核写入是「刷新客户最近活跃时间」（customer.UpdateCustomerColumns），
 //     消息落库与会话摘要必须保持原有先后顺序，因此就近调用对方仓储。
-package chat
+package conversation
 
 import (
 	"encoding/json"
@@ -20,10 +22,9 @@ import (
 	"strings"
 	"time"
 
-	"kefu-server/internal/modules/account"
-	"kefu-server/internal/modules/channel"
-	"kefu-server/internal/modules/customer"
-	"kefu-server/internal/platform/authctx"
+	"kefu-server/internal/core/account"
+	"kefu-server/internal/core/channel"
+	"kefu-server/internal/core/customer"
 	"kefu-server/internal/platform/dto"
 	"kefu-server/internal/platform/ipinfo"
 	"kefu-server/internal/platform/model"
@@ -33,14 +34,13 @@ import (
 )
 
 // ---------------- 基础设施层回调注册 ----------------
-// platform 下的包不反向依赖业务模块，涉及业务逻辑的部分在这里注册回调：
+// platform 下的包不反向依赖业务内核，涉及业务逻辑的部分在这里注册回调：
 //   - realtime：客服最后一个连接断开 → 释放其接待中的会话
-//   - authctx：按租户 + 账号 ID 载入账号（authctx.CurrentUser 用）
-// 这两个回调用到的是 chat / account 的能力，因此注册点落在 chat 模块的 init 里。
+// 注册点落在会话内核的 init 里（route 会 import 本包，保证注册被执行）。
+// 另一个回调 authctx.SetUserLoader 归属账号内核，见 core/account/service.go。
 
 func init() {
 	realtime.SetAgentOfflineHook(releaseAgentConversations)
-	authctx.SetUserLoader(account.LoadUser)
 }
 
 // releaseAgentConversations 把某客服正在接待的会话全部置回「待接待」。
@@ -700,7 +700,7 @@ func SendMessage(tenantID, convID, senderID uint, req dto.SendMessageRequest) (*
 		return nil, nil, errors.New("会话已被其他客服接待")
 	}
 	now := time.Now()
-	m := model.Message{
+	m := &model.Message{
 		TenantID:       tenantID,
 		ConversationID: convID,
 		SenderID:       senderID,
@@ -710,16 +710,16 @@ func SendMessage(tenantID, convID, senderID uint, req dto.SendMessageRequest) (*
 		Content:        req.Content,
 		Read:           true,
 	}
-	if err := CreateMessage(&m); err != nil {
+	if err := CreateMessage(m); err != nil {
 		return nil, nil, err
 	}
-	c.LastMessage = messagePreview(&m)
+	c.LastMessage = messagePreview(m)
 	c.LastMessageAt = now
 	c.MessageCount++
 	if err := SaveConversation(c); err != nil {
 		return nil, nil, err
 	}
-	mvo := buildMessageVO(&m)
+	mvo := buildMessageVO(m)
 	cvo := buildConversationVO(c)
 	return &mvo, &cvo, nil
 }
@@ -744,7 +744,7 @@ func messagePreview(m *model.Message) string {
 }
 
 func addSystemMessage(tenantID, convID uint, content string) *model.Message {
-	m := model.Message{
+	m := &model.Message{
 		TenantID:       tenantID,
 		ConversationID: convID,
 		SenderRole:     "system",
@@ -754,8 +754,8 @@ func addSystemMessage(tenantID, convID uint, content string) *model.Message {
 		Read:           true,
 	}
 	// 落库失败不阻断主流程（与原逻辑一致）：系统提示语缺失不影响会话状态流转
-	_ = AddSystemMessage(&m)
-	return &m
+	_ = AddSystemMessage(m)
+	return m
 }
 
 // AppendSystemMessage 导出版本：给其它模块（automation 的自动回复转人工）落系统提示语。
@@ -773,7 +773,7 @@ func ReceiveMessage(tenantID, convID, customerID uint, msgType, content string) 
 	if msgType == "" {
 		msgType = "text"
 	}
-	m := model.Message{
+	m := &model.Message{
 		TenantID:       tenantID,
 		ConversationID: convID,
 		SenderID:       customerID,
@@ -782,11 +782,11 @@ func ReceiveMessage(tenantID, convID, customerID uint, msgType, content string) 
 		Direction:      "in",
 		Content:        content,
 	}
-	if err := CreateMessage(&m); err != nil {
+	if err := CreateMessage(m); err != nil {
 		return nil, nil, err
 	}
 	now := time.Now()
-	c.LastMessage = messagePreview(&m)
+	c.LastMessage = messagePreview(m)
 	c.LastMessageAt = now
 	c.MessageCount++
 	c.Unread++
@@ -813,7 +813,7 @@ func ReceiveMessage(tenantID, convID, customerID uint, msgType, content string) 
 	// 活跃时间刷新失败不阻断发消息（与原逻辑一致）
 	_ = customer.UpdateCustomerColumns(customerID, map[string]interface{}{"last_seen_at": now})
 
-	mvo := buildMessageVO(&m)
+	mvo := buildMessageVO(m)
 	cvo := buildConversationVO(c)
 	return &mvo, &cvo, nil
 }
@@ -832,11 +832,11 @@ func orDefault(s, d string) string {
 	return s
 }
 
-// ---------------- 供其它模块复用的通知辅助 ----------------
+// ---------------- 供其它内核复用的通知辅助 ----------------
 
 // NotifyChannelAgents 通知该渠道下所有在线客服（转人工场景）。
-// 原实现在 service/demo.go 里，因 automation 模块的 ReplyNow 需要调用、
-// 而平台依赖方向不允许 automation → ops，故上移到 chat 模块（chat 已具备渠道/账号读取能力）。
+// core/automation 的 ReplyNow 需要它，而内核层不允许 automation 反向依赖端模块，
+// 故留在会话内核（本包已具备渠道 / 账号读取能力）。
 func NotifyChannelAgents(tenantID, channelID, convID uint, title, body string) {
 	acs, err := channel.ListAgentChannelsByChannel(channelID)
 	if err != nil {

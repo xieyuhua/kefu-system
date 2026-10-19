@@ -1,13 +1,13 @@
 package account
 
-// 本文件是 account 模块的数据访问层（原 repository/user.go + repository/tenant.go）。
+// 本文件是 core/account 的数据访问层。
 //
 // 说明：account 是全局唯一字段，因此「按账号查」与「账号查重」不带租户条件；
 // 其余按主键的操作一律带 tenant_id，保证越权访问落到「不存在」分支上。
 //
 // 跨表只读：账号列表 / 登录响应需要回显「该客服可接待的渠道」，
-// 而 account 模块不允许反向依赖 channel 模块，因此这里保留一条对 channels 表的
-// 只读查询（listChannelsByTenant，不写 channels 表），SQL 与 channel 模块完全一致。
+// 而 core/account 不依赖 core/channel（避免内核层出现环），因此这里保留一条对 channels 表的
+// 只读查询（listChannelsByTenant，不写 channels 表），SQL 与 core/channel 完全一致。
 
 import (
 	"kefu-server/internal/platform/model"

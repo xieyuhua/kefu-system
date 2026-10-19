@@ -1,10 +1,10 @@
 package channel
 
-// 本文件是 channel 模块的数据访问层（原 repository/channel.go + repository/channel_type.go）。
+// 本文件是 core/channel 的数据访问层。
 //
 // 写表范围：channels / channel_types / agent_channels（渠道 ↔ 接待账号分配关系）。
-// 其中 agent_channels 与 account 模块共用：本模块只做「渠道维度」的清空与重建，
-// 账号维度的分配由 account 模块负责。
+// 其中 agent_channels 与 core/account 共用：本模块只做「渠道维度」的清空与重建，
+// 账号维度的分配由 core/account 负责。
 
 import (
 	"kefu-server/internal/platform/model"

@@ -1,12 +1,12 @@
 package customer
 
-// 本文件是 customer 模块的数据访问层
-// （原 repository/customer.go 的客户部分 + repository/order.go + product.go + tag.go）。
+// 本文件是 core/customer 的数据访问层。
 //
 // 写表范围：customers / tags / customer_tags / orders / products。
 // 跨表只读：客户列表与详情要回显「所属渠道 / 接待客服 / 历史会话」，
-// 而 customer 模块只允许依赖 platform，因此在这里保留几条对 channels / users /
-// conversations 的只读查询（不写这些表），SQL 与对应模块完全一致。
+// 而 core/customer 不依赖 core/channel、core/account、core/conversation（避免内核层出现环），
+// 因此在这里保留几条对 channels / users / conversations 的只读查询（不写这些表），
+// SQL 与对应内核模块完全一致。
 
 import (
 	"strings"
@@ -92,7 +92,7 @@ func SaveCustomerRemark(tenantID, customerID uint, remark string) error {
 }
 
 // ---------------- 客户相关的会话只读查询 ----------------
-// 会话的定位 / 新建 / 全量读写由 chat 模块负责（FindLatestConversationByCustomer、
+// 会话的定位 / 新建 / 全量读写由 core/conversation 负责（FindLatestConversationByCustomer、
 // CreateConversation ...），这里只保留客户维度独有的口径（只读 conversations 表）。
 
 // FindActiveConversationOfCustomer 取客户最近一个未结束（status != closed）且未归档的会话。

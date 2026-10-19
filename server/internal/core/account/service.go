@@ -1,7 +1,9 @@
-// Package account 账号模块：后台账号（users）、渠道分配关系（agent_channels）、
+// Package account 账号内核：后台账号（users）、渠道分配关系（agent_channels）、
 // 登录鉴权与个人资料。模块内按 handler / service / repository 分层。
 //
-// 依赖方向：account 只依赖 platform（不依赖其它业务模块）。
+// 依赖方向：core/account → platform → pkg（不依赖任何业务端模块）。
+// 端侧（modules/client、modules/agent、modules/admin）都可以依赖本包，
+// 本包不得反向 import 端侧模块。
 package account
 
 import (
@@ -9,11 +11,19 @@ import (
 	"strings"
 
 	"kefu-server/internal/platform/auth"
+	"kefu-server/internal/platform/authctx"
 	"kefu-server/internal/platform/dto"
 	"kefu-server/internal/platform/model"
 	"kefu-server/internal/platform/realtime"
 	"kefu-server/internal/platform/setting"
 )
+
+// init 把「按租户 + 账号 ID 载入账号」的能力注入 platform/authctx。
+// platform 不反向依赖业务内核，authctx.CurrentUser 只能靠这个回调拿到账号实体，
+// 因此注册点落在账号内核自己的 init 里（route 会 import 本包，保证注册被执行）。
+func init() {
+	authctx.SetUserLoader(LoadUser)
+}
 
 // ---------------- 鉴权错误 ----------------
 
@@ -100,9 +110,9 @@ func UserChannels(u *model.User) []uint {
 
 // BuildCurrentUser 组装当前登录用户信息（含租户名/Logo 与可见渠道）。
 func BuildCurrentUser(u *model.User) (*dto.CurrentUser, error) {
-	var tenant model.Tenant
+	tenant := &model.Tenant{}
 	if t, err := FindTenantByID(u.TenantID); err == nil {
-		tenant = *t
+		tenant = t
 	}
 	return &dto.CurrentUser{
 		ID: u.ID, TenantID: u.TenantID, Role: u.Role, Name: u.Name,
@@ -168,7 +178,7 @@ func CreateAgent(tenantID uint, req dto.AgentRequest) (*dto.AgentVO, error) {
 	if maxC <= 0 {
 		maxC = 5
 	}
-	u := model.User{
+	u := &model.User{
 		TenantID:      tenantID,
 		Account:       req.Account,
 		PasswordHash:  hash,
@@ -181,7 +191,7 @@ func CreateAgent(tenantID uint, req dto.AgentRequest) (*dto.AgentVO, error) {
 	if req.Enabled != nil {
 		u.Enabled = *req.Enabled
 	}
-	if err := CreateUser(&u); err != nil {
+	if err := CreateUser(u); err != nil {
 		return nil, err
 	}
 	setAgentChannels(tenantID, u.ID, req.ChannelIDs)
@@ -294,9 +304,9 @@ func UpdateProfile(tenantID, userID uint, name, avatar string) (*model.User, *Au
 	}
 
 	// 广播资料变更，工作台/后台的头像与昵称即时刷新
-	var tenant model.Tenant
+	tenant := &model.Tenant{}
 	if t, terr := FindTenantByID(fresh.TenantID); terr == nil {
-		tenant = *t
+		tenant = t
 	}
 	realtime.HubInstance().Publish(tenantID, []uint{fresh.ID}, realtime.Event{
 		Event: "profile.updated",

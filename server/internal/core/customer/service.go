@@ -1,8 +1,8 @@
-// Package customer 客户模块：customers、customer_tags（标签）、orders、products，
-// 以及客户列表 / 详情 / 历史档案与订单商品查询。模块内按 handler / service / repository 分层。
+// Package customer 客户内核：customers、customer_tags（标签）、orders、products，
+// 以及客户列表 / 详情 / 历史档案与订单商品查询。模块内按 service / repository 分层，
+// 少量跨端 HTTP 处理器见 handler.go。
 //
-// 依赖方向：customer 只依赖 platform（不依赖其它业务模块）。
-// 命名约定：同包内 service 与 handler 会重名（如 ListCustomers），因此 HTTP 处理器统一带 Handler 后缀。
+// 依赖方向：core/customer → platform → pkg（不依赖任何业务端模块，也不依赖其它内核包）。
 package customer
 
 import (
@@ -197,8 +197,8 @@ func CreateTag(tenantID uint, req TagRequest) (*TagVO, error) {
 	if color == "" {
 		color = "blue"
 	}
-	t := model.Tag{TenantID: tenantID, Name: name, Color: color, Sort: req.Sort}
-	if err := InsertTag(&t); err != nil {
+	t := &model.Tag{TenantID: tenantID, Name: name, Color: color, Sort: req.Sort}
+	if err := InsertTag(t); err != nil {
 		return nil, err
 	}
 	return &TagVO{ID: t.ID, Name: t.Name, Color: t.Color, Sort: t.Sort, CreatedAt: util.FmtTime(t.CreatedAt)}, nil
@@ -269,4 +269,17 @@ func SetCustomerTags(tenantID, customerID, operatorID uint, tagIDs []uint) ([]dt
 // UpdateCustomerRemark 客服备注（同样跨客服可见）
 func UpdateCustomerRemark(tenantID, customerID uint, remark string) error {
 	return SaveCustomerRemark(tenantID, customerID, remark)
+}
+
+// ---------------- 用户端兜底租户 ----------------
+
+// DefaultTenantID 未登录、未显式传 ?tenant= 时取第一个租户（便于演示）；取不到返回 0。
+// 调用方有两个且不能互相 import：modules/client（用户端页面与访客 WS 的兜底租户）
+// 与 core/upload（游客态上传也要落 tenant_id），因此口径下沉到客户内核。
+func DefaultTenantID() uint {
+	id, err := FirstTenantID()
+	if err != nil {
+		return 0
+	}
+	return id
 }

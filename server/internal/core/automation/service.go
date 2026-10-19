@@ -1,8 +1,8 @@
-// Package automation 自动回复模块：关键词规则 → 机器人回复 / 转人工。
-// 模块内按 handler / service / repository 分层。
+// Package automation 自动回复内核：关键词规则 → 机器人回复 / 转人工。
+// 模块内按 service / repository 分层，HTTP 层在后台端 modules/admin。
 //
-// 依赖方向：automation → chat（落系统提示语、通知渠道客服、广播会话）、channel（渠道机器人开关）。
-// 跨模块调用：全部走 chat / channel 导出的函数，不直接读写对方的表。
+// 依赖方向：core/automation → core/conversation（落系统提示语、通知渠道客服、广播会话）→ platform → pkg。
+// 内核间调用：全部走 conversation / channel 导出的函数，不直接读写对方的表。
 package automation
 
 import (
@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"kefu-server/internal/modules/chat"
+	"kefu-server/internal/core/conversation"
 	"kefu-server/internal/platform/dto"
 	"kefu-server/internal/platform/model"
 	"kefu-server/internal/platform/realtime"
@@ -81,7 +81,7 @@ func CreateAutoReply(tenantID uint, req AutoReplyRequest) (*AutoReplyVO, error) 
 	if !req.HasTransfer() && strings.TrimSpace(req.Reply) == "" {
 		return nil, errors.New("回复内容不能为空（转人工规则可留空）")
 	}
-	r := model.AutoReply{
+	r := &model.AutoReply{
 		TenantID: tenantID, Name: req.Name, ChannelID: req.ChannelID,
 		MatchType: defaultMatchType(req.MatchType), Keywords: req.Keywords,
 		Reply: req.Reply, ReplyType: orDefaultStr(req.ReplyType, "text"),
@@ -93,10 +93,10 @@ func CreateAutoReply(tenantID uint, req AutoReplyRequest) (*AutoReplyVO, error) 
 	if req.Enabled != nil {
 		r.Enabled = *req.Enabled
 	}
-	if err := InsertAutoReply(&r); err != nil {
+	if err := InsertAutoReply(r); err != nil {
 		return nil, err
 	}
-	vo := toAutoReplyVO(&r)
+	vo := toAutoReplyVO(r)
 	return &vo, nil
 }
 
@@ -186,13 +186,13 @@ func ReplyNow(tenantID, convID, customerID, channelID uint, question string) *Re
 		if rule.Name != "" {
 			desc = "（命中：" + rule.Name + "）"
 		}
-		chat.AppendSystemMessage(tenantID, convID, "客户请求人工客服"+desc+"，正在为您转接，请稍候")
+		conversation.AppendSystemMessage(tenantID, convID, "客户请求人工客服"+desc+"，正在为您转接，请稍候")
 		// 转人工：置为待接待并清空接待人（失败不阻断，后续由客服端手动接入）
 		_ = UpdateAutoReplyConversation(convID, map[string]interface{}{
 			"status": "pending", "agent_id": 0,
 		})
-		chat.NotifyChannelAgents(tenantID, channelID, convID, "待接待提醒", "有客户请求人工客服，请尽快接入")
-		chat.BroadcastConversation(tenantID, convID)
+		conversation.NotifyChannelAgents(tenantID, channelID, convID, "待接待提醒", "有客户请求人工客服，请尽快接入")
+		conversation.BroadcastConversation(tenantID, convID)
 		realtime.HubInstance().PublishToGuest(tenantID, convID, realtime.Event{
 			Event: "conversation.updated",
 			Data:  map[string]interface{}{"id": convID, "status": "pending", "transferred": true},
@@ -211,19 +211,19 @@ func ReplyNow(tenantID, convID, customerID, channelID uint, question string) *Re
 	if reply == "" {
 		return &ReplyResult{Transferred: false}
 	}
-	m := model.Message{
+	m := &model.Message{
 		TenantID: tenantID, ConversationID: convID,
 		SenderRole: "user", SenderID: 0,
 		Type: "text", Direction: "out", Content: reply, Read: true,
 	}
-	if err := CreateAutoReplyMessage(&m); err != nil {
+	if err := CreateAutoReplyMessage(m); err != nil {
 		return &ReplyResult{Transferred: false}
 	}
 	// 回写会话摘要（失败不阻断，消息本身已入库）
 	_ = UpdateAutoReplyConversation(convID, map[string]interface{}{
 		"last_message": reply, "last_message_at": time.Now(),
 	})
-	vo := chat.BuildMessageVO(&m)
+	vo := conversation.BuildMessageVO(m)
 	realtime.HubInstance().Publish(tenantID, nil, realtime.Event{Event: "message.new", Data: vo})
 	realtime.HubInstance().PublishToGuest(tenantID, convID, realtime.Event{Event: "message.new", Data: vo})
 	return &ReplyResult{Transferred: false, Message: vo}

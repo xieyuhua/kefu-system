@@ -1,8 +1,8 @@
 // Package setting 租户系统配置（默认图片、提示音等）。
 //
-// 原先是 service/setting.go + repository/setting.go 两层，整体搬入 platform：
-// account 的登录响应需要默认图片地址（DefaultImageURL），若留在 ops 模块会与
-// ops → account 形成环，因此把它当基础设施看待。业务模块只调用本包的导出函数。
+// 一开始是 service/setting.go + repository/setting.go 两层，后来整体搬入 platform：
+// core/account 的登录响应需要默认图片地址（DefaultImageURL），若留在业务层会形成
+// account ⇄ setting 的环，因此把它当基础设施看待。业务层只调用本包的导出函数。
 package setting
 
 import (

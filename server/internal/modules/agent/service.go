@@ -1,11 +1,14 @@
-// Package ops 运营支撑模块：数据统计、系统设置端点（HTTP 适配 platform/setting）、
-// 设备推送注册、离线消息/提醒同步、演示入口。模块内按 handler / service / repository 分层。
+package agent
+
+// 本文件是客服端（modules/agent）的端内编排：设备推送注册、离线消息 / 提醒补拉、演示面板。
+// 会话与消息的读写、客户与会话的定位、自动回复判定都在 core/*，这里只做「客服端专属」的组合。
 //
-// 依赖方向：ops → chat（会话/消息 VO）、customer（客户与商品）、account（客服）、automation（自动回复判定）。
-// 跨模块写入说明：演示入口要「新建客户 + 刷新客户昵称 / 活跃时间」，按归属表这段流程属于 ops，
-// 因此直接调用 customer 导出的仓储函数（CreateCustomer / UpdateCustomerColumns），
-// 会话则由 chat 导出的 service 函数创建（chat.CreateConversation）。
-package ops
+// 依赖方向：modules/agent → core/* → platform → pkg。
+//
+// 数据访问说明：devices / notifications 两张表只服务客服端的「重连补拉 + 推送 token」，
+// 没有第二个端使用，因此读写就近放在本文件（端内只有 handler / service 两层，
+// 不再为两张表单开 repository.go）；跨表只读口径（可见会话范围）同样在本文件，
+// 与 core/conversation 的可见范围判定保持一致。
 
 import (
 	"errors"
@@ -14,149 +17,16 @@ import (
 	"strings"
 	"time"
 
-	"kefu-server/internal/modules/automation"
-	"kefu-server/internal/modules/chat"
-	"kefu-server/internal/modules/customer"
+	"kefu-server/internal/core/automation"
+	"kefu-server/internal/core/channel"
+	"kefu-server/internal/core/conversation"
+	"kefu-server/internal/core/customer"
 	"kefu-server/internal/platform/dto"
 	"kefu-server/internal/platform/model"
 	"kefu-server/internal/platform/realtime"
+	"kefu-server/pkg/storage"
 	"kefu-server/pkg/util"
 )
-
-// ---------------- 数据统计 ----------------
-// 供后台概览：接待趋势（按天）、会话量分布、客服工作量、渠道分布。
-
-type DailyPoint struct {
-	Date       string `json:"date"`          // 2026-03-05
-	Total      int64  `json:"total"`         // 当日会话数
-	Handled    int64  `json:"handled"`       // 已接待（agent_id > 0）
-	Closed     int64  `json:"closed"`        // 已结束
-	Pending    int64  `json:"pending"`       // 未接待
-	Messages   int64  `json:"messages"`      // 当日消息数
-	CustomerMs int64  `json:"customer_msgs"` // 客户消息数
-	AgentMs    int64  `json:"agent_msgs"`    // 客服消息数
-}
-
-type AgentStat struct {
-	AgentID   uint   `json:"agent_id"`
-	Name      string `json:"name"`
-	Avatar    string `json:"avatar"`
-	Role      string `json:"role"`            // admin | agent
-	Handled   int64  `json:"handled"`         // 接待会话数
-	Closed    int64  `json:"closed"`          // 结束会话数
-	Messages  int64  `json:"messages"`        // 发送消息数
-	ActiveNow int64  `json:"active_now"`      // 当前进行中
-	AvgFirst  int64  `json:"avg_first_reply"` // 平均首次响应秒
-}
-
-type ChannelStat struct {
-	ChannelID uint   `json:"channel_id"`
-	Name      string `json:"name"`
-	Type      string `json:"type"`
-	Total     int64  `json:"total"`
-	Pending   int64  `json:"pending"`
-	Open      int64  `json:"open"`
-	Closed    int64  `json:"closed"`
-}
-
-type StatsOverview struct {
-	Trend    []DailyPoint  `json:"trend"`
-	Agents   []AgentStat   `json:"agents"`
-	Channels []ChannelStat `json:"channels"`
-	Summary  StatsSummary  `json:"summary"`
-}
-
-type StatsSummary struct {
-	TotalConversations int64   `json:"total_conversations"`
-	HandledRate        float64 `json:"handled_rate"` // 接待率 %
-	AvgMessages        float64 `json:"avg_messages"` // 平均消息数/会话
-	Customers          int64   `json:"customers"`
-	NewCustomers       int64   `json:"new_customers"`
-	Orders             int64   `json:"orders"`
-	OnlineAgents       int64   `json:"online_agents"`
-}
-
-// StatsOverviewData 生成指定天数的数据概览
-func StatsOverviewData(tenantID uint, days int) (*StatsOverview, error) {
-	if days <= 0 {
-		days = 7
-	}
-	if days > 90 {
-		days = 90
-	}
-	out := &StatsOverview{
-		Trend:    []DailyPoint{},
-		Agents:   []AgentStat{},
-		Channels: []ChannelStat{},
-	}
-
-	loc := time.Now().Location()
-	today := time.Date(time.Now().Year(), time.Now().Month(), time.Now().Day(), 0, 0, 0, 0, loc)
-	start := today.AddDate(0, 0, -(days - 1))
-
-	// 趋势
-	for i := 0; i < days; i++ {
-		from := start.AddDate(0, 0, i)
-		to := from.AddDate(0, 0, 1)
-		p := DailyPoint{Date: from.Format("2006-01-02")}
-
-		// 每项都是一条独立查询：pending/open/closed 不能合并，避免条件互相污染。
-		// 单项统计失败按 0 处理，概览页始终可渲染（与原实现一致的容错口径）。
-		p.Total, _ = CountConversationsInRange(tenantID, from, to)
-		p.Handled, _ = CountHandledConversationsInRange(tenantID, from, to)
-		p.Closed, _ = CountConversationsInRangeByStatus(tenantID, from, to, "closed")
-		p.Pending, _ = CountConversationsInRangeByStatus(tenantID, from, to, "pending")
-		p.Messages, _ = CountMessagesInRange(tenantID, from, to)
-		p.CustomerMs, _ = CountMessagesInRangeByDirection(tenantID, from, to, "in")
-		p.AgentMs, _ = CountMessagesInRangeByDirection(tenantID, from, to, "out")
-
-		out.Trend = append(out.Trend, p)
-	}
-
-	// 客服工作量：包含所有接待过会话的账号（admin 也算）
-	// 注意：不能简单按 role='agent' 过滤 —— SAAS 管理员常常也亲自坐席
-	users, _ := ListUsersForStats(tenantID)
-	for _, u := range users {
-		// 跳过完全没有参与接待的客服，表格更精炼
-		handled, _ := CountAgentConversations(tenantID, u.ID)
-		if handled == 0 && !u.Online {
-			continue
-		}
-		s := AgentStat{AgentID: u.ID, Name: u.Name, Avatar: u.Avatar, Role: u.Role}
-		s.Handled = handled
-		s.Closed, _ = CountAgentConversationsByStatus(tenantID, u.ID, "closed")
-		s.ActiveNow, _ = CountAgentConversationsByStatus(tenantID, u.ID, "open")
-		// 最近 N 天的消息数（与表头 "最近 N 天" 对齐）
-		s.Messages, _ = CountAgentMessagesSince(tenantID, u.ID, start)
-		out.Agents = append(out.Agents, s)
-	}
-
-	// 渠道分布：最近 N 天的会话（与趋势图、客服工作量时间口径一致）
-	chs, _ := ListChannelsForStats(tenantID)
-	for _, c := range chs {
-		s := ChannelStat{ChannelID: c.ID, Name: c.Name, Type: c.Type}
-		s.Total, _ = CountChannelConversationsSince(tenantID, c.ID, start)
-		s.Pending, _ = CountChannelConversationsSinceByStatus(tenantID, c.ID, start, "pending")
-		s.Open, _ = CountChannelConversationsSinceByStatus(tenantID, c.ID, start, "open")
-		s.Closed, _ = CountChannelConversationsSinceByStatus(tenantID, c.ID, start, "closed")
-		out.Channels = append(out.Channels, s)
-	}
-
-	// 汇总
-	out.Summary.TotalConversations, _ = CountTenantConversations(tenantID)
-	handled, _ := CountTenantHandledConversations(tenantID)
-	if out.Summary.TotalConversations > 0 {
-		out.Summary.HandledRate = float64(handled) / float64(out.Summary.TotalConversations) * 100
-		msgCount, _ := CountTenantMessages(tenantID)
-		out.Summary.AvgMessages = float64(msgCount) / float64(out.Summary.TotalConversations)
-	}
-	out.Summary.Customers, _ = CountTenantCustomers(tenantID)
-	out.Summary.NewCustomers, _ = CountNewCustomersSince(tenantID, start)
-	out.Summary.Orders, _ = CountTenantOrders(tenantID)
-	out.Summary.OnlineAgents, _ = CountOnlineAgents(tenantID)
-
-	return out, nil
-}
 
 // ---------------- Device（APP / PC 桌面端） ----------------
 
@@ -164,7 +34,7 @@ func RegisterDevice(tenantID, userID uint, req dto.DeviceRequest) (*dto.DeviceVO
 	if req.Device == "" {
 		req.Device = "app"
 	}
-	d := model.Device{
+	d := &model.Device{
 		TenantID:  tenantID,
 		UserID:    userID,
 		Device:    req.Device,
@@ -172,7 +42,7 @@ func RegisterDevice(tenantID, userID uint, req dto.DeviceRequest) (*dto.DeviceVO
 		PushToken: req.PushToken,
 		Name:      req.Name,
 	}
-	if err := CreateDevice(&d); err != nil {
+	if err := CreateDevice(d); err != nil {
 		return nil, err
 	}
 	return &dto.DeviceVO{
@@ -227,7 +97,7 @@ func OfflineMessages(tenantID, userID uint, sinceID uint, limit int) ([]dto.Mess
 	out := make([]dto.MessageVO, 0, len(list))
 	latest := sinceID
 	for _, m := range list {
-		out = append(out, chat.BuildMessageVO(m))
+		out = append(out, conversation.BuildMessageVO(m))
 		if m.ID > latest {
 			latest = m.ID
 		}
@@ -263,7 +133,7 @@ func MarkNotificationsRead(tenantID, userID uint, ids []uint) error {
 // DemoIncoming 模拟客户从某个渠道发起咨询（一键体验）。
 // 命中自动回复规则时机器人先答；命中转人工关键词则直接转为待人工接待。
 func DemoIncoming(tenantID uint, req dto.DemoIncomingRequest) (*dto.ConversationVO, *dto.MessageVO, error) {
-	ch, err := findChannelByID(tenantID, req.ChannelID)
+	ch, err := channel.FindChannelByID(tenantID, req.ChannelID)
 	if err != nil {
 		return nil, nil, errors.New("渠道不存在")
 	}
@@ -290,7 +160,7 @@ func DemoIncoming(tenantID uint, req dto.DemoIncomingRequest) (*dto.Conversation
 				TenantID: tenantID, ChannelID: ch.ID, CustomerID: cu.ID,
 				Status: "pending", LastMessageAt: now,
 			}
-			if err := chat.CreateConversation(conv); err != nil {
+			if err := conversation.CreateConversation(conv); err != nil {
 				return nil, nil, err
 			}
 			return sendDemoMessage(tenantID, conv, cu, req)
@@ -326,7 +196,7 @@ func DemoIncoming(tenantID uint, req dto.DemoIncomingRequest) (*dto.Conversation
 		Status:        "pending",
 		LastMessageAt: now,
 	}
-	if err := chat.CreateConversation(conv); err != nil {
+	if err := conversation.CreateConversation(conv); err != nil {
 		return nil, nil, err
 	}
 	return sendDemoMessage(tenantID, conv, cu, req)
@@ -347,7 +217,7 @@ func sendDemoMessage(
 	if msgType == "" {
 		msgType = "text"
 	}
-	mvo, cvo, err := chat.ReceiveMessage(tenantID, conv.ID, cu.ID, msgType, content)
+	mvo, cvo, err := conversation.ReceiveMessage(tenantID, conv.ID, cu.ID, msgType, content)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -380,4 +250,94 @@ func randomNickname() string {
 
 func randomPhone() string {
 	return fmt.Sprintf("13%d****%04d", rand.Intn(9)+1, rand.Intn(10000))
+}
+
+// ---------------- 数据访问：devices / notifications（端内自有表） ----------------
+//
+// 下面几段是端内自有表的读写：devices（推送 token）与 notifications（离线提醒）
+// 只服务客服端的「重连补拉」，没有第二个端使用；端内只有 handler / service 两层，
+// 因此不再单独开 repository.go，SQL 就近留在本文件末尾。
+
+// ---------------- 站内提醒（Notification） ----------------
+
+// CreateNotification 写入一条站内提醒（客服离线时重连后可拉取）。
+// 平台层的 realtime.Notify 也有一份等价实现（基础设施例外），两者写同一张表。
+func CreateNotification(n *model.Notification) error {
+	return storage.DB().Create(n).Error
+}
+
+// ---------------- 客服设备（Device：APP / PC 桌面端） ----------------
+
+// CreateDevice 登记一台推送设备。
+func CreateDevice(d *model.Device) error {
+	return storage.DB().Create(d).Error
+}
+
+// ListDevicesOfUser 列出某客服已登记的推送设备（按 id 倒序）。
+func ListDevicesOfUser(tenantID, userID uint) ([]*model.Device, error) {
+	var list []*model.Device
+	if err := storage.DB().Where("tenant_id = ? AND user_id = ?", tenantID, userID).
+		Order("id desc").Find(&list).Error; err != nil {
+		return nil, err
+	}
+	return list, nil
+}
+
+// DeleteDeviceOfUser 删除某客服自己的一台设备。
+func DeleteDeviceOfUser(tenantID, userID, id uint) error {
+	return storage.DB().Where("tenant_id = ? AND user_id = ? AND id = ?", tenantID, userID, id).
+		Delete(&model.Device{}).Error
+}
+
+// ---------------- 离线同步（消息 / 提醒） ----------------
+
+// ListVisibleConversationIDs 列出客服可见范围内的会话 ID：
+// 自己接待的 + 自己渠道下尚未分配的（与原离线同步口径一致）。
+func ListVisibleConversationIDs(tenantID, userID uint) ([]uint, error) {
+	var chIDs []uint
+	if err := storage.DB().Model(&model.AgentChannel{}).Where("user_id = ?", userID).
+		Pluck("channel_id", &chIDs).Error; err != nil {
+		return nil, err
+	}
+	var convIDs []uint
+	q := storage.DB().Model(&model.Conversation{}).Where("tenant_id = ?", tenantID)
+	if len(chIDs) > 0 {
+		q = q.Where("agent_id = ? OR (agent_id = 0 AND channel_id IN ?)", userID, chIDs)
+	} else {
+		q = q.Where("agent_id = ?", userID)
+	}
+	if err := q.Pluck("id", &convIDs).Error; err != nil {
+		return nil, err
+	}
+	return convIDs, nil
+}
+
+// ListMessagesOfConversations 取一批会话中 id > afterID 的消息，按 id 升序，最多 limit 条。
+// 调用方按「多取一条」判断是否还有更多（has_more）。
+func ListMessagesOfConversations(tenantID uint, convIDs []uint, afterID uint, limit int) ([]*model.Message, error) {
+	var list []*model.Message
+	if err := storage.DB().Where("tenant_id = ? AND conversation_id IN ? AND id > ?", tenantID, convIDs, afterID).
+		Order("id asc").Limit(limit).Find(&list).Error; err != nil {
+		return nil, err
+	}
+	return list, nil
+}
+
+// ListNotificationsAfter 取客服在 sinceID 之后新增的系统提醒（最多 limit 条，升序）。
+func ListNotificationsAfter(tenantID, userID, sinceID uint, limit int) ([]*model.Notification, error) {
+	var list []*model.Notification
+	if err := storage.DB().Where("tenant_id = ? AND user_id = ? AND id > ?", tenantID, userID, sinceID).
+		Order("id asc").Limit(limit).Find(&list).Error; err != nil {
+		return nil, err
+	}
+	return list, nil
+}
+
+// SetNotificationsRead 把客服的提醒标记为已读；ids 为空时表示全部已读。
+func SetNotificationsRead(tenantID, userID uint, ids []uint) error {
+	q := storage.DB().Model(&model.Notification{}).Where("tenant_id = ? AND user_id = ?", tenantID, userID)
+	if len(ids) > 0 {
+		q = q.Where("id IN ?", ids)
+	}
+	return q.Update("read", true).Error
 }

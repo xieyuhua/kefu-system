@@ -235,7 +235,8 @@ func (h *Hub) Remove(c *Client) {
 
 	// 客服端断开：若该客服没有其它在线连接，则标记离线并释放其正在接待的会话，
 	// 让同渠道的其他客服可以接手（管理员离线同样释放）。
-	// 「释放会话」属于会话业务，由 chat 模块通过 SetAgentOfflineHook 注入，避免本包反向依赖业务层。
+	// 「释放会话」属于会话业务，由 core/conversation 通过 SetAgentOfflineHook 注入，
+	// 避免本包反向依赖业务层。
 	if c.UserID > 0 && !h.IsUserOnline(c.UserID) {
 		_ = updateUserOnlineByID(c.UserID, false)
 		if agentOfflineHook != nil {

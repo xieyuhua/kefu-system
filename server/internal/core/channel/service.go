@@ -1,8 +1,7 @@
-// Package channel 渠道模块：channels、channel_types、渠道二维码 / 接入地址、
-// 渠道 ↔ 接待账号分配。模块内按 handler / service / repository 分层。
+// Package channel 渠道内核：channels、channel_types、渠道二维码 / 接入地址、
+// 渠道 ↔ 接待账号分配。模块内按 service / repository 分层，HTTP 层在各端模块。
 //
-// 依赖方向：channel 只依赖 platform（不依赖其它业务模块）。
-// 命名约定：同包内 service 与 handler 会重名（如 CreateChannel），因此 HTTP 处理器统一带 Handler 后缀。
+// 依赖方向：core/channel → platform → pkg（不依赖任何业务端模块，也不依赖其它内核包）。
 package channel
 
 import (
@@ -72,7 +71,7 @@ func CreateChannel(tenantID uint, req dto.ChannelRequest) (*dto.ChannelVO, error
 	if req.Type == "" {
 		req.Type = "custom"
 	}
-	c := model.Channel{
+	c := &model.Channel{
 		TenantID:     tenantID,
 		Type:         req.Type,
 		Name:         req.Name,
@@ -92,7 +91,7 @@ func CreateChannel(tenantID uint, req dto.ChannelRequest) (*dto.ChannelVO, error
 	if req.Enabled != nil {
 		c.Enabled = *req.Enabled
 	}
-	if err := InsertChannel(&c); err != nil {
+	if err := InsertChannel(c); err != nil {
 		return nil, err
 	}
 	return &dto.ChannelVO{
@@ -387,11 +386,11 @@ func CreateChannelType(tenantID uint, req ChannelTypeRequest) (*ChannelTypeVO, e
 	if color == "" {
 		color = "#07C160"
 	}
-	t := model.ChannelType{
+	t := &model.ChannelType{
 		TenantID: tenantID, Code: code, Name: name,
 		Color: color, Icon: req.Icon, Sort: req.Sort,
 	}
-	if err := InsertChannelType(&t); err != nil {
+	if err := InsertChannelType(t); err != nil {
 		return nil, err
 	}
 	return &ChannelTypeVO{

@@ -1,12 +1,13 @@
-// Package guest 用户端（访客）接入模块：免登录的客户识别、会话定位、消息收发。
-// 模块内按 handler / service 分层（无自有数据表，因此没有 repository）。
+// Package client 用户端（访客）模块：免登录的客户识别、会话定位、消息收发的端内编排。
+// 模块内按 handler / service 分层（端内无自有数据表，因此没有 repository）。
 //
-// 依赖方向：guest → chat（会话定位与消息）、customer（客户读写）、channel（渠道解析）、
-// account（客服信息）、automation（自动回复判定）。
-// 跨模块写入说明：访客首次进入要新建客户（customers 表属 customer 模块），
-// 这里直接调用 customer 导出的仓储函数 CreateCustomer —— 该逻辑原就写在 guest 域内，
-// 拆到两个模块只会让「找到或创建客户」的原子流程变得难读。
-package guest
+// 依赖方向：modules/client → core/{conversation,customer,channel,automation} → platform → pkg。
+// 本包只做用户端自己的编排（解析接入参数、找人或建人、定位会话、拼装初始化响应），
+// 可复用的业务能力一律放在 core/*，不向 core/main.go 之外暴露给其它端。
+// 跨内核写入说明：访客首次进入要新建客户（customers 表属 core/customer），
+// 这里直接调用其导出的仓储函数 CreateCustomer —— 该逻辑原就写在访客域内，
+// 拆成两个 service 只会让「找到或创建客户」的原子流程变得难读。
+package client
 
 import (
 	"encoding/json"
@@ -15,9 +16,9 @@ import (
 	"strings"
 	"time"
 
-	"kefu-server/internal/modules/channel"
-	"kefu-server/internal/modules/chat"
-	"kefu-server/internal/modules/customer"
+	"kefu-server/internal/core/channel"
+	"kefu-server/internal/core/conversation"
+	"kefu-server/internal/core/customer"
 	"kefu-server/internal/platform/card"
 	"kefu-server/internal/platform/ipinfo"
 	"kefu-server/internal/platform/model"
@@ -75,17 +76,17 @@ func EnsureGuestCustomer(tenantID uint, ch *model.Channel, uid, nickname, avatar
 		nickname = "游客" + string(r)
 	}
 	now := time.Now()
-	cu := model.Customer{
+	cu := &model.Customer{
 		TenantID: tenantID, ChannelID: ch.ID, ExternalID: uid,
 		Nickname: nickname, Avatar: avatar, Phone: phone,
 		IP:         ip,
 		LastSeenAt: &now,
 	}
-	if err := customer.CreateCustomer(&cu); err != nil {
+	if err := customer.CreateCustomer(cu); err != nil {
 		return nil, err
 	}
 	ipinfo.RecordCustomerIP(cu.ID, cu.IP)
-	return &cu, nil
+	return cu, nil
 }
 
 // FindGuestCustomer 按「租户 + 渠道 + 外部用户标识」定位客户。
@@ -102,7 +103,7 @@ func FindGuestCustomerByExternalID(tenantID uint, externalID string) (*model.Cus
 
 // LatestConversationOfCustomer 取客户最近一个会话（轮询降级接口定位「当前该看哪个会话」）。
 func LatestConversationOfCustomer(tenantID, customerID uint) (*model.Conversation, error) {
-	return chat.FindLatestConversationByCustomer(tenantID, customerID)
+	return conversation.FindLatestConversationByCustomer(tenantID, customerID)
 }
 
 // FindGuestConversation 定位（或创建）某渠道下某个外部用户的客户与会话。
@@ -113,7 +114,7 @@ func FindGuestConversation(tenantID, channelID uint, externalID string) (*model.
 		return nil, 0, errors.New("会话不存在，请先调用 /api/guest/init")
 	}
 	// 复用最近一个会话（含 closed/archived，自动激活），保证聊天记录合并
-	conv, err := chat.FindOrCreateConversation(tenantID, cu.ID, channelID)
+	conv, err := conversation.FindOrCreateConversation(tenantID, cu.ID, channelID)
 	if err != nil {
 		return cu, 0, err
 	}
@@ -142,11 +143,9 @@ func LookupProductCard(tenantID uint, pid string) map[string]interface{} {
 	return out
 }
 
-// DefaultTenantID 用户端未登录、未显式传 ?tenant= 时取第一个租户（便于演示）；取不到返回 0。
+// DefaultTenantID 用户端未显式传 ?tenant= 时的兜底租户（便于演示）；取不到返回 0。
+// 口径已下沉到 core/customer：core/upload 的游客态上传也要用同一份 tenants 查询，
+// 这里只保留端内入口，避免两处各写一遍「取第一个租户」。
 func DefaultTenantID() uint {
-	id, err := customer.FirstTenantID()
-	if err != nil {
-		return 0
-	}
-	return id
+	return customer.DefaultTenantID()
 }

@@ -13,18 +13,20 @@ kefu/
       util               时间等通用工具
     internal/
       route/router.go    路由汇总（唯一真值来源）
-      platform/          基础设施，被所有模块依赖
-                         model dto setting card idgen authctx realtime ipinfo
-                         auth middleware config db seed
-      modules/           业务模块，模块内含 handler / service / repository
-        account/         登录、个人资料、子账号
+      core/              共享业务内核（三端共用）
+        account/         账号、登录、个人资料
         channel/         渠道、渠道类型、二维码
         customer/        客户、标签、订单、商品
-        chat/            会话、消息、WebSocket
-        guest/           用户端免登录接入
-        automation/      自动回复与转人工
-        ops/             设置、统计、通知、设备、演示
+        conversation/    会话、消息、WebSocket
+        automation/      自动回复规则
         upload/          文件上传
+      modules/           三端，端内 handler + service
+        client/          ① 用户端（/kefu/）免登录接入
+        agent/           ② 客服端（/chat/）工作台
+        admin/           ③ 后台端（/admin/）管理
+      platform/          基础设施，被 core 与三端依赖
+                         model dto authctx auth middleware realtime setting
+                         card idgen ipinfo config db seed
   web/                   Vue3 + Vite + TS + Element Plus（三端独立入口）
     src/
       app/               应用引导：App.vue、bootstrap.ts、style.css

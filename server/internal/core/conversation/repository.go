@@ -1,10 +1,10 @@
-package chat
+package conversation
 
-// 本文件是 chat 模块的数据访问层（原 repository/conversation.go + repository/message.go）。
+// 本文件是 core/conversation 的数据访问层。
 //
 // 写表范围：conversations / messages。
 // 跨表只读：客服可见范围要读 agent_channels，对话记录要读 customers（子查询），
-// 这些只读语句原本就在这里，保持不变（不写对方模块的表）。
+// 这些只读语句原本就在这里，保持不变（不写对方内核的表）。
 
 import (
 	"database/sql"

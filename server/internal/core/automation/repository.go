@@ -1,11 +1,11 @@
 package automation
 
-// 本文件是 automation 模块的数据访问层（原 repository/autoreply.go）。
+// 本文件是 core/automation 的数据访问层。
 //
-// 写表范围：auto_replies（本模块自己的表）。
+// 写表范围：auto_replies（本内核自己的表）。
 // 例外（沿用原实现）：一次自动回复判定要读会话状态、回写会话摘要并落一条机器人消息，
 // 这三条语句只服务本域（函数名都带 AutoReply 前缀），因此就近保留在本文件，
-// 与 chat 模块的会话/消息读写互不替代。
+// 与 core/conversation 的会话/消息读写互不替代。
 
 import (
 	"kefu-server/internal/platform/model"
