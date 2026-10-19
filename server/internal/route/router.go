@@ -6,9 +6,16 @@ import (
 	"os"
 	"path/filepath"
 
-	"kefu-server/internal/config"
-	"kefu-server/internal/handler"
-	"kefu-server/internal/middleware"
+	"kefu-server/internal/modules/account"
+	"kefu-server/internal/modules/automation"
+	"kefu-server/internal/modules/channel"
+	"kefu-server/internal/modules/chat"
+	"kefu-server/internal/modules/customer"
+	"kefu-server/internal/modules/guest"
+	"kefu-server/internal/modules/ops"
+	"kefu-server/internal/modules/upload"
+	"kefu-server/internal/platform/config"
+	"kefu-server/internal/platform/middleware"
 
 	"github.com/gin-gonic/gin"
 )
@@ -169,119 +176,121 @@ func Setup() *gin.Engine {
 	})
 
 	// WebSocket：客服端（需 token）与用户端/访客（凭 channel+uid）两条独立通道
-	r.GET("/ws", handler.WSHandler)
-	r.GET("/ws/guest", handler.GuestWSHandler)
+	r.GET("/ws", chat.WSHandler)
+	r.GET("/ws/guest", guest.GuestWSHandler)
 
+	// 路由汇总：路径 / 方法 / 中间件与拆分前逐字一致，处理器改为各模块导出的函数
+	// （模块内 handler 统一带 Handler 后缀，避免与同包 service 同名）。
 	g := r.Group("/api")
 	{
 		// 认证
-		g.POST("/auth/login", handler.Login)
-		g.POST("/auth/logout", middleware.JWTAuth(), handler.Logout)
-		g.GET("/auth/me", middleware.JWTAuth(), handler.Me)
-		g.PUT("/auth/profile", middleware.JWTAuth(), handler.UpdateProfile)
-		g.PUT("/auth/password", middleware.JWTAuth(), handler.ChangePassword)
+		g.POST("/auth/login", account.LoginHandler)
+		g.POST("/auth/logout", middleware.JWTAuth(), account.LogoutHandler)
+		g.GET("/auth/me", middleware.JWTAuth(), account.MeHandler)
+		g.PUT("/auth/profile", middleware.JWTAuth(), account.UpdateProfileHandler)
+		g.PUT("/auth/password", middleware.JWTAuth(), account.ChangePasswordHandler)
 
 		// 用户端（GET 参数传递渠道等信息，无需登录）
-		g.GET("/guest/init", handler.GuestInit)
-		g.POST("/guest/message", handler.GuestSend)
-		g.GET("/guest/messages", handler.GuestMessages)
+		g.GET("/guest/init", guest.GuestInitHandler)
+		g.POST("/guest/message", guest.GuestSendHandler)
+		g.GET("/guest/messages", guest.GuestMessagesHandler)
 		// 用户端上传附件（图片/视频/文件）
-		g.POST("/guest/upload", handler.Upload)
+		g.POST("/guest/upload", upload.UploadHandler)
 
 		authed := g.Group("", middleware.JWTAuth())
 		{
 			// 渠道
-			authed.GET("/channels", handler.ListChannels)
-			authed.POST("/channels", handler.CreateChannel)
-			authed.PUT("/channels/:id", handler.UpdateChannel)
-			authed.DELETE("/channels/:id", handler.DeleteChannel)
+			authed.GET("/channels", channel.ListChannelsHandler)
+			authed.POST("/channels", channel.CreateChannelHandler)
+			authed.PUT("/channels/:id", channel.UpdateChannelHandler)
+			authed.DELETE("/channels/:id", channel.DeleteChannelHandler)
 			// 重置渠道标识（app_id）：生成新的随机标识，旧链接失效
-			authed.POST("/channels/:id/reset-app-id", handler.ResetChannelAppID)
+			authed.POST("/channels/:id/reset-app-id", channel.ResetChannelAppIDHandler)
 
 			// 渠道二维码 / 接入地址
-			authed.GET("/channels/:id/qr", handler.ChannelQRInfo)
-			authed.GET("/channels/:id/qr.png", handler.ChannelQRPNG)
+			authed.GET("/channels/:id/qr", channel.ChannelQRInfoHandler)
+			authed.GET("/channels/:id/qr.png", channel.ChannelQRPNGHandler)
 			// 渠道接待账号快速设置
-			authed.GET("/channels/:id/agents", handler.ListChannelAgents)
-			authed.PUT("/channels/:id/agents", handler.SetChannelAgents)
+			authed.GET("/channels/:id/agents", channel.ListChannelAgentsHandler)
+			authed.PUT("/channels/:id/agents", channel.SetChannelAgentsHandler)
 
 			// 渠道类型库（自定义类型，不限制枚举）
-			authed.GET("/channel-types", handler.ListChannelTypes)
-			authed.POST("/channel-types", handler.CreateChannelType)
-			authed.PUT("/channel-types/:id", handler.UpdateChannelType)
-			authed.DELETE("/channel-types/:id", handler.DeleteChannelType)
+			authed.GET("/channel-types", channel.ListChannelTypesHandler)
+			authed.POST("/channel-types", channel.CreateChannelTypeHandler)
+			authed.PUT("/channel-types/:id", channel.UpdateChannelTypeHandler)
+			authed.DELETE("/channel-types/:id", channel.DeleteChannelTypeHandler)
 
 			// 子账号
-			authed.GET("/agents", handler.ListAgents)
-			authed.POST("/agents", handler.CreateAgent)
-			authed.PUT("/agents/:id", handler.UpdateAgent)
-			authed.DELETE("/agents/:id", handler.DeleteAgent)
-			authed.POST("/agents/:id/online", handler.SetOnline)
+			authed.GET("/agents", account.ListAgentsHandler)
+			authed.POST("/agents", account.CreateAgentHandler)
+			authed.PUT("/agents/:id", account.UpdateAgentHandler)
+			authed.DELETE("/agents/:id", account.DeleteAgentHandler)
+			authed.POST("/agents/:id/online", account.SetOnlineHandler)
 
 			// 会话
-			authed.GET("/conversations", handler.ListConversations)
-			authed.GET("/conversations/stats", handler.ConversationStats)
-			authed.GET("/conversations/:id", handler.GetConversation)
-			authed.POST("/conversations/:id/claim", handler.ClaimConversation)
-			authed.POST("/conversations/:id/transfer", handler.TransferConversation)
-			authed.POST("/conversations/:id/close", handler.CloseConversation)
-			authed.POST("/conversations/:id/read", handler.MarkRead)
+			authed.GET("/conversations", chat.ListConversationsHandler)
+			authed.GET("/conversations/stats", chat.ConversationStatsHandler)
+			authed.GET("/conversations/:id", chat.GetConversationHandler)
+			authed.POST("/conversations/:id/claim", chat.ClaimConversationHandler)
+			authed.POST("/conversations/:id/transfer", chat.TransferConversationHandler)
+			authed.POST("/conversations/:id/close", chat.CloseConversationHandler)
+			authed.POST("/conversations/:id/read", chat.MarkReadHandler)
 			// 会话归档 / 删除 / 消息搜索
-			authed.POST("/conversations/archive-bulk", handler.ArchiveConversationsBulk)
-			authed.POST("/conversations/:id/archive", handler.ArchiveConversation)
-			authed.POST("/conversations/:id/unarchive", handler.UnarchiveConversation)
-			authed.DELETE("/conversations/:id", handler.DeleteConversation)
-			authed.GET("/conversations/:id/messages/search", handler.SearchConversationMessages)
-			authed.GET("/conversations/:id/messages", handler.ListMessages)
-			authed.POST("/conversations/:id/messages", handler.SendMessage)
+			authed.POST("/conversations/archive-bulk", chat.ArchiveConversationsBulkHandler)
+			authed.POST("/conversations/:id/archive", chat.ArchiveConversationHandler)
+			authed.POST("/conversations/:id/unarchive", chat.UnarchiveConversationHandler)
+			authed.DELETE("/conversations/:id", chat.DeleteConversationHandler)
+			authed.GET("/conversations/:id/messages/search", chat.SearchConversationMessagesHandler)
+			authed.GET("/conversations/:id/messages", chat.ListMessagesHandler)
+			authed.POST("/conversations/:id/messages", chat.SendMessageHandler)
 
 			// 客户与历史档案
-			authed.GET("/conversation-records", handler.SearchConversationRecords)
-			authed.GET("/conversation-records/:id/messages", handler.GetConversationMessages)
-			authed.GET("/users", handler.ListCustomers)
-			authed.GET("/users/:id", handler.GetCustomer)
-			authed.PUT("/users/:id/remark", handler.UpdateCustomerRemark)
+			authed.GET("/conversation-records", chat.SearchConversationRecordsHandler)
+			authed.GET("/conversation-records/:id/messages", chat.GetConversationMessagesHandler)
+			authed.GET("/users", customer.ListCustomersHandler)
+			authed.GET("/users/:id", customer.GetCustomerHandler)
+			authed.PUT("/users/:id/remark", customer.UpdateCustomerRemarkHandler)
 
 			// 客户标签
-			authed.GET("/tags", handler.ListTags)
-			authed.POST("/tags", handler.CreateTag)
-			authed.DELETE("/tags/:id", handler.DeleteTag)
-			authed.PUT("/users/:id/tags", handler.SetCustomerTags)
+			authed.GET("/tags", customer.ListTagsHandler)
+			authed.POST("/tags", customer.CreateTagHandler)
+			authed.DELETE("/tags/:id", customer.DeleteTagHandler)
+			authed.PUT("/users/:id/tags", customer.SetCustomerTagsHandler)
 
 			// 订单 / 商品
-			authed.GET("/orders", handler.ListOrders)
-			authed.GET("/products", handler.ListProducts)
+			authed.GET("/orders", customer.ListOrdersHandler)
+			authed.GET("/products", customer.ListProductsHandler)
 
 			// 自动回复规则（关键词 → 机器人回复 / 转人工）
-			authed.GET("/auto-replies", handler.ListAutoReplies)
-			authed.POST("/auto-replies", handler.CreateAutoReply)
-			authed.PUT("/auto-replies/:id", handler.UpdateAutoReply)
-			authed.DELETE("/auto-replies/:id", handler.DeleteAutoReply)
+			authed.GET("/auto-replies", automation.ListAutoRepliesHandler)
+			authed.POST("/auto-replies", automation.CreateAutoReplyHandler)
+			authed.PUT("/auto-replies/:id", automation.UpdateAutoReplyHandler)
+			authed.DELETE("/auto-replies/:id", automation.DeleteAutoReplyHandler)
 
 			// 数据统计
-			authed.GET("/stats/overview", handler.StatsOverview)
+			authed.GET("/stats/overview", ops.StatsOverviewHandler)
 
 			// 系统配置（默认图片等）
-			authed.GET("/settings", handler.ListSettings)
-			authed.PUT("/settings", handler.SaveSetting)
+			authed.GET("/settings", ops.ListSettingsHandler)
+			authed.PUT("/settings", ops.SaveSettingHandler)
 
 			// 设备（APP / PC 桌面端推送注册）
-			authed.GET("/devices", handler.ListDevices)
-			authed.POST("/devices", handler.RegisterDevice)
-			authed.DELETE("/devices/:id", handler.DeleteDevice)
-			authed.POST("/devices/test-push", handler.TestDevicePush)
+			authed.GET("/devices", ops.ListDevicesHandler)
+			authed.POST("/devices", ops.RegisterDeviceHandler)
+			authed.DELETE("/devices/:id", ops.DeleteDeviceHandler)
+			authed.POST("/devices/test-push", ops.TestDevicePushHandler)
 
 			// 离线消息同步
-			authed.GET("/offline/messages", handler.OfflineMessages)
-			authed.GET("/offline/notifications", handler.OfflineNotifications)
-			authed.POST("/offline/notifications/read", handler.ReadNotifications)
+			authed.GET("/offline/messages", ops.OfflineMessagesHandler)
+			authed.GET("/offline/notifications", ops.OfflineNotificationsHandler)
+			authed.POST("/offline/notifications/read", ops.ReadNotificationsHandler)
 
 			// 演示
-			authed.POST("/demo/incoming", handler.DemoIncoming)
-			authed.GET("/demo/products", handler.DemoProducts)
+			authed.POST("/demo/incoming", ops.DemoIncomingHandler)
+			authed.GET("/demo/products", ops.DemoProductsHandler)
 
 			// 上传附件（图片 / 视频 / 文件）
-			authed.POST("/upload", handler.Upload)
+			authed.POST("/upload", upload.UploadHandler)
 		}
 	}
 	return r

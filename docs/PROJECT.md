@@ -4,14 +4,21 @@
 ```
 kefu/
   server/
-    main.go              启动装配：config → db → cache → seed → route
+    main.go              启动装配：config → db → seed → route
     internal/
-      route/             路由注册
-      handler/           HTTP 层：参数解析 + 响应，不直接访问数据库
-      service/           业务层：校验、编排、事务边界、DTO 组装
-      repository/        数据访问层：所有 GORM 查询与写入
-      model/             数据实体
-      dto/ response/ middleware/ auth/ cache/ config/ db/ seed/
+      route/router.go    路由汇总（唯一真值来源）
+      platform/          基础设施，被所有模块依赖
+                         model dto storage setting card idgen util httpx
+                         realtime ipinfo response middleware auth cache config db seed
+      modules/           业务模块，模块内含 handler / service / repository
+        account/         登录、个人资料、子账号
+        channel/         渠道、渠道类型、二维码
+        customer/        客户、标签、订单、商品
+        chat/            会话、消息、WebSocket
+        guest/           用户端免登录接入
+        automation/      自动回复与转人工
+        ops/             设置、统计、通知、设备、演示
+        upload/          文件上传
   web/                   Vue3 + Vite + TS + Element Plus（三端独立入口）
     src/
       app/               应用引导：App.vue、bootstrap.ts、style.css
@@ -25,8 +32,9 @@ kefu/
   docs/架构分层.md        分层约定与新增接口的标准动作
 ```
 
-后端分层依赖方向：`route → handler → service → repository → model`，
-上层可依赖下层，**下层不得反向依赖上层**。详见 [架构分层.md](架构分层.md)。
+后端按「业务模块优先、模块内技术分层」组织，依赖方向为
+`platform ← account/channel/customer ← chat ← guest/automation/ops/upload`，
+下层不得反向依赖上层。详见 [架构分层.md](架构分层.md)。
 
 前端按「共用层 + 三端」组织：`shared/` 只能被三端引用，三端之间**不得互相引用**
 （跨端跳转用整页 `window.location.href` 换入口，不能只改 hash）。
