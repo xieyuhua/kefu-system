@@ -10,7 +10,7 @@ kefu/
       storage            GORM 连接/事务/分页
       cache              缓存抽象（Redis/内存降级，Init(Options)）
       httpx              通用 gin 辅助（参数解析、JSON 绑定）
-      util               时间等通用工具
+      util               纯工具函数：时间格式化、密码哈希、IP 解析、随机串
     internal/
       admin/         后台端：handler/ service/ route/（无自有 model/repository，直接用 common）
       agent/         客服端：handler/ service/ route/

@@ -8,24 +8,23 @@
 package idgen
 
 import (
-	"crypto/rand"
-	"encoding/hex"
 	"fmt"
 	"time"
 
 	"kefu-server/internal/common/model"
 	"kefu-server/pkg/storage"
+	"kefu-server/pkg/util"
 )
 
 // GenerateAppID 生成一个随机、可读的渠道业务标识。
 // 形如 kefu_a1b2c3d4（8 位十六进制），用于区分同一类型下的不同渠道实例。
 func GenerateAppID(tenantID uint) string {
-	var buf [4]byte
 	for {
-		if _, err := rand.Read(buf[:]); err != nil {
+		rand := util.RandomHex(4)
+		if rand == "" {
 			break
 		}
-		id := fmt.Sprintf("kefu_%s", hex.EncodeToString(buf[:]))
+		id := "kefu_" + rand
 		// 查询失败按「未占用」处理，保证一定能返回标识（与原逻辑一致）
 		var cnt int64
 		_ = storage.DB().Model(&model.Channel{}).

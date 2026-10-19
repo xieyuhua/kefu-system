@@ -8,12 +8,12 @@ import (
 	"path/filepath"
 	"time"
 
-	"kefu-server/internal/common/auth"
 	"kefu-server/internal/common/card"
 	"kefu-server/internal/common/config"
 	"kefu-server/internal/common/db"
 	"kefu-server/internal/common/idgen"
 	"kefu-server/internal/common/model"
+	"kefu-server/pkg/util"
 )
 
 // Run 初始化演示数据。已存在数据时幂等跳过。
@@ -49,7 +49,7 @@ func Run() error {
 	}
 
 	// ---- 账号 ----
-	adminHash, _ := auth.HashPassword("admin123")
+	adminHash, _ := util.HashPassword("admin123")
 	admin := model.User{
 		TenantID: tenant.ID, Account: "admin", PasswordHash: adminHash,
 		Name: "张管理", Role: "admin", Avatar: "/demo/avatar-1.svg",
@@ -57,14 +57,14 @@ func Run() error {
 	}
 	db.DB.Create(&admin)
 
-	kf1Hash, _ := auth.HashPassword("123456")
+	kf1Hash, _ := util.HashPassword("123456")
 	kf1 := model.User{
 		TenantID: tenant.ID, Account: "kf01", PasswordHash: kf1Hash,
 		Name: "小李", Role: "agent", Avatar: "/demo/avatar-2.svg", MaxConcurrent: 5,
 	}
 	db.DB.Create(&kf1)
 
-	kf2Hash, _ := auth.HashPassword("123456")
+	kf2Hash, _ := util.HashPassword("123456")
 	kf2 := model.User{
 		TenantID: tenant.ID, Account: "kf02", PasswordHash: kf2Hash,
 		Name: "小王", Role: "agent", Avatar: "/demo/avatar-3.svg", MaxConcurrent: 5,

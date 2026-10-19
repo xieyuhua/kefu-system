@@ -8,7 +8,6 @@ import (
 	"kefu-server/pkg/cache"
 
 	"github.com/golang-jwt/jwt/v5"
-	"golang.org/x/crypto/bcrypt"
 )
 
 // Claims JWT 载荷。JTI 用于配合 Redis 黑名单实现"踢下线/退出登录"。
@@ -18,15 +17,6 @@ type Claims struct {
 	Role     string `json:"role"`
 	Account  string `json:"acc"`
 	jwt.RegisteredClaims
-}
-
-func HashPassword(pwd string) (string, error) {
-	b, err := bcrypt.GenerateFromPassword([]byte(pwd), bcrypt.DefaultCost)
-	return string(b), err
-}
-
-func CheckPassword(hash, pwd string) bool {
-	return bcrypt.CompareHashAndPassword([]byte(hash), []byte(pwd)) == nil
 }
 
 // GenerateToken 签发 token，并在 Redis（若可用）中缓存一份以便快速校验与失效控制。

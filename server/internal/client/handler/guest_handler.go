@@ -25,6 +25,7 @@ import (
 	commonsvc "kefu-server/internal/common/service"
 	"kefu-server/pkg/httpx"
 	"kefu-server/pkg/response"
+	"kefu-server/pkg/util"
 
 	"github.com/gin-gonic/gin"
 )
@@ -75,7 +76,7 @@ func (h *Handler) GuestInitHandler(c *gin.Context) {
 	}
 
 	// 找到或创建客户
-	ip := ipinfo.ClientIP(c.Request.RemoteAddr, c.Request.Header)
+	ip := util.ClientIP(c.Request.RemoteAddr, c.Request.Header)
 	cu, err := h.svc.EnsureGuestCustomer(tenantID, ch, uid,
 		c.Query("nickname"), c.Query("avatar"), c.Query("phone"), ip)
 	if err != nil {
@@ -158,7 +159,7 @@ func (h *Handler) GuestSendHandler(c *gin.Context) {
 		response.Server(c, err.Error())
 		return
 	}
-	ipinfo.RecordCustomerIP(cu.ID, ipinfo.ClientIP(c.Request.RemoteAddr, c.Request.Header))
+	ipinfo.RecordCustomerIP(cu.ID, util.ClientIP(c.Request.RemoteAddr, c.Request.Header))
 	realtime.PublishMessage(tenantID, conv.ID, mvo, cvo)
 
 	// 同步判定自动回复 / 转人工（供接口直接返回）
