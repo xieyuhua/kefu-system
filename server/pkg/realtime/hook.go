@@ -1,6 +1,11 @@
 package realtime
 
-import "kefu-server/internal/common/model"
+import (
+	"sync"
+	"time"
+
+	"kefu-server/internal/common/model"
+)
 
 // ---------------- 回调解耦 ----------------
 // 基础设施层不反向依赖业务包：客服最后一个连接断开后要「释放其接待中的会话」，
@@ -18,3 +23,47 @@ var deviceLister func(tenantID, userID uint) ([]*model.Device, error)
 
 // SetDeviceLister 注册「按客服读取推送设备」的函数（由 notify 包 init 调用）
 func SetDeviceLister(fn func(tenantID, userID uint) ([]*model.Device, error)) { deviceLister = fn }
+
+// ---------------- 离线宽限期 ----------------
+// offlineGrace 是「最后一条连接断开」到「标记离线并释放接待会话」之间的宽限期。
+//
+// 为什么需要：浏览器刷新、切换标签页、手机切后台都会先断开 WebSocket 再重连（通常几秒内）。
+// 若在断连瞬间就标记离线并释放会话，客服一刷新，正在接待的会话就被踢回「待接待」，
+// 重连后看到的是「未接待」，接待归属丢失。
+//
+// 因此改为延迟释放：宽限期内重连（Hub.Add）会取消定时器；只有超过 grace 仍未重连，
+// 才标记离线并触发释放回调。
+const offlineGrace = 90 * time.Second
+
+// offlineTimers 记录每个客服待执行的离线处理（userID -> *time.Timer）
+var offlineTimers sync.Map
+
+// scheduleAgentOffline 安排一次延迟离线处理（重复调用会重置计时）。
+func scheduleAgentOffline(tenantID, userID uint) {
+	if t, ok := offlineTimers.Load(userID); ok {
+		if timer, ok := t.(*time.Timer); ok {
+			timer.Stop()
+		}
+	}
+	timer := time.AfterFunc(offlineGrace, func() {
+		offlineTimers.Delete(userID)
+		// 期间已重连则跳过
+		if HubInstance().IsUserOnline(userID) {
+			return
+		}
+		_ = updateUserOnlineByID(userID, false)
+		if agentOfflineHook != nil {
+			agentOfflineHook(tenantID, userID)
+		}
+	})
+	offlineTimers.Store(userID, timer)
+}
+
+// cancelAgentOffline 取消待执行的离线处理（重连时调用）。
+func cancelAgentOffline(userID uint) {
+	if t, ok := offlineTimers.LoadAndDelete(userID); ok {
+		if timer, ok := t.(*time.Timer); ok {
+			timer.Stop()
+		}
+	}
+}

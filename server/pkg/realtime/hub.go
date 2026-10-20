@@ -197,6 +197,8 @@ func (h *Hub) Add(c *Client) {
 	// 标记客服在线（供列表展示「在线/离线」小圆点）
 	if c.UserID > 0 {
 		_ = updateUserOnlineByID(c.UserID, true)
+		// 刷新/切页后重连：取消尚未执行的「离线释放」，避免正在接待的会话被踢回待接待
+		cancelAgentOffline(c.UserID)
 	}
 }
 
@@ -237,11 +239,12 @@ func (h *Hub) Remove(c *Client) {
 	// 让同渠道的其他客服可以接手（管理员离线同样释放）。
 	// 「释放会话」属于会话业务，由 common/service 通过 SetAgentOfflineHook 注入，
 	// 避免本包反向依赖业务层。
+	// 在线状态即时翻转（别人看到的小圆点要准）；
+	// 但「释放接待会话」进入宽限期（offlineGrace）：刷新页面、切标签、手机切后台
+	// 都会先断连再重连，立即释放会把正在接待的会话踢回待接待。
 	if c.UserID > 0 && !h.IsUserOnline(c.UserID) {
 		_ = updateUserOnlineByID(c.UserID, false)
-		if agentOfflineHook != nil {
-			agentOfflineHook(c.TenantID, c.UserID)
-		}
+		scheduleAgentOffline(c.TenantID, c.UserID)
 	}
 }
 
