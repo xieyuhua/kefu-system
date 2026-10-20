@@ -1,6 +1,6 @@
 package service
 
-// 本文件是对象存储（天翼云 OOS，S3 兼容协议）配置的业务层：
+// 本文件是对象存储（S3 兼容协议）配置的业务层：
 // 把 settings 表里的 storage.object（JSON 字符串）翻译成 pkg/oss 的连接参数，
 // 并在启用时向 HTTP 层提供客户端。协议细节在 pkg/oss，本层只管「配置 ↔ 设置项」。
 //
@@ -45,7 +45,7 @@ const (
 type ObjectStorage struct {
 	// Enabled 是否启用对象存储；false 时上传落本地磁盘。
 	Enabled bool `json:"enabled"`
-	// Provider 厂商标识，目前只用 ctyun（天翼云 OOS）。
+	// Provider 厂商标识（内部值 ctyun，界面上统一表述为 S3 兼容协议）。
 	Provider string `json:"provider"`
 	oss.Config
 }

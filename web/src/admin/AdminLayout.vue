@@ -157,11 +157,7 @@ async function onLogout(): Promise<void> {
           <span v-if="!isMobile" class="admin-header__tenant">{{ tenantName }}</span>
         </div>
         <div class="admin-header__right">
-          <button type="button" class="admin-link-btn" @click="goWorkbench">
-            <el-icon :size="14"><Monitor /></el-icon>
-            <span v-if="!isMobile">进入工作台</span>
-          </button>
-          <button type="button" class="admin-user" title="个人资料" @click="profileOpen = true">
+                    <button type="button" class="admin-user" title="个人资料" @click="profileOpen = true">
             <span class="admin-user__name">{{ userName }}</span>
             <span v-if="!isMobile" class="admin-user__role">{{ userRole }}</span>
           </button>

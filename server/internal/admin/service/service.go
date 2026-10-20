@@ -48,7 +48,7 @@ func (s *Service) StatsOverviewData(tenantID uint, days int) (*commonsvc.StatsOv
 	return s.Stats.StatsOverviewData(tenantID, days)
 }
 
-// ---------------- 对象存储配置（天翼云 OOS） ----------------
+// ---------------- 对象存储配置（S3 兼容） ----------------
 
 // ObjectStorageConfig 对象存储配置的入参类型（handler 绑定请求体用）。
 // 字段与 settings 里 storage.object 的 JSON 一致；secret_key 允许传 ****** 表示沿用已存密钥。

@@ -246,7 +246,7 @@ export function saveSetting(key: string, value: string): Promise<boolean> {
 }
 
 /* ------------------------------------------------------------------ *
- * 对象存储（天翼云 OOS，S3 兼容）
+ * 对象存储（S3 兼容）
  *
  * 存储方式：settings 表里 key = "storage.object"，value 是整份配置的
  * JSON 字符串；后端返回时会把 secret_key 脱敏成 "******"。
@@ -262,7 +262,7 @@ export const STORAGE_SECRET_MASK = '******'
 export interface StorageObjectConfig {
   /** 是否启用对象存储（关闭时上传走服务器本地存储） */
   enabled: boolean
-  /** 服务商，固定 ctyun（天翼云 OOS，S3 兼容） */
+  /** 服务商标识，固定 ctyun（内部值，界面上统一表述为 S3 兼容协议） */
   provider: string
   /** S3 端点，不带 bucket */
   endpoint: string
@@ -282,12 +282,12 @@ export interface StorageObjectConfig {
 export const STORAGE_OBJECT_DEFAULTS: StorageObjectConfig = {
   enabled: false,
   provider: 'ctyun',
-  endpoint: 'https://oos-cn.ctyunapi.cn',
+  endpoint: '',
   region: '',
   bucket: 'kefu',
   access_key: '',
   secret_key: '',
-  public_base: 'https://kefu.oos-cn.ctyunapi.cn',
+  public_base: '',
   path_prefix: 'uploads/',
 }
 

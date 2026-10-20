@@ -5,7 +5,7 @@ package service_test
 //
 // 数据库：sqlite 内存库（与 common/repository 的测试同一套做法）——同一进程内
 // 每个测试一个独立库名，SetMaxOpenConns(1) 保证多次查询命中同一个库，结束即释放。
-// 真实上传（MinIO / 天翼云 OOS）不在单测范围，由验收脚本验证。
+// 真实上传（MinIO / 其它 S3 兼容服务）不在单测范围，由验收脚本验证。
 
 import (
 	"context"

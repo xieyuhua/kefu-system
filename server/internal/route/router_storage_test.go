@@ -1,6 +1,6 @@
 package route_test
 
-// 对象存储（天翼云 OOS）相关的路由级测试：新增的 POST /api/settings/storage/test
+// 对象存储（S3 兼容）相关的路由级测试：新增的 POST /api/settings/storage/test
 // 必须挂在和其它 settings 接口同一组鉴权下（登录 + 管理员），且不能影响未登录时的
 // 既有行为（HTTP 恒 200，业务码看 body.code）。
 //

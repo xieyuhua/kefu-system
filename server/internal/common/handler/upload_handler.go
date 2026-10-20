@@ -8,7 +8,7 @@ package handler
 // （游客态）共用同一个处理器，故留在公共层，两端都不复制。
 //
 // 存储去向：
-//   - 后台设置启用对象存储（天翼云 OOS，S3 兼容）且连接参数齐全 → 上传到对象存储，
+//   - 后台设置启用对象存储（S3 兼容）且连接参数齐全 → 上传到对象存储，
 //     返回 public_base/key 形式的 URL；上传失败直接报错，不静默降级到本地；
 //   - 未启用 / 未配置 → 保持原有本地磁盘存储（写 config.C.Upload.Dir，返回 /uploads/<day>/<file>）。
 //
@@ -142,7 +142,7 @@ func (h *UploadHandler) UploadHandler(c *gin.Context) {
 		"tenant_id": tenantID,
 	}
 
-	// 对象存储（天翼云 OOS）优先：启用且连接参数齐全时上传到 OOS。
+	// 对象存储优先：启用且连接参数齐全时上传到对象存储。
 	// 上传失败直接报错，不静默降级到本地存储。
 	client, ossCfg, ossErr := h.svc.ObjectStorageClient(tenantID)
 	if ossErr != nil {

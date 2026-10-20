@@ -1,4 +1,4 @@
-// Package oss 对象存储能力层：用 S3 兼容协议访问天翼云 OOS（也兼容 MinIO 等同类服务）。
+// Package oss 对象存储能力层：用 S3 兼容协议访问对象存储（MinIO、各云厂商 OOS/OSS 等）。
 //
 // 分层约定：本包只认识「连接参数 + 对象名」，不读写数据库、不解析后台设置项
 // （settings 表里的 storage.object 由 common/service 翻译成这里的 Config）。
@@ -6,7 +6,7 @@
 // 形态约定（与全仓一致）：包级只保留构造函数 NewClient 与无状态的取值函数，
 // 业务能力一律是 *Client 的指针接收者方法；连接与配置是实例字段。
 //
-// 天翼云 OOS 的兼容性要点：
+// S3 兼容实现的要点：
 //   - endpoint 是不带 bucket 的 S3 端点（如 https://oos-cn.ctyunapi.cn），
 //     带不带 http(s):// 都接受，由是否 https 决定 useSSL；
 //   - 必须用 path-style（https://endpoint/bucket/key）：OOS 的 bucket 域名（bucket.endpoint）
@@ -34,9 +34,9 @@ import (
 // Config 对象存储连接配置。字段名与 settings 表里 storage.object 的 JSON 一致。
 // enabled / provider 属于「是否启用」的业务判断，由业务层持有，能力层只关心连接参数。
 type Config struct {
-	// Endpoint 天翼云 OOS 的 S3 端点，不带 bucket（如 https://oos-cn.ctyunapi.cn）。
+	// Endpoint S3 端点，不带 bucket（如 https://s3.example.com）。
 	Endpoint string `json:"endpoint"`
-	// Region 区域，天翼云一般留空。
+	// Region 区域，多数 S3 兼容服务可留空。
 	Region string `json:"region"`
 	// Bucket 存储桶名。
 	Bucket string `json:"bucket"`
@@ -80,7 +80,7 @@ func NewClient(cfg Config) (*Client, error) {
 		Creds:  credentials.NewStaticV4(cfg.AccessKey, cfg.SecretKey, ""),
 		Secure: secure,
 		Region: cfg.Region,
-		// 固定 path-style：天翼云 OOS 建议 bucket 走路径而不是主机名。
+		// 固定 path-style：bucket 走路径而不是主机名，兼容性最好。
 		BucketLookup: minio.BucketLookupPath,
 	})
 	if err != nil {

@@ -363,12 +363,12 @@ onMounted(load)
       </el-alert>
     </div>
 
-    <!-- ---------------- 对象存储（天翼云 OOS） ---------------- -->
+    <!-- ---------------- 对象存储（S3 兼容） ---------------- -->
     <div v-loading="loading" class="admin-card storage-card" data-test="storage-card">
       <div class="toolbar">
         <span class="toolbar__title">
           对象存储
-          <span class="toolbar__sub">天翼云 OOS（S3 兼容），图片 / 文件直传对象存储</span>
+          <span class="toolbar__sub">S3 兼容对象存储，图片 / 文件直传</span>
         </span>
         <div>
           <el-button
@@ -419,11 +419,11 @@ onMounted(load)
         <div class="setting-item">
           <div class="setting-item__label">
             <div class="setting-item__name">服务商</div>
-            <div class="setting-item__remark">当前仅支持天翼云 OOS，S3 协议兼容</div>
+            <div class="setting-item__remark">S3 协议兼容，可对接 MinIO、各云厂商对象存储等</div>
           </div>
           <div class="setting-item__control">
             <div class="storage-readonly" data-test="storage-provider">
-              天翼云 OOS（S3 兼容）
+              S3 兼容协议
             </div>
           </div>
         </div>
@@ -438,7 +438,7 @@ onMounted(load)
               v-model="storage.endpoint"
               size="small"
               class="setting-input setting-input--wide"
-              placeholder="https://oos-cn.ctyunapi.cn"
+              placeholder="https://s3.example.com"
               :disabled="!storage.enabled"
               data-test="storage-endpoint"
               @input="markStorageDirty"
@@ -540,7 +540,7 @@ onMounted(load)
               v-model="storage.public_base"
               size="small"
               class="setting-input setting-input--wide"
-              placeholder="https://kefu.oos-cn.ctyunapi.cn"
+              placeholder="https://cdn.example.com"
               :disabled="!storage.enabled"
               data-test="storage-public-base"
               @input="markStorageDirty"
@@ -579,7 +579,7 @@ onMounted(load)
       </div>
 
       <el-alert type="info" :closable="false" class="tip">
-        说明：开启后新上传的图片 / 文件写入天翼云 OOS，历史文件仍按原地址访问；
+        说明：开启后新上传的图片 / 文件写入对象存储，历史文件仍按原地址访问；
         测试连接只校验 Endpoint / Bucket / 密钥是否可用，不会写入任何文件。
         密钥已保存时页面只显示 <b>******</b>，留空提交表示保留原密钥。
       </el-alert>
