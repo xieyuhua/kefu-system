@@ -583,28 +583,75 @@ http(s)://<host>/kefu/?channel=web&uid=o_abc123&nickname=王小明&avatar=&order
 
 ## 14. 自动回复规则（关键词 → 机器人回复 / 转人工）
 
+> 这组端点是**团队共用**的：后台「自动回复」页与客服工作台「自动回复管理」打同一组 method+path。
+> 归属字段 `user_id`：`0` = 管理员建的公共规则（客服可见可用、只读）；`>0` = 该客服创建的规则。
+> 权限：客服可新增（归属自己）与改 / 删**自己创建的**；动公共规则返回
+> `公共规则仅管理员可修改`，动别人的规则返回 `只能修改自己创建的规则`；管理员可改全部。
+> 匹配 / 转人工 / 命中计数的触发逻辑不受归属影响。
+
 ### `GET /api/auto-replies`
 ```json
 [{
-  "id":1, "name":"问候语", "channel_id":0, "channel_name":"全渠道",
+  "id":1, "name":"问候语", "user_id":0, "owner":"公共", "shared":true, "editable":false,
+  "channel_id":0, "channel_name":"全渠道",
   "match_type":"contain", "keywords":"你好,在吗,hi",
   "reply":"您好，我是智能客服助手～", "reply_type":"text",
   "transfer_to_human":false, "enabled":true, "priority":10, "hit_count":23
 }]
 ```
-> `channel_id = 0` 表示全渠道生效；`match_type`：`contain` 包含 / `equal` 完全匹配 / `prefix` 前缀
+> `channel_id = 0` 表示全渠道生效；`match_type`：`contain` 包含 / `equal` 完全匹配 / `prefix` 前缀；
+> `shared` 等价于 `user_id = 0`，`editable` 由后端按当前登录账号算好，前端据此置灰按钮。
 
-### `POST /api/auto-replies`（admin）
+### `POST /api/auto-replies`
 ```json
 { "name":"转人工", "channel_id":0, "match_type":"contain",
   "keywords":"人工,转人工,投诉", "reply":"", "transfer_to_human":true,
   "enabled":true, "priority":100 }
 ```
+> 客服调用时归属写当前账号；管理员调用时归属写 `0`（公共规则）。
 > `transfer_to_human = true` 时命中即**转人工**：会话置为 `pending`、清空 agent、
 > 插入一条 system 消息，并通知该渠道所有客服（在线走 WebSocket，离线走 APP/PC 推送）。
 
-### `PUT /api/auto-replies/:id`（admin）
-### `DELETE /api/auto-replies/:id`（admin）
+### `PUT /api/auto-replies/:id`
+### `DELETE /api/auto-replies/:id`
+
+---
+
+## 14.1 快捷回复（常用语）
+
+工作台输入框的「⚡ 快捷回复」弹层数据来自这里；`user_id` 为 `0` 的是**租户公共话术**（管理员维护，
+所有客服可见、只读），`>0` 的是该客服的私有话术。
+
+### `GET /api/quick-replies?keyword=`
+返回「我的私有 + 租户共享」，按 `sort, id` 升序；`keyword` 可选（按 `title` / `content` 模糊）。
+```json
+[{
+  "id":3, "user_id":0, "title":"问候语", "content":"您好，很高兴为您服务～",
+  "sort":10, "enabled":true, "shared":true, "editable":false,
+  "owner":"公共", "created_at":"2026-10-20 17:37:58"
+}]
+```
+
+### `POST /api/quick-replies`
+```json
+{ "title":"核实订单", "content":"麻烦提供一下订单号，我这边帮您核实。", "sort":10, "enabled":true }
+```
+> `user_id` 取当前登录账号（**忽略**前端传值）。
+
+### `PUT /api/quick-replies/:id` / `DELETE /api/quick-replies/:id`
+> 只能改 / 删自己的；改别人的或共享项返回 `只能修改自己的快捷回复` / `只能删除自己的快捷回复`。
+
+### 后台端（管理员维护租户全部话术）
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| GET | `/api/admin/quick-replies?keyword=` | 租户全部（含各客服私有项） |
+| POST | `/api/admin/quick-replies` | 新建，默认落为公共话术（`user_id = 0`），可传 `user_id` 指定归属 |
+| PUT | `/api/admin/quick-replies/:id` | 改租户内任意一条 |
+| DELETE | `/api/admin/quick-replies/:id` | 删租户内任意一条 |
+
+> 非管理员调用返回 `code: 403` + `仅管理员可操作`。
+> 路径说明：`/quick-replies` 已由客服端分组占用，且 `/quick-replies/:id` 与任何
+> `/quick-replies/xxx` 静态段在 gin 路由树里会冲突，因此后台侧挂在 `/admin/` 前缀下。
 
 ---
 

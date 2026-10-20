@@ -288,7 +288,7 @@ async function ensureQuickReplies(force = false): Promise<void> {
     quickList.value = rows.filter((q) => q.enabled)
     quickLoaded.value = true
   } catch {
-    // 错误已由拦截器提示；保持空列表，避免每次打开都重试打爆接口
+    // 错误已由拦截器提示；这里保留空列表，下次打开弹层会再试一次
     quickList.value = []
   } finally {
     quickLoading.value = false

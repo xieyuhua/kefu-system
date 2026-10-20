@@ -379,8 +379,21 @@ watch(visible, (open) => {
 
 /* ---------------- 移动端（≤768px） ---------------- */
 @media (max-width: 768px) {
+  /* 对话框整体限高 + 内容区滚动：展开「新增表单」后列表仍能滑到，按钮区固定可见 */
+  :global(.quick-reply-dialog) {
+    max-height: 84vh;
+    display: flex;
+    flex-direction: column;
+  }
+
+  :global(.quick-reply-dialog .el-dialog__body) {
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+
   .qr-list {
-    max-height: 42vh;
+    max-height: none;
+    overflow: visible;
   }
 
   .qr-item {
