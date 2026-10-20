@@ -333,6 +333,9 @@ Query：`before_id`（翻页用，返回更早的消息）、`limit`（缺省 50
 ```
 > `direction = system` 的消息在前端渲染为居中灰色 pill。
 > `type = order|product` 时 `content` 为 JSON 字符串，前端需 `JSON.parse`。
+> `sender.role`：`user`=客户、`agent`=真实客服账号（头像取账号自身）、`robot`=智能助手（机器人/自动回复）。
+> **`robot` 消息的 `sender.avatar` 取后台设置 `assistant.avatar`**（未配置时为空串，前端回退内置头像），
+> 因此后台改「助手头像」后，用户端与客服工作台两边的机器人气泡头像同时生效。
 
 ### `POST /api/conversations/:id/messages`
 请求：`{ "type": "text", "content": "您好，很高兴为您服务" }`
@@ -525,6 +528,7 @@ http(s)://<host>/kefu/?channel=web&uid=o_abc123&nickname=王小明&avatar=&order
   "customer": { "id":12, "external_id":"u_10001", "nickname":"王小明", "avatar":"..." },
   "conversation": { "id":31, "status":"pending" },
   "greeting": "您好，我是智能客服助手，请问有什么可以帮您？",
+  "assistant_avatar": "/uploads/20261020/1792487352_xxx.png",
   "order":  { ...订单卡片 JSON 对象或 null... },
   "product": { ...商品卡片 JSON 对象或 null... },
   "history": [ ...最近 20 条消息... ]
@@ -533,6 +537,9 @@ http(s)://<host>/kefu/?channel=web&uid=o_abc123&nickname=王小明&avatar=&order
 > 页面按 `greeting` 直接渲染一条机器人欢迎语；若带 `order_no`/`pid`，自动渲染订单/商品卡片。
 > `channel.support_order_card` / `channel.support_product_card` 为 `false` 时，用户端应**隐藏**对应卡片入口
 > （含自动弹出的卡片确认气泡）；此时即便强行调用发消息接口也会被服务端拦截。
+> `assistant_avatar`：智能助手（机器人）回复时展示的头像，取自后台设置项 `assistant.avatar`
+> （后台「系统设置 → 助手头像」可上传/改 URL）。**未配置时是空串**，用户端据此回退到内置头像；
+> 真实客服账号的消息仍用各自 `sender.avatar`，不受该字段影响。
 
 ### 13.3 用户端发消息
 `POST /api/guest/message?channel=web&uid=u_10001`

@@ -469,6 +469,7 @@ onMounted(load)
         type="file"
         hidden
         accept="image/*"
+        data-test="assistant-avatar-file"
         @change="onPickAssistantAvatar"
       />
 
