@@ -204,6 +204,12 @@ export interface Message {
   content: string
   sender: MessageSender | null
   created_at: string
+  /**
+   * 消息创建时间的 Unix 毫秒时间戳（后端新增字段，可选）。
+   * created_at 只有秒级精度的字符串，秒级计时（未回复计时）优先用它；
+   * 缺失时回退解析 created_at，因此旧后端/旧缓存数据也能正常工作。
+   */
+  created_ts?: number
   /** 乐观更新临时标记 */
   pending?: boolean
   failed?: boolean

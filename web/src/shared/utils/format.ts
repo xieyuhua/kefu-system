@@ -92,6 +92,36 @@ export function formatMessageTime(value: string | undefined): string {
   return d.format('YYYY-MM-DD HH:mm')
 }
 
+/**
+ * 消息创建时间（Unix 毫秒）：优先用后端补充的 created_ts，
+ * 缺失时回退解析 created_at（`YYYY-MM-DD HH:mm:ss`，按本地时间解析）。
+ * 解析失败返回 0，调用方据此放弃计时，避免出现天文数字。
+ */
+export function messageTimestampMs(message: {
+  created_ts?: number
+  created_at?: string
+}): number {
+  const ts = message.created_ts
+  if (typeof ts === 'number' && Number.isFinite(ts) && ts > 0) return ts
+  const raw = message.created_at
+  if (!raw) return 0
+  // 统一替换成 /，避免 Safari 对「YYYY-MM-DD HH:mm:ss」解析出 Invalid Date
+  const d = dayjs(raw.replace(/-/g, '/'))
+  return d.isValid() ? d.valueOf() : 0
+}
+
+/**
+ * 未回复等待时长文案：不足 1 分钟显示「38 秒」，超过显示「2 分 05 秒」。
+ * 只做秒级取整（向下），配合每秒刷新的计时使用。
+ */
+export function formatWaitDuration(ms: number): string {
+  const total = Math.max(0, Math.floor(ms / 1000))
+  if (total < 60) return `${total} 秒`
+  const minutes = Math.floor(total / 60)
+  const seconds = total % 60
+  return `${minutes} 分 ${String(seconds).padStart(2, '0')} 秒`
+}
+
 /** 在线状态圆点颜色：在线 #07C160，离线 #b2b2b2 */
 export function onlineColor(online: boolean | undefined): string {
   return online ? '#07C160' : '#b2b2b2'

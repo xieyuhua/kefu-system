@@ -59,8 +59,12 @@ func scheduleAgentOffline(tenantID, userID uint) {
 	offlineTimers.Store(userID, timer)
 }
 
-// cancelAgentOffline 取消待执行的离线处理（重连时调用）。
-func cancelAgentOffline(userID uint) {
+// CancelAgentOffline 取消待执行的离线处理。
+//
+// 两个调用点：客服重连（Hub.Add）与客服主动退出登录（账号服务的 LogoutUser）。
+// 后者必须在「立即释放接待会话」之前调用，否则宽限定时器到点仍会再释放一次，
+// 把退出登录后又被重新领取的会话错误踢回待接待。
+func CancelAgentOffline(userID uint) {
 	if t, ok := offlineTimers.LoadAndDelete(userID); ok {
 		if timer, ok := t.(*time.Timer); ok {
 			timer.Stop()

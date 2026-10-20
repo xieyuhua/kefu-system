@@ -104,7 +104,9 @@ func (s *ConversationService) buildConversationVO(c *model.Conversation) dto.Con
 		ID: c.ID, ChannelID: c.ChannelID, Status: c.Status,
 		Unread: c.Unread, LastMessage: c.LastMessage,
 		LastMessageAt: util.Default().FmtTime(c.LastMessageAt), CreatedAt: util.Default().FmtTime(c.CreatedAt),
-		ClosedAt: util.Default().FmtTimePtr(c.ClosedAt), MessageCount: c.MessageCount, Summary: c.Summary,
+		// 会话列表的「未回复时长」用毫秒时间戳计算；字符串 last_message_at 保持不变
+		LastMessageTS: util.Default().Millis(c.LastMessageAt),
+		ClosedAt:      util.Default().FmtTimePtr(c.ClosedAt), MessageCount: c.MessageCount, Summary: c.Summary,
 		Archived: c.Archived, ArchivedAt: util.Default().FmtTimePtr(c.ArchivedAt),
 	}
 	// 渠道 / 客户 / 客服的展示信息查不到时留空，不阻断 VO 组装（与原逻辑一致）

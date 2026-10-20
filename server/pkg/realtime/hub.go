@@ -198,7 +198,7 @@ func (h *Hub) Add(c *Client) {
 	if c.UserID > 0 {
 		_ = updateUserOnlineByID(c.UserID, true)
 		// 刷新/切页后重连：取消尚未执行的「离线释放」，避免正在接待的会话被踢回待接待
-		cancelAgentOffline(c.UserID)
+		CancelAgentOffline(c.UserID)
 	}
 }
 

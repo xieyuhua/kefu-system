@@ -69,7 +69,8 @@ func (h *AuthHandler) MeHandler(c *gin.Context) {
 	response.Default().OK(c, cur)
 }
 
-// LogoutHandler 退出登录：吊销 token 并置离线。
+// LogoutHandler 退出登录：吊销 token、置离线、清在线缓存，并立即释放该账号接待中的会话。
+// 主动退出与「断连」语义不同：不需要 90 秒宽限期（刷新页面不调用本接口）。
 func (h *AuthHandler) LogoutHandler(c *gin.Context) {
 	token := c.GetHeader("Authorization")
 	if len(token) > 7 {
@@ -79,7 +80,8 @@ func (h *AuthHandler) LogoutHandler(c *gin.Context) {
 		auth.Default().RevokeToken(token)
 	}
 	if u := authctx.CurrentUser(c); u != nil {
-		_ = h.svc.SetOnline(u.TenantID, u.ID, false)
+		// 置离线 + 取消宽限释放 + 立即释放接待中的会话，编排在 service 层
+		h.svc.LogoutUser(u.TenantID, u.ID)
 		cache.Default().Get().Del(cache.Default().OnlineKey(u.TenantID, u.ID))
 	}
 	response.Default().OK(c, true)

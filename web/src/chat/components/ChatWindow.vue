@@ -87,6 +87,8 @@
           :key="m.id"
           :message="m"
           :flash-key="flashId === m.id ? m.id : 0"
+          :wait-ms="waitMessageId === m.id ? waitMs : 0"
+          :compact="isMobile"
         />
       </div>
 
@@ -182,6 +184,8 @@ import {
 } from '@/shared/utils/format'
 import MessageBubble from './MessageBubble.vue'
 import MessageInput from './MessageInput.vue'
+import { useReplyWait } from '@/chat/composables/useReplyWait'
+import { useIsMobile } from '@/shared/composables/useIsMobile'
 
 const props = defineProps<{
   conversation: Conversation | null
@@ -431,6 +435,20 @@ const hasMore = computed(() => props.hasMore)
 const loadingMore = computed(() => props.loadingMore === true)
 /** 搜索结果（store 提供，可为空） */
 const searchList = computed<Message[]>(() => props.searchResults || [])
+
+/** 是否移动端窄屏：复用全局断点（matchMedia），不在这里新增 resize 监听 */
+const { isMobile } = useIsMobile()
+
+/**
+ * 未回复计时：全聊天区共用一个 setInterval（见 useReplyWait）。
+ * 会话切换（conversationId 变化）、客服回复、新消息到达都会让计时起点变化，
+ * 从而自动停表或按新会话重新起表；组件卸载时 clearInterval。
+ */
+const { pendingId: waitMessageId, waitMs } = useReplyWait({
+  messages,
+  conversationId: computed(() => props.conversation?.id),
+  active: () => props.conversation?.status !== 'closed',
+})
 </script>
 
 <style scoped lang="scss">

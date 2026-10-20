@@ -88,6 +88,22 @@ func (s *AccountService) LoadUser(tenantID, userID uint) (*model.User, error) {
 	return s.repo.FindUserByID(tenantID, userID)
 }
 
+// ---------------- 退出登录 ----------------
+
+// LogoutUser 客服/管理员主动退出登录的三件事，顺序不可调换：
+//  1. 置离线（复用 SetOnline）；
+//  2. 取消该账号待执行的宽限释放 —— 必须先于第 3 步，
+//     否则宽限定时器到点会再释放一次，把退出后被别人重新领取的会话错误踢回待接待；
+//  3. 立即释放其接待中的会话（不等 90 秒宽限期）。
+//
+// 注意：浏览器刷新页面不会调用退出登录，因此不会走到这里，仍按断连的宽限期处理。
+// 管理员与客服共用同一套逻辑：释放按会话归属（agent_id）处理，只动自己接待的会话。
+func (s *AccountService) LogoutUser(tenantID, userID uint) {
+	_ = s.SetOnline(tenantID, userID, false)
+	realtime.CancelAgentOffline(userID)
+	NewConversationService().ReleaseAgentConversationsNow(tenantID, userID)
+}
+
 // UserChannels 返回账号可见的渠道 ID：
 // 管理员 = 租户全部渠道；普通客服 = 自己被分配的渠道。
 func (s *AccountService) UserChannels(u *model.User) []uint {

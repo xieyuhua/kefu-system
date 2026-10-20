@@ -155,11 +155,14 @@ type ConversationVO struct {
 	Unread        int          `json:"unread"`
 	LastMessage   string       `json:"last_message"`
 	LastMessageAt string       `json:"last_message_at"`
-	CreatedAt     string       `json:"created_at"`
-	ClosedAt      string       `json:"closed_at"`
-	OrderCount    int64        `json:"order_count"`
-	MessageCount  int          `json:"message_count"`
-	Summary       string       `json:"summary"`
+	// LastMessageTS 最后一条消息时间的 Unix 毫秒时间戳（取 conversation.LastMessageAt），
+	// 供前端做秒级「未回复时长」计算；字符串形式的 last_message_at 保持原样不变。
+	LastMessageTS int64  `json:"last_message_ts"`
+	CreatedAt     string `json:"created_at"`
+	ClosedAt      string `json:"closed_at"`
+	OrderCount    int64  `json:"order_count"`
+	MessageCount  int    `json:"message_count"`
+	Summary       string `json:"summary"`
 	// Archived 是否已归档（客服清理后的会话，不出现在工作台列表）
 	Archived   bool   `json:"archived"`
 	ArchivedAt string `json:"archived_at"`
@@ -181,6 +184,9 @@ type MessageVO struct {
 	Content        string    `json:"content"`
 	Sender         SenderRef `json:"sender"`
 	CreatedAt      string    `json:"created_at"`
+	// CreatedTS 消息创建时间的 Unix 毫秒时间戳，与 createdAt 同源，
+	// 供前端做秒级计时（created_at 只有秒级精度的字符串）。
+	CreatedTS int64 `json:"created_ts"`
 }
 
 type SendMessageRequest struct {

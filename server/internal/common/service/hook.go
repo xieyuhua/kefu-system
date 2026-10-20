@@ -39,3 +39,13 @@ func (s *ConversationService) releaseAgentConversations(tenantID, agentID uint) 
 	}
 	log.Printf("[hub] 客服 #%d 离线，释放 %d 个会话回待接待", agentID, len(convs))
 }
+
+// ReleaseAgentConversationsNow 立即释放某客服正在接待的会话（客服主动退出登录时调用）。
+//
+// 与断连释放（releaseAgentConversations）共用同一段逻辑，行为完全一致：
+// 会话回到待接待（status=pending、agent_id=0）并写入系统提示语。
+// 区别只在时机：主动退出登录无需等待 offlineGrace 宽限期，立刻生效。
+// 管理员退出登录也走这里，按会话归属处理：只释放该账号自己接待的会话。
+func (s *ConversationService) ReleaseAgentConversationsNow(tenantID, agentID uint) {
+	s.releaseAgentConversations(tenantID, agentID)
+}

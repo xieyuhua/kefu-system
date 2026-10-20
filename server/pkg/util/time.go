@@ -20,3 +20,12 @@ func (u *Util) FmtTimePtr(t *time.Time) string {
 	}
 	return t.Format(TimeLayout)
 }
+
+// Millis 把时间转成 Unix 毫秒时间戳（前端做秒级计时用）；零值返回 0，
+// 与 FmtTime 的「零值返回空串」保持一致，避免出现负数时间戳。
+func (u *Util) Millis(t time.Time) int64 {
+	if t.IsZero() {
+		return 0
+	}
+	return t.UnixMilli()
+}

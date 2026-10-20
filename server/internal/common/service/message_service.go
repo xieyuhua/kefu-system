@@ -72,6 +72,8 @@ func (s *ConversationService) buildMessageVO(m *model.Message) dto.MessageVO {
 		ID: m.ID, ConversationID: m.ConversationID, Type: m.Type,
 		Direction: m.Direction, Content: m.Content,
 		CreatedAt: util.Default().FmtTime(m.CreatedAt),
+		// 秒级字符串 created_at 之外再给一个毫秒时间戳，前端据此计算「未回复时长」
+		CreatedTS: util.Default().Millis(m.CreatedAt),
 	}
 	switch m.SenderRole {
 	case "user":
