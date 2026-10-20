@@ -9,9 +9,13 @@ import { ElMessage } from 'element-plus'
 import { Refresh, Search } from '@element-plus/icons-vue'
 import { listChannels as fetchChannels, listAgents, type Agent } from '@/shared/api/admin'
 import { fetchConversationRecords, fetchRecordMessages, type ConversationRecord } from '@/shared/api/records'
+import { useIsMobile } from '@/shared/composables/useIsMobile'
 import { formatMessageTime, parseCardContent } from '@/shared/utils/format'
 import ThumbImage from '@/shared/components/ThumbImage.vue'
 import type { Channel } from '@/shared/types'
+
+/** 窄屏（≤768px）切换为卡片列表；复用共享断点组合式函数，不重复监听 resize */
+const { isMobile } = useIsMobile()
 
 const loading = ref(false)
 const list = ref<ConversationRecord[]>([])
@@ -150,7 +154,7 @@ onMounted(async () => {
   <div class="admin">
     <!-- 查询条件 -->
     <div class="admin-card">
-      <div class="filters">
+      <div class="filters" :class="{ 'filters--mobile': isMobile }">
         <el-input
           v-model="query.keyword"
           placeholder="搜索客户昵称 / 消息内容"
@@ -178,15 +182,19 @@ onMounted(async () => {
           end-placeholder="结束日期"
           class="filters__date"
         />
-        <el-button type="primary" :icon="Search" @click="onSearch">查询</el-button>
-        <el-button :icon="Refresh" @click="onReset">重置</el-button>
+        <div class="filters__actions">
+          <el-button type="primary" :icon="Search" @click="onSearch">查询</el-button>
+          <el-button :icon="Refresh" @click="onReset">重置</el-button>
+        </div>
       </div>
 
       <el-alert type="info" :closable="false" class="tip">
         可按<b>客户昵称</b>或<b>聊天内容关键词</b>检索历史会话记录（含已归档会话）。
       </el-alert>
 
+      <!-- 宽屏：表格 -->
       <el-table
+        v-if="!isMobile"
         v-loading="loading"
         class="admin-table"
         :data="list"
@@ -237,20 +245,69 @@ onMounted(async () => {
         </el-table-column>
       </el-table>
 
-      <div class="pager">
+      <!-- 窄屏：卡片列表（避免表格横向挤压） -->
+      <div v-else v-loading="loading" class="record-list">
+        <button
+          v-for="row in list"
+          :key="row.id"
+          type="button"
+          class="record-card"
+          @click="openRecord(row)"
+        >
+          <div class="record-card__top">
+            <ThumbImage
+              :src="row.customer_avatar"
+              :size="34"
+              round
+              kind="avatar"
+              :fallback="(row.customer_name || '?').slice(0, 1)"
+            />
+            <span class="record-card__name">{{ row.customer_name || '匿名客户' }}</span>
+            <span class="record-card__tags">
+              <el-tag size="small" :type="statusTag(row.status)">{{ statusLabel(row.status) }}</el-tag>
+              <el-tag v-if="row.archived" size="small" type="info" effect="plain">归档</el-tag>
+            </span>
+          </div>
+
+          <div class="record-card__meta">
+            <span class="record-card__channel">{{ row.channel_name || '-' }}</span>
+            <span class="record-card__sep">·</span>
+            <span>{{ row.message_count }} 条消息</span>
+            <span class="record-card__time">{{ row.last_message_at }}</span>
+          </div>
+
+          <div class="record-card__msg">{{ row.last_message || '—' }}</div>
+
+          <div class="record-card__foot">
+            <span class="record-card__agent">接待：{{ row.agent_name || '-' }}</span>
+            <span class="record-card__more">查看记录 ›</span>
+          </div>
+        </button>
+
+        <el-empty v-if="!loading && !list.length" description="暂无对话记录" :image-size="60" />
+      </div>
+
+      <div class="pager" :class="{ 'pager--mobile': isMobile }">
         <el-pagination
           v-model:current-page="query.page"
           :page-size="query.page_size"
           :total="total"
-          layout="total, prev, pager, next"
+          :small="isMobile"
+          :pager-count="isMobile ? 5 : 7"
+          :layout="isMobile ? 'prev, pager, next' : 'total, prev, pager, next'"
           background
           @current-change="onPage"
         />
       </div>
     </div>
 
-    <!-- 聊天记录抽屉 -->
-    <el-drawer v-model="drawerVisible" title="聊天记录" size="640px">
+    <!-- 聊天记录抽屉：窄屏占满视口宽度 -->
+    <el-drawer
+      v-model="drawerVisible"
+      title="聊天记录"
+      :size="isMobile ? '100%' : '640px'"
+      class="rec-drawer"
+    >
       <div v-if="currentRecord" class="rec">
         <div class="rec__head">
           <span class="rec__name">{{ currentRecord.customer_name }}</span>
@@ -301,6 +358,12 @@ onMounted(async () => {
   &__date {
     width: 260px;
   }
+
+  &__actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
 }
 
 .tip {
@@ -348,6 +411,110 @@ onMounted(async () => {
       background: #eef7f1;
       color: #07c160;
     }
+  }
+}
+
+/* ---------------- 窄屏卡片列表 ---------------- */
+.record-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 120px;
+}
+
+.record-card {
+  display: block;
+  width: 100%;
+  padding: 12px;
+  border: 1px solid #ebedf0;
+  border-radius: 8px;
+  background: #fff;
+  text-align: left;
+  font: inherit;
+  color: #191919;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+
+  &:active {
+    background: #f7f8fa;
+    border-color: #d9dde1;
+  }
+
+  &__top {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+  }
+
+  &__name {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    font-size: 15px;
+    font-weight: 600;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  &__tags {
+    display: inline-flex;
+    flex: 0 0 auto;
+    align-items: center;
+    gap: 4px;
+  }
+
+  &__meta {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 8px;
+    font-size: 12px;
+    color: #7f7f7f;
+  }
+
+  &__channel {
+    max-width: 45%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  &__sep {
+    color: #c8c9cc;
+  }
+
+  &__time {
+    margin-left: auto;
+    color: #a8adb3;
+  }
+
+  &__msg {
+    display: -webkit-box;
+    margin-top: 6px;
+    overflow: hidden;
+    font-size: 13px;
+    line-height: 1.5;
+    color: #4a4a4a;
+    word-break: break-word;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+    -webkit-box-orient: vertical;
+  }
+
+  &__foot {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-top: 10px;
+    padding-top: 8px;
+    border-top: 1px dashed #f0f0f0;
+    font-size: 12px;
+    color: #a8adb3;
+  }
+
+  &__more {
+    color: #07c160;
   }
 }
 
@@ -411,10 +578,80 @@ onMounted(async () => {
   }
 
   &__text {
+    max-width: 100%;
     font-size: 13px;
     line-height: 1.6;
     color: #191919;
     word-break: break-word;
+    overflow-wrap: anywhere;
+  }
+}
+
+/* ---------------- 移动端适配（≤768px，与 useIsMobile 断点一致） ---------------- */
+@media (max-width: 768px) {
+  .filters,
+  .filters--mobile {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+
+    .filters__input,
+    .filters__sel,
+    .filters__date {
+      width: 100%;
+      min-width: 0;
+    }
+
+    .filters__actions {
+      width: 100%;
+
+      :deep(.el-button) {
+        flex: 1 1 0;
+        min-width: 0;
+        margin-left: 0;
+      }
+    }
+  }
+
+  .tip {
+    margin-bottom: 10px;
+  }
+
+  .pager,
+  .pager--mobile {
+    justify-content: center;
+    margin-top: 12px;
+  }
+
+  /* 抽屉占满宽度后：内部可滚动、底部留安全间距 */
+  .rec {
+    &__head {
+      flex-wrap: wrap;
+      gap: 6px 8px;
+    }
+  }
+
+  .rec-body {
+    max-height: calc(100vh - 200px);
+    padding-bottom: calc(12px + env(safe-area-inset-bottom, 0));
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+
+  .msg {
+    min-width: 0;
+    padding: 8px 0;
+
+    &__text {
+      max-width: 100%;
+      font-size: 14px;
+      line-height: 1.6;
+    }
+  }
+
+  .rec-drawer :deep(.el-drawer__body) {
+    overflow: hidden;
+    padding: 12px;
   }
 }
 </style>
