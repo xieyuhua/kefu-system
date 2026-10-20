@@ -55,6 +55,13 @@ function applyStorage(cfg: StorageObjectConfig): void {
   secretSaved.value = masked
 }
 
+/** 密钥仍是「后端已保存」的状态：显示 ****** 或留空（留空提交 ******，由后端保留原值） */
+const secretUntouched = computed(
+  () =>
+    secretSaved.value &&
+    (storage.value.secret_key === '' || storage.value.secret_key === STORAGE_SECRET_MASK),
+)
+
 /** 编辑任一存储字段：标记为待保存 */
 function markStorageDirty(): void {
   storageDirty.value = true
@@ -513,8 +520,11 @@ onMounted(load)
               data-test="storage-sk"
               @input="markStorageDirty"
             />
-            <div v-if="secretSaved" class="storage-hint" data-test="storage-sk-hint">
+            <div v-if="secretUntouched" class="storage-hint" data-test="storage-sk-hint">
               已保存，留空表示不修改
+            </div>
+            <div v-else-if="secretSaved" class="storage-hint">
+              将保存新的密钥，留空则保留原密钥
             </div>
             <div v-else class="storage-hint">与 Access Key 配对使用</div>
           </div>
@@ -699,6 +709,13 @@ onMounted(load)
   font-size: 14px;
   color: #191919;
   line-height: 24px;
+}
+
+/* 关闭启用时输入框置灰，但值仍要看得清（Element 默认的 disabled 文字过淡） */
+.storage-form :deep(.el-input.is-disabled .el-input__inner) {
+  color: #7d828c;
+  -webkit-text-fill-color: #7d828c;
+  opacity: 1;
 }
 
 .storage-hint {

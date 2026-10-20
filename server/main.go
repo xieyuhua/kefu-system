@@ -3,6 +3,7 @@ package main
 import (
 	"log"
 	"os"
+	"strings"
 	"time"
 
 	"kefu-server/internal/common/service"
@@ -78,6 +79,16 @@ func main() {
 	addr := ":" + config.C.Server.Port
 	log.Printf("客服系统后端启动: http://127.0.0.1%s  (mode=%s, redis=%v)", addr, config.C.Server.Mode, cacheStore.Get().Enabled())
 	if err := r.Run(addr); err != nil {
+		// 端口被占用是最常见的「起不来」原因：多半是已经有一个实例在跑（或上次没退干净）。
+		// 这里给出可执行的处理办法，避免只看到一句 bind 报错。
+		if strings.Contains(err.Error(), "Only one usage of each socket address") ||
+			strings.Contains(err.Error(), "address already in use") {
+			log.Printf("端口 %s 已被占用，通常是已有一个后端实例在运行。", config.C.Server.Port)
+			log.Printf("  · 先确认是否已在运行：curl http://127.0.0.1:%s/health", config.C.Server.Port)
+			log.Printf("  · 要重启请先结束旧进程：Get-Process -Name kefu-server,go -ErrorAction SilentlyContinue | Stop-Process -Force")
+			log.Printf("  · 或改用其它端口：$env:KEFU_PORT=\"8481\"")
+			log.Fatalf("启动失败: 端口 %s 被占用（已有实例在运行或残留进程）", config.C.Server.Port)
+		}
 		log.Fatalf("启动失败: %v", err)
 	}
 }
