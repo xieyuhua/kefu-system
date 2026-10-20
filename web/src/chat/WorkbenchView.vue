@@ -458,8 +458,10 @@ async function onArchive(conversation: Conversation): Promise<void> {
   try {
     await chat.archiveConversation(conversation.id)
     ElMessage.success('会话已删除')
+    // 先排入统计刷新（250ms 合并窗口），再拉列表：
+    // 否则列表请求耗时会把这 250ms 窗口整体推后，统计看起来「慢半拍」
+    chat.refreshStats()
     await chat.loadConversations()
-    await chat.loadStats()
   } catch {
     // 错误已提示
   }
@@ -469,8 +471,8 @@ async function onClaim(conversation: Conversation): Promise<void> {
   try {
     await chat.claim(conversation.id)
     ElMessage.success('已接入会话')
+    chat.refreshStats()
     await chat.loadConversations()
-    await chat.loadStats()
   } catch {
     // 错误已提示
   }
@@ -502,8 +504,8 @@ async function onTransferConfirm(agentId: number): Promise<void> {
     await chat.transfer(target.id, agentId)
     ElMessage.success('已转接')
     transferVisible.value = false
+    chat.refreshStats()
     await chat.loadConversations()
-    await chat.loadStats()
   } catch {
     // 错误已由拦截器提示（如「该客服未配置接待此渠道」）
   } finally {
@@ -524,8 +526,9 @@ async function onClose(conversation: Conversation): Promise<void> {
   try {
     await chat.close(conversation.id)
     ElMessage.success('会话已结束')
+    // 先请求统计（合并窗口 250ms），再拉列表：保证「结束后统计及时更新」
+    chat.refreshStats()
     await chat.loadConversations()
-    await chat.loadStats()
   } catch {
     // 错误已提示
   }
@@ -589,6 +592,7 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   offs.forEach((off) => off())
+  chat.dispose()
   close()
 })
 </script>

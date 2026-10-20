@@ -112,8 +112,9 @@ async function submit(): Promise<void> {
         : '已发起模拟咨询，等待 WebSocket 推送',
     )
     emit('created')
+    // 合并去抖：与 WS conversation.new 的统计刷新共用一次 GET /conversations/stats
+    chat.refreshStats()
     await chat.loadConversations()
-    await chat.loadStats()
     open.value = false
   } finally {
     submitting.value = false

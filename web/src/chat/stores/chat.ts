@@ -60,6 +60,30 @@ export const useChatStore = defineStore('chat', () => {
   const searchResults = ref<Message[]>([])
   const searching = ref(false)
 
+  /**
+   * 已读幂等台账：会话 id → 已经标记过已读的最后一条消息 id。
+   * 用来判断「同一条消息是否标记过」，避免 WS 重推 / 会话重开时重复 POST /conversations/:id/read。
+   */
+  const lastReadId = new Map<number, number>()
+  /**
+   * 已读单飞：会话 id → 在途的 read 请求。
+   * 同一会话并发调用（WS 推送 + 手动点开会话）只保留一个请求，后来者复用同一个 Promise。
+   */
+  const readInflight = new Map<number, Promise<boolean>>()
+  /**
+   * 非当前会话最近一次已计入未读的消息 id。
+   * 后端可能把同一条 message.new 重复投递（Redis 广播回声），
+   * 用它保证未读只 +1、统计也只刷新一次。
+   */
+  const lastCountedMessageId = new Map<number, number>()
+  /** 统计请求合并窗口（ms）：窗口内多次 refreshStats 只发 1 个 GET /conversations/stats */
+  const STATS_DEBOUNCE_MS = 250
+  let statsTimer = 0
+  /** 是否有 stats 请求在途 */
+  let statsInflight = false
+  /** 在途期间又来了刷新诉求：结束后最多再补 1 次 */
+  let statsDirty = false
+
   const current = computed<Conversation | null>(
     () => conversations.value.find((c) => c.id === currentId.value) || null,
   )
@@ -89,6 +113,8 @@ export const useChatStore = defineStore('chat', () => {
 
   function removeConversation(id: number): void {
     conversations.value = conversations.value.filter((c) => c.id !== id)
+    lastReadId.delete(id)
+    lastCountedMessageId.delete(id)
     if (currentId.value === id) {
       currentId.value = 0
       messages.value = []
@@ -218,7 +244,10 @@ export const useChatStore = defineStore('chat', () => {
     messages.value = []
     searchResults.value = []
     await loadMessages(conversation.id)
-    await markRead(conversation.id)
+    const read = await markRead(conversation.id)
+    // 真的清掉了服务端未读才需要回校准统计（未读数已在 markRead 里本地扣减），
+    // 且走合并后的 refreshStats，和同期的 WS 事件共用一次请求。
+    if (read) refreshStats()
   }
 
   /** 归档（工作台「删除」）：会话从列表移除；若正选中则清空当前会话 */
@@ -252,24 +281,105 @@ export const useChatStore = defineStore('chat', () => {
         messages.value = []
       }
       clearSearch()
-      await refreshStats()
+      refreshStats()
     }
     return n
   }
 
-  async function markRead(conversationId: number): Promise<void> {
-    try {
-      await convApi.readConversation(conversationId)
-      patchConversation(conversationId, { unread: 0 })
-      refreshStats()
-    } catch {
-      // 已读失败不影响主流程
+  /** 当前会话已加载的最后一条真实消息 id（用于「已标记到哪条」） */
+  function latestMessageIdOf(conversationId: number): number {
+    if (conversationId !== currentId.value) return 0
+    for (let i = messages.value.length - 1; i >= 0; i--) {
+      const m = messages.value[i]
+      if (m.id > 0 && !m.pending) return m.id
     }
+    return 0
+  }
+
+  /**
+   * 标记会话已读（状态闸门 + 幂等 + 单飞）。
+   *
+   * - 状态闸门：只有「已接管（open）」的会话才清未读。待接待 / 已结束的会话点开只是「看」，
+   *   不该清未读（保留角标），因此直接返回、一个请求都不发。
+   * - 幂等：会话无未读、且没有「比上次标记更新的消息」时直接返回，不发请求；
+   *   同一会话 / 同一条消息重复调用不会产生第二次 POST /conversations/:id/read。
+   * - 单飞：同一会话的 read 请求在途时，后来的调用复用同一个 Promise，不并发重复发。
+   * - 以接口返回值为准：服务端返回 true（真的清了未读）才本地置零；
+   *   返回 false（状态已变等）则不动本地未读数。
+   * - 不再在内部刷新统计：未读数本地 patch（并同步扣减未读统计），
+   *   统计由 onConversation（conversation.updated）与发送成功统一走合并后的 refreshStats。
+   *
+   * @param conversationId 会话 id
+   * @param messageId 触发本次已读的消息 id（WS 新消息时传，用于幂等判断）
+   * @returns 服务端是否真的清掉了未读
+   */
+  function markRead(conversationId: number, messageId = 0): Promise<boolean> {
+    const id = Number(conversationId) || 0
+    if (!id) return Promise.resolve(false)
+
+    const conv = conversations.value.find((c) => c.id === id)
+    // 只有进行中（已接管）的会话才清未读：待接待 / 已结束点开只看不清
+    if (!conv || conv.status !== 'open') return Promise.resolve(false)
+
+    const unread = conv.unread ?? 0
+    const marked = lastReadId.get(id) ?? 0
+    const explicitId = messageId > 0 ? messageId : 0
+    const markId = explicitId || latestMessageIdOf(id)
+
+    // 幂等闸门：既没有未读，也没有比上次标记更新的消息 → 不发请求
+    if (unread <= 0 && explicitId <= marked) {
+      if (markId > marked) lastReadId.set(id, markId)
+      return Promise.resolve(false)
+    }
+
+    // 单飞：同一会话已有请求在途，复用同一个 Promise（完成后由 finally 清理）
+    const inflight = readInflight.get(id)
+    if (inflight) return inflight
+
+    const task = (async (): Promise<boolean> => {
+      try {
+        const cleared = await convApi.readConversation(id)
+        // 服务端返回 false（例如状态已不是 open）时不做本地清零
+        if (!cleared) return false
+        patchConversation(id, { unread: 0 })
+        // 本地即时扣减未读统计（服务端会按同一口径减少），不额外发 GET /stats
+        if (unread > 0) {
+          stats.value = { ...stats.value, unread: Math.max(0, stats.value.unread - unread) }
+        }
+        if (markId > marked) lastReadId.set(id, markId)
+        return true
+      } catch {
+        // 已读失败不影响主流程；下次打开会话会再试
+        return false
+      } finally {
+        readInflight.delete(id)
+      }
+    })()
+    readInflight.set(id, task)
+    return task
+  }
+
+  /** 会话状态变化后本地即时挪动统计项（服务端的合并刷新随后会校准成同一口径） */
+  function moveStat(from: ConversationStatus, to: ConversationStatus): void {
+    if (from === to) return
+    const next = { ...stats.value }
+    if (from === 'pending') next.pending = Math.max(0, next.pending - 1)
+    else if (from === 'open') next.open = Math.max(0, next.open - 1)
+    else next.closed = Math.max(0, next.closed - 1)
+    if (to === 'pending') next.pending += 1
+    else if (to === 'open') next.open += 1
+    else next.closed += 1
+    stats.value = next
   }
 
   async function claim(conversationId: number): Promise<void> {
+    const prev = conversations.value.find((c) => c.id === conversationId)
     const updated = await convApi.claimConversation(conversationId)
     upsertConversation(updated)
+    // 待接待 → 进行中：本地即时反映，统计由合并后的 refreshStats 校准
+    if (prev) moveStat(prev.status, updated.status)
+    // 接管成功后状态变 open，才允许清未读：这里补一次已读，让待接待期间攒的未读正常归零
+    if (updated.status === 'open') await markRead(conversationId)
   }
 
   async function transfer(conversationId: number, agentId: number): Promise<void> {
@@ -278,8 +388,12 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   async function close(conversationId: number): Promise<void> {
+    const prev = conversations.value.find((c) => c.id === conversationId)
     const updated = await convApi.closeConversation(conversationId)
     upsertConversation(updated)
+    // 结束会话：本地即时把「进行中/待接待」挪到「已结束」，
+    // 不依赖 250ms 的统计合并窗口，避免结束后统计看起来「慢半拍」
+    if (prev) moveStat(prev.status, updated.status)
   }
 
   /**
@@ -345,6 +459,8 @@ export const useChatStore = defineStore('chat', () => {
         // 列表项上的「未回复 N 秒」立即消失（不必等 conversation.updated 回来）
         unreplied_ts: 0,
       })
+      // 统计走合并后的 refreshStats（与随后到达的 conversation.updated 共用一次请求）
+      refreshStats()
       return created || null
     } catch (err) {
       const idx = messages.value.findIndex((m) => m.id === tempId)
@@ -369,31 +485,103 @@ export const useChatStore = defineStore('chat', () => {
     return Array.from(byId.values()).sort((a, b) => a.id - b.id)
   }
 
+  /**
+   * 客服自己发出的消息（direction=out 或 sender.role=agent/admin）。
+   * 自己发消息不需要标记已读——否则每发一条回复都会多一个 POST /read。
+   */
+  function isOwnMessage(message: Message): boolean {
+    if (message.direction === 'out') return true
+    const role = message.sender?.role
+    return role === 'agent' || role === 'admin'
+  }
+
+  /** 会话快照是否完全一致（用于忽略重复投递的 conversation.updated） */
+  function sameConversationSnapshot(a: Conversation, b: Conversation): boolean {
+    return (
+      a.status === b.status &&
+      (a.unread || 0) === (b.unread || 0) &&
+      (a.agent?.id ?? 0) === (b.agent?.id ?? 0) &&
+      (a.last_message || '') === (b.last_message || '') &&
+      (a.last_message_at || '') === (b.last_message_at || '') &&
+      !!a.archived === !!b.archived &&
+      (a.unreplied_ts || 0) === (b.unreplied_ts || 0)
+    )
+  }
+
   /** WebSocket 收到新消息 */
   function onMessage(message: Message): void {
     if (message.conversation_id === currentId.value) {
       upsertMessage(message)
-      void markRead(message.conversation_id)
+      // 只对「客户发来的消息」置已读：幂等后同一条消息只会发 1 次 read；
+      // 统计不再在这里单独刷新，交给随之而来的 conversation.updated（合并去抖）。
+      if (message.direction === 'in' && !isOwnMessage(message)) {
+        void markRead(message.conversation_id, message.id)
+      }
       return
     }
     const target = conversations.value.find((c) => c.id === message.conversation_id)
     if (target) {
+      // 同一条消息重复投递：不再重复累加未读，也不再重复刷新统计
+      const counted = lastCountedMessageId.get(message.conversation_id) ?? 0
+      if (message.id > 0 && message.id <= counted) return
+      if (message.id > 0) lastCountedMessageId.set(message.conversation_id, message.id)
       target.unread = (target.unread || 0) + 1
       target.last_message = previewOf({ type: message.type, content: message.content })
     } else {
       void loadConversations()
     }
+    // 非当前会话：本地累加未读 + 合并刷新统计（250ms 窗口内的多次调用只发 1 个请求）
     refreshStats()
   }
 
   /** WebSocket 收到会话新建/更新 */
   function onConversation(conversation: Conversation): void {
+    const prev = conversations.value.find((c) => c.id === conversation.id)
     upsertConversation(conversation)
+    // 重复投递的同一条 conversation.updated（快照完全一样）→ 会话与统计都没变化，不再刷新
+    if (prev && sameConversationSnapshot(prev, conversation)) return
     refreshStats()
   }
 
+  /**
+   * 请求刷新统计：250ms 尾随防抖 + 单飞。
+   * WS 事件、发送成功、会话操作会连续触发多次，这里合并成 1 个 GET /conversations/stats；
+   * 若请求在途，期间的调用只置脏标记，在途结束后最多再补 1 次。
+   */
   function refreshStats(): void {
-    void loadStats()
+    if (statsTimer) window.clearTimeout(statsTimer)
+    statsTimer = window.setTimeout(() => {
+      statsTimer = 0
+      void flushStats()
+    }, STATS_DEBOUNCE_MS)
+  }
+
+  /** 真正发出统计请求（单飞 + 脏标记补偿） */
+  async function flushStats(): Promise<void> {
+    if (statsInflight) {
+      statsDirty = true
+      return
+    }
+    statsInflight = true
+    statsDirty = false
+    try {
+      await loadStats()
+    } finally {
+      statsInflight = false
+      if (statsDirty) {
+        statsDirty = false
+        void flushStats()
+      }
+    }
+  }
+
+  /** 组件卸载时清理合并定时器，避免离开工作台后还补发统计请求 */
+  function dispose(): void {
+    if (statsTimer) {
+      window.clearTimeout(statsTimer)
+      statsTimer = 0
+    }
+    statsDirty = false
   }
 
   function setFilter(patch: Partial<ChatFilters>): void {
@@ -448,6 +636,8 @@ export const useChatStore = defineStore('chat', () => {
     removeConversation,
     patchConversation,
     upsertConversation,
+    refreshStats,
+    dispose,
   }
 })
 

@@ -76,11 +76,14 @@ func (h *Handler) CloseConversationHandler(c *gin.Context) {
 }
 
 func (h *Handler) MarkReadHandler(c *gin.Context) {
-	if err := h.svc.Conv.MarkRead(authctx.TenantID(c), httpx.Default().UintParam(c, "id")); err != nil {
+	// data 表示「本次是否真的把未读清掉了」：待接待/已结束的会话不清未读，返回 false，
+	// 前端据此决定要不要在本地把 unread 置 0（避免统计与列表显示不一致）。
+	cleared, err := h.svc.Conv.MarkRead(authctx.TenantID(c), httpx.Default().UintParam(c, "id"))
+	if err != nil {
 		response.Default().Server(c, err.Error())
 		return
 	}
-	response.Default().OK(c, true)
+	response.Default().OK(c, cleared)
 }
 
 func (h *Handler) ConversationStatsHandler(c *gin.Context) {

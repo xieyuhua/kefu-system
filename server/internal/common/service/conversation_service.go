@@ -343,11 +343,21 @@ func (s *ConversationService) CloseConversation(tenantID, id, agentID uint) (*dt
 	return &vo, nil
 }
 
-func (s *ConversationService) MarkRead(tenantID, id uint) error {
+func (s *ConversationService) MarkRead(tenantID, id uint) (bool, error) {
+	conv, err := s.repo.FindConversationByID(tenantID, id)
+	if err != nil {
+		return false, err
+	}
+	// 只有「已接管（open）」的会话才允许清未读。
+	// 待接待（pending）时客服只是点开看一眼，属于「看消息但不接待」，
+	// 此时不能改数据，否则未读信号消失、谁在等就看不出来了；已结束（closed）同理不处理。
+	if conv.Status != "open" {
+		return false, nil
+	}
 	// 会话未读清零 + 消息置读；失败不阻断（与原逻辑一致，下次打开会话会再次置读）
 	_ = s.repo.ClearConversationUnread(tenantID, id)
 	_ = s.messages.MarkMessagesRead(tenantID, id)
-	return nil
+	return true, nil
 }
 
 func (s *ConversationService) ConversationStats(tenantID, userID uint, isAdmin bool) (*dto.StatsVO, error) {
