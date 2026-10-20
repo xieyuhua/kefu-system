@@ -93,7 +93,7 @@ async function onLogout(): Promise<void> {
     return
   }
   await auth.logout()
-  window.location.replace('/login')
+  window.location.replace('/chat/#/login')
 }
 </script>
 

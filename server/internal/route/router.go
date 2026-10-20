@@ -173,6 +173,10 @@ func Setup() *gin.Engine {
 	r.GET("/c", func(c *gin.Context) { c.Redirect(http.StatusFound, "/kefu/") })
 	r.GET("/workbench", func(c *gin.Context) { c.Redirect(http.StatusFound, "/chat/") })
 
+	// 历史链接兜底：/login 属于「客服工作台登录页」，实际地址是 /chat/#/login。
+	// 不加这条会落到 NoRoute（index.html，用户端），退出登录后看起来像跳错了页面。
+	r.GET("/login", func(c *gin.Context) { c.Redirect(http.StatusFound, "/chat/#/login") })
+
 	// 无尾斜杠的 /admin、/chat、/kefu 补斜杠（gin 的 /*any 不匹配裸前缀）
 	for _, e := range ends {
 		prefix := "/" + e.Prefix
