@@ -49,17 +49,7 @@
         </template>
       </div>
 
-      <!-- 未回复计时：贴在气泡下方（时间戳同一列），只在未回复的客户消息上出现 -->
-      <div
-        v-if="waitShowing"
-        class="bubble-wait"
-        :class="{ 'is-compact': compact }"
-        :data-wait-msg-id="message.id"
-      >
-        <span class="bubble-wait__dot" />
-        <span class="bubble-wait__text">未回复 {{ waitDuration }}</span>
-      </div>
-
+      <!-- 未回复计时已移到会话列表项（ConversationList.vue），气泡上不再显示 -->
       <div v-if="message.failed" class="bubble-error">发送失败</div>
     </div>
   </div>
@@ -68,7 +58,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import type { Message, OrderCardPayload, ProductCardPayload } from '@/shared/types'
-import { formatMessageTime, formatWaitDuration, parseCardContent } from '@/shared/utils/format'
+import { formatMessageTime, parseCardContent } from '@/shared/utils/format'
 import MediaBubble, { type MediaPayload } from '@/shared/components/MediaBubble.vue'
 import OrderCard from '@/shared/components/OrderCard.vue'
 import ProductCard from '@/shared/components/ProductCard.vue'
@@ -77,13 +67,6 @@ const props = defineProps<{
   message: Message
   /** 搜索定位高亮：传入当前需要高亮的消息 id（变化即触发闪烁） */
   flashKey?: number
-  /**
-   * 未回复等待时长（毫秒），由 ChatWindow 统一计时后按消息下发；
-   * 仅「尚未回复的客户消息」会拿到 > 0 的值，其它消息传 0 不渲染。
-   */
-  waitMs?: number
-  /** 移动端紧凑样式（字号/内边距更小，避免挤压气泡） */
-  compact?: boolean
 }>()
 
 const isSystem = computed(
@@ -91,10 +74,6 @@ const isSystem = computed(
 )
 const isOut = computed(() => props.message.direction === 'out')
 const text = computed(() => props.message.content || '')
-
-/** 是否展示「未回复」计时：只认父级下发的有效时长 */
-const waitShowing = computed(() => !isSystem.value && (props.waitMs || 0) > 0)
-const waitDuration = computed(() => formatWaitDuration(props.waitMs || 0))
 
 const orderPayload = computed<OrderCardPayload | null>(() =>
   props.message.type === 'order' ? parseCardContent<OrderCardPayload>(text.value) : null,
@@ -277,57 +256,8 @@ onBeforeUnmount(() => {
 }
 
 /* ---------------- 未回复计时 ---------------- */
-/* 位置：气泡下方（气泡外侧），与 .bubble-meta 时间戳同一列 */
-.bubble-wait {
-  display: inline-flex;
-  align-self: flex-start;
-  align-items: center;
-  gap: 5px;
-  margin-top: 4px;
-  padding: 1px 9px;
-  border-radius: 9px;
-  background: rgba(255, 143, 31, 0.12);
-  color: var(--kf-orange);
-  font-size: 12px;
-  line-height: 18px;
-  font-weight: 500;
-  white-space: nowrap;
-  /* 等宽数字：每秒跳动时宽度不抖 */
-  font-variant-numeric: tabular-nums;
-
-  &__dot {
-    flex-shrink: 0;
-    width: 6px;
-    height: 6px;
-    border-radius: 50%;
-    background: var(--kf-orange);
-    /* 呼吸点：仅作「正在计时」的视觉提示，不影响数字本身 */
-    animation: kf-wait-pulse 1.6s ease-in-out infinite;
-  }
-
-  &.is-compact {
-    padding: 1px 7px;
-    font-size: 11px;
-    line-height: 16px;
-    gap: 4px;
-  }
-}
-
-@keyframes kf-wait-pulse {
-  0%,
-  100% {
-    opacity: 1;
-  }
-  50% {
-    opacity: 0.25;
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .bubble-wait__dot {
-    animation: none;
-  }
-}
+/* 已从气泡上移除：改在会话列表项上显示（见 ConversationList.vue 的 .conv-wait），
+   这里不再保留任何未回复标记的样式，避免残留死代码。 */
 
 .system-pill {
   display: flex;

@@ -83,9 +83,22 @@ func (s *ConversationService) ListConversations(tenantID, userID uint, isAdmin b
 	if err != nil {
 		return nil, err
 	}
+	// 「未回复」判定要看每个会话的最后一条消息：整页批量取一次（1 条聚合 SQL），
+	// 而不是在 VO 组装里逐会话查（N+1）。查询失败只影响标记，列表照常返回。
+	ids := make([]uint, 0, len(list))
+	for _, c := range list {
+		ids = append(ids, c.ID)
+	}
+	lasts, err := s.messages.FindLastMessagesOfConversations(tenantID, ids)
+	if err != nil {
+		lasts = nil
+	}
 	vos := make([]interface{}, 0, len(list))
 	for _, c := range list {
-		vos = append(vos, s.buildConversationVO(c))
+		vo := s.assembleConversationVO(c)
+		// 归档 / 已结束的会话同样按规则填充，是否展示由前端决定
+		vo.UnrepliedTS = unrepliedTS(lasts[c.ID])
+		vos = append(vos, vo)
 	}
 	return &response.Paged{List: vos, Total: total, Page: q.Page, PageSize: q.PageSize}, nil
 }
@@ -99,7 +112,52 @@ func (s *ConversationService) GetConversation(tenantID, id uint) (*dto.Conversat
 	return &vo, nil
 }
 
+// ---------------- 「未回复」判定（会话列表用） ----------------
+
+// IsCustomerMessage 判断一条消息是否由「客户」发出（即客服收到、还需要人工回复的消息）。
+//
+// 判据以 Direction 为主：in = 客户→客服，out = 客服/机器人→客户，system = 系统提示。
+// 为什么不只看 SenderRole：本仓库里客服自己发出的消息 SenderRole 也是 "user"
+// （见 SendMessage，seed 数据同此约定），单凭 role 会把「客服已回复」误判成客户消息，
+// 导致回复后列表上的「未回复」永远不消失。SenderRole 只作兜底：
+// "customer" / "client" 一定是客户消息；"system" 一定是系统提示。
+func IsCustomerMessage(m *model.Message) bool {
+	if m == nil {
+		return false
+	}
+	if m.SenderRole == "system" || m.Type == "system" || m.Direction == "system" {
+		return false
+	}
+	if m.Direction == "in" {
+		return true
+	}
+	return m.SenderRole == "customer" || m.SenderRole == "client"
+}
+
+// unrepliedTS 计算「未回复起点」：会话最后一条消息是客户发的 → 返回它的时间（Unix 毫秒）；
+// 客服已回复 / 只有系统提示 / 会话还没有消息 → 0。
+// 前端据 UnrepliedTS > 0 决定是否在列表项上显示「未回复 N 秒」并以此为计时起点。
+func unrepliedTS(last *model.Message) int64 {
+	if !IsCustomerMessage(last) {
+		return 0
+	}
+	return util.Default().Millis(last.CreatedAt)
+}
+
+// buildConversationVO 组装单条会话 VO，并顺带判定「未回复」状态。
+// 多查一次最后一条消息（单会话场景只有 1 条 SQL）；批量场景请用
+// assembleConversationVO + FindLastMessagesOfConversations，避免 N+1。
 func (s *ConversationService) buildConversationVO(c *model.Conversation) dto.ConversationVO {
+	vo := s.assembleConversationVO(c)
+	if m, err := s.messages.FindLastMessageOfConversation(c.TenantID, c.ID); err == nil {
+		vo.UnrepliedTS = unrepliedTS(m)
+	}
+	return vo
+}
+
+// assembleConversationVO 纯组装：只补齐会话自身字段与渠道 / 客户 / 客服的展示信息，
+// 不做「最后一条消息」查询（未回复状态由调用方填充）。
+func (s *ConversationService) assembleConversationVO(c *model.Conversation) dto.ConversationVO {
 	vo := dto.ConversationVO{
 		ID: c.ID, ChannelID: c.ChannelID, Status: c.Status,
 		Unread: c.Unread, LastMessage: c.LastMessage,

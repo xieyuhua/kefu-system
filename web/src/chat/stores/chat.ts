@@ -341,6 +341,9 @@ export const useChatStore = defineStore('chat', () => {
       patchConversation(conversationId, {
         last_message: previewOf(payload),
         last_message_at: dayjs().format('YYYY-MM-DD HH:mm:ss'),
+        // 客服刚发出回复：会话最后一条消息不再是客户消息 →
+        // 列表项上的「未回复 N 秒」立即消失（不必等 conversation.updated 回来）
+        unreplied_ts: 0,
       })
       return created || null
     } catch (err) {

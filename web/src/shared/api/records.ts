@@ -16,6 +16,8 @@ export interface ConversationRecord {
   message_count: number
   last_message: string
   last_message_at: string
+  /** 未回复起点（Unix 毫秒）：最后一条消息是客户发的才 > 0，与工作台会话列表同一口径 */
+  unreplied_ts?: number
   created_at: string
   first_message: string
   first_message_at: string

@@ -139,6 +139,11 @@ export interface Conversation {
   unread: number
   last_message: string
   last_message_at: string
+  /**
+   * 未回复起点（Unix 毫秒）：仅当该会话最后一条消息是客户发的（客服还没回复）时 > 0。
+   * 会话列表据此显示「未回复 N 秒」；旧接口没有该字段时按 0 处理（不显示标签）。
+   */
+  unreplied_ts?: number
   created_at: string
   order_count: number
   closed_at?: string

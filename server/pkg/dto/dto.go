@@ -157,12 +157,15 @@ type ConversationVO struct {
 	LastMessageAt string       `json:"last_message_at"`
 	// LastMessageTS 最后一条消息时间的 Unix 毫秒时间戳（取 conversation.LastMessageAt），
 	// 供前端做秒级「未回复时长」计算；字符串形式的 last_message_at 保持原样不变。
-	LastMessageTS int64  `json:"last_message_ts"`
-	CreatedAt     string `json:"created_at"`
-	ClosedAt      string `json:"closed_at"`
-	OrderCount    int64  `json:"order_count"`
-	MessageCount  int    `json:"message_count"`
-	Summary       string `json:"summary"`
+	LastMessageTS int64 `json:"last_message_ts"`
+	// UnrepliedTS 最后一条「客户消息」的时间（Unix 毫秒）；仅当该会话最后一条消息来自客户
+	// （即客服未回复）时 > 0，否则 0。前端据此在会话列表项上展示「未回复 N 秒」。
+	UnrepliedTS  int64  `json:"unreplied_ts"`
+	CreatedAt    string `json:"created_at"`
+	ClosedAt     string `json:"closed_at"`
+	OrderCount   int64  `json:"order_count"`
+	MessageCount int    `json:"message_count"`
+	Summary      string `json:"summary"`
 	// Archived 是否已归档（客服清理后的会话，不出现在工作台列表）
 	Archived   bool   `json:"archived"`
 	ArchivedAt string `json:"archived_at"`

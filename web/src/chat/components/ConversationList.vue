@@ -64,6 +64,13 @@
             </span>
             <span class="conv-right">
               <span class="conv-time">{{ formatListTime(c.last_message_at || c.created_at) }}</span>
+              <!-- 未回复时长：与未读角标同一行，挂在未读数左边（橙色小标签） -->
+              <span
+                v-if="waitVisible(c)"
+                class="conv-wait"
+                :data-unreplied-ts="unrepliedStart(c)"
+                :title="`客户已等待 ${waitText(c)}`"
+              >未回复 {{ waitText(c) }}</span>
               <!-- 未读数：像微信一样挂在右侧（超过 99 显示 99+） -->
               <span v-if="unreadOf(c) > 0" class="unread-badge">{{ unreadText(c) }}</span>
             </span>
@@ -107,7 +114,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { Delete, Refresh, Search } from '@element-plus/icons-vue'
 import type { Conversation } from '@/shared/types'
 import {
@@ -115,6 +122,7 @@ import {
   channelIcon,
   channelLabel,
   formatListTime,
+  formatWaitDuration,
   onlineColor,
   onlineHint,
 } from '@/shared/utils/format'
@@ -197,6 +205,71 @@ function unreadText(c: Conversation): string {
   return n > 99 ? '99+' : String(n)
 }
 
+/* ---------------- 未回复时长（秒级） ---------------- */
+/**
+ * 当前时间（Unix 毫秒），由下面唯一的一个 setInterval 每秒推进。
+ * 它只用于「未回复 N 秒」文案重算，是整张列表共用的时钟——
+ * 刻意不按会话各开一个定时器（会话几十上百个时会同时跑几十上百个表）。
+ */
+const now = ref(Date.now())
+let tickTimer: number | null = null
+
+function stopTicker(): void {
+  if (tickTimer !== null) {
+    window.clearInterval(tickTimer)
+    tickTimer = null
+  }
+}
+
+function startTicker(): void {
+  if (tickTimer !== null) return // 已在跑：绝不重复开表
+  // 起表即对齐一次，避免刚出现计时时数字滞后接近 1 秒
+  now.value = Date.now()
+  tickTimer = window.setInterval(() => {
+    now.value = Date.now()
+  }, 1000)
+}
+
+/**
+ * 未回复起点（Unix 毫秒）：后端 unreplied_ts 只在「最后一条是客户消息」时 > 0。
+ * 旧接口没有该字段 → undefined → 返回 0 → 不显示标签（不报错、不显示 0 秒）。
+ */
+function unrepliedStart(c: Conversation): number {
+  const ts = c.unreplied_ts
+  return typeof ts === 'number' && Number.isFinite(ts) && ts > 0 ? ts : 0
+}
+
+/** 是否显示「未回复」标签：有起点且会话未结束（已结束的会话不再催回复） */
+function waitVisible(c: Conversation): boolean {
+  return c.status !== 'closed' && unrepliedStart(c) > 0
+}
+
+/** 标签文案：未回复 38 秒 / 未回复 2 分 05 秒 */
+function waitText(c: Conversation): string {
+  return formatWaitDuration(Math.max(0, now.value - unrepliedStart(c)))
+}
+
+/**
+ * 是否需要走秒：列表里只要还有一条会话在等回复就保持走表，
+ * 全部消失（客服都回了 / 都结束了 / 旧接口无字段）立即停表。
+ * 存活定时器因此始终 ≤ 1 个，切换会话、收到 WS 新消息都不会叠加。
+ */
+const hasWaiting = computed(() => props.conversations.some((c) => waitVisible(c)))
+
+watch(
+  hasWaiting,
+  (active) => {
+    if (active) {
+      startTicker()
+    } else {
+      stopTicker()
+    }
+  },
+  { immediate: true },
+)
+
+onBeforeUnmount(stopTicker)
+
 </script>
 
 <style scoped lang="scss">
@@ -223,6 +296,19 @@ function unreadText(c: Conversation): string {
 
   .conv-item {
     padding: 10px;
+  }
+
+  /* 窄屏：时间 / 未回复 / 未读数一行可能放不下，
+     允许「未回复」标签换到第二行（不溢出、不挤压未读数），见下方 .conv-wait 的 order */
+  .conv-right {
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    row-gap: 2px;
+    max-width: 58%;
+  }
+
+  .conv-wait {
+    order: 3;
   }
 
   /* 移动端触摸友好：加大点击区域 */
@@ -371,12 +457,28 @@ function unreadText(c: Conversation): string {
   font-weight: 600;
 }
 
-/* 右侧：时间 + 未读气泡 */
+/* 右侧：时间 + 未回复标签 + 未读气泡 */
 .conv-right {
   display: inline-flex;
   align-items: center;
   gap: 6px;
   flex-shrink: 0;
+}
+
+/* 未回复时长：与未读角标同一行，橙色小标签（比未读角标略宽，但不抢视觉） */
+.conv-wait {
+  flex-shrink: 0;
+  height: 18px;
+  padding: 0 6px;
+  border-radius: 9px;
+  background: rgba(255, 143, 31, 0.12);
+  color: var(--kf-orange);
+  font-size: 11px;
+  line-height: 18px;
+  font-weight: 500;
+  white-space: nowrap;
+  /* 等宽数字：每秒跳动时标签宽度不抖，避免整行抖动 */
+  font-variant-numeric: tabular-nums;
 }
 
 .unread-badge {
@@ -390,6 +492,8 @@ function unreadText(c: Conversation): string {
   line-height: 18px;
   text-align: center;
   font-weight: 500;
+  /* 窄屏压缩时优先挤昵称，未读数不允许被压扁 */
+  flex-shrink: 0;
 }
 
 /* 列表项操作：删除（默认隐藏，hover 显示） */

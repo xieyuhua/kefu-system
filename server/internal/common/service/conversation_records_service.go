@@ -25,6 +25,9 @@ type ConversationRecord struct {
 	MessageCount   int    `json:"message_count"`
 	LastMessage    string `json:"last_message"`
 	LastMessageAt  string `json:"last_message_at"`
+	// UnrepliedTS 最后一条「客户消息」的时间（Unix 毫秒）；客服已回复 / 无客户消息为 0。
+	// 与工作台会话列表（dto.ConversationVO.UnrepliedTS）同一口径、同一批量查询。
+	UnrepliedTS    int64  `json:"unreplied_ts"`
 	CreatedAt      string `json:"created_at"`
 	FirstMessage   string `json:"first_message"`
 	FirstMessageAt string `json:"first_message_at"`
@@ -76,6 +79,17 @@ func (s *ConversationService) SearchConversations(tenantID uint, q ConversationR
 		return nil, 0, err
 	}
 
+	// 「未回复」口径与工作台列表完全一致：整页批量取每个会话的最后一条消息（1 条聚合 SQL），
+	// 再按「最后一条是不是客户发的」填充 UnrepliedTS；取不到时保持 0（不影响记录本身）。
+	ids := make([]uint, 0, len(list))
+	for _, c := range list {
+		ids = append(ids, c.ID)
+	}
+	lasts, err := s.messages.FindLastMessagesOfConversations(tenantID, ids)
+	if err != nil {
+		lasts = nil
+	}
+
 	out := make([]ConversationRecord, 0, len(list))
 	for _, c := range list {
 		rec := ConversationRecord{
@@ -83,6 +97,7 @@ func (s *ConversationService) SearchConversations(tenantID uint, q ConversationR
 			AgentID: c.AgentID, Status: c.Status, Archived: c.Archived,
 			MessageCount: c.MessageCount, LastMessage: c.LastMessage,
 			LastMessageAt: util.Default().FmtTime(c.LastMessageAt), CreatedAt: util.Default().FmtTime(c.CreatedAt),
+			UnrepliedTS:    unrepliedTS(lasts[c.ID]),
 			FirstMessageAt: "",
 		}
 		if cu, err := s.customer.FindCustomerByID(c.CustomerID); err == nil {
