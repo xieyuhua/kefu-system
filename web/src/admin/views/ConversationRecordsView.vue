@@ -180,6 +180,7 @@ onMounted(async () => {
           value-format="YYYY-MM-DD"
           start-placeholder="开始日期"
           end-placeholder="结束日期"
+          popper-class="records-date-popper"
           class="filters__date"
         />
         <div class="filters__actions">
@@ -287,7 +288,7 @@ onMounted(async () => {
         <el-empty v-if="!loading && !list.length" description="暂无对话记录" :image-size="60" />
       </div>
 
-      <div class="pager" :class="{ 'pager--mobile': isMobile }">
+      <div class="pager">
         <el-pagination
           v-model:current-page="query.page"
           :page-size="query.page_size"
@@ -360,9 +361,8 @@ onMounted(async () => {
   }
 
   &__actions {
-    display: flex;
-    align-items: center;
-    gap: 8px;
+    /* 宽屏让两个按钮直接参与 .filters 的换行计算，保持原有排布 */
+    display: contents;
   }
 }
 
@@ -596,14 +596,21 @@ onMounted(async () => {
     gap: 8px;
 
     .filters__input,
-    .filters__sel,
-    .filters__date {
+    .filters__sel {
+      width: 100%;
+      min-width: 0;
+    }
+
+    /* el-date-picker 的根节点不继承 scoped 属性，需用 :deep 命中 */
+    :deep(.filters__date) {
       width: 100%;
       min-width: 0;
     }
 
     .filters__actions {
+      display: flex;
       width: 100%;
+      gap: 8px;
 
       :deep(.el-button) {
         flex: 1 1 0;
@@ -617,24 +624,38 @@ onMounted(async () => {
     margin-bottom: 10px;
   }
 
-  .pager,
-  .pager--mobile {
-    justify-content: center;
-    margin-top: 12px;
+  /* 日期范围面板固定宽 646px，窄屏收敛到视口内改为横向滚动，避免整页横向溢出 */
+  :global(.records-date-popper) {
+    max-width: calc(100vw - 12px);
+    overflow-x: auto;
+    overflow-y: hidden;
   }
 
   /* 抽屉占满宽度后：内部可滚动、底部留安全间距 */
   .rec {
+    flex: 0 0 auto;
+
     &__head {
       flex-wrap: wrap;
       gap: 6px 8px;
     }
   }
 
+  /* 抽屉 body 由 Element Plus 渲染（teleport 到 body），需用 :global 命中 */
+  :global(.rec-drawer .el-drawer__body) {
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    padding: 12px;
+  }
+
   .rec-body {
-    max-height: calc(100vh - 200px);
-    padding-bottom: calc(12px + env(safe-area-inset-bottom, 0));
+    flex: 1 1 auto;
+    min-height: 0;
+    /* flex 生效时由抽屉高度约束；万一 flex 未命中，仍以视口高度兜底可滚动 */
+    max-height: calc(100vh - 24px);
     overflow-y: auto;
+    padding-bottom: calc(12px + env(safe-area-inset-bottom, 0));
     overscroll-behavior: contain;
   }
 
@@ -647,11 +668,6 @@ onMounted(async () => {
       font-size: 14px;
       line-height: 1.6;
     }
-  }
-
-  .rec-drawer :deep(.el-drawer__body) {
-    overflow: hidden;
-    padding: 12px;
   }
 }
 </style>
