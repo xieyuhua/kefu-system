@@ -136,7 +136,9 @@ func (s *AccountService) BuildCurrentUser(u *model.User) (*dto.CurrentUser, erro
 		Account: u.Account, Avatar: u.Avatar, Online: u.Online,
 		MaxConcurrent: u.MaxConcurrent, Channels: s.UserChannels(u),
 		Tenant: dto.TenantBrief{
-			ID: tenant.ID, Name: tenant.Name, Logo: tenant.Logo,
+			// 系统名称优先取后台设置（设置 → 系统名称），未设置时回退到租户名称，
+			// 这样运营可以自行改品牌名而不用改库里的 tenants.name。
+			ID: tenant.ID, Name: systemNameOr(tenant), Logo: tenant.Logo,
 			DefaultImage: setting.DefaultImageURL(tenant.ID),
 		},
 	}, nil
@@ -211,4 +213,12 @@ func (s *AccountService) ChangePassword(tenantID, userID uint, oldPassword, newP
 		return authErr("server", "密码修改失败")
 	}
 	return nil
+}
+
+// systemNameOr 返回展示用的系统名称：优先后台设置 system.name，未设置时用租户名称。
+func systemNameOr(tenant *model.Tenant) string {
+	if name := strings.TrimSpace(setting.GetSetting(tenant.ID, setting.SettingSystemName)); name != "" {
+		return name
+	}
+	return tenant.Name
 }

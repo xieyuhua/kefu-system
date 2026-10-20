@@ -20,9 +20,11 @@ import {
 import { uploadAttachment, validateFile } from '@/shared/api/upload'
 import { playMessageSound } from '@/shared/utils/sound'
 import { useIsMobile } from '@/shared/composables/useIsMobile'
+import { useAuthStore } from '@/shared/stores/auth'
 import ThumbImage from '@/shared/components/ThumbImage.vue'
 
 const { isMobile } = useIsMobile()
+const auth = useAuthStore()
 
 const loading = ref(false)
 const saving = ref<Record<string, boolean>>({})
@@ -101,6 +103,11 @@ async function save(key: string): Promise<void> {
     await saveSetting(key, settings.value[key] || '')
     ElMessage.success('已保存')
     await load()
+    // 系统名称改完要立刻反映到顶栏 / 页面标题，所以顺手刷新一次登录态
+    if (key === 'system.name') {
+      await auth.me()
+      document.title = settings.value['system.name'] || document.title
+    }
   } catch {
     ElMessage.error('保存失败')
   } finally {
@@ -262,6 +269,31 @@ onMounted(load)
           >
             保存全部
           </el-button>
+        </div>
+      </div>
+
+      <!-- 系统名称 -->
+      <div class="setting-item">
+        <div class="setting-item__label">
+          <div class="setting-item__name">系统名称</div>
+          <div class="setting-item__remark">
+            {{ remarks['system.name'] || '展示在后台顶栏与浏览器标题；留空则使用租户名称' }}
+          </div>
+        </div>
+        <div class="setting-item__control">
+          <el-input
+            v-model="settings['system.name']"
+            size="small"
+            class="setting-input"
+            placeholder="例如：云跳跳客服 / 某某科技客服"
+            maxlength="32"
+            show-word-limit
+          />
+          <div class="setting-item__actions">
+            <el-button size="small" type="primary" plain :loading="saving['system.name']" @click="save('system.name')">
+              保存
+            </el-button>
+          </div>
         </div>
       </div>
 

@@ -21,6 +21,8 @@ const (
 	SettingDefaultImage = "default_image"
 	// SettingMessageSound 新消息提示音：on=内置提示音（默认），off=静音，或填音频 URL
 	SettingMessageSound = "message_sound"
+	// SettingSystemName 系统名称：展示在后台顶栏与页面标题，留空则回退到租户名称
+	SettingSystemName = "system.name"
 	// SettingObjectStorage 对象存储（S3 兼容）配置：value 是一段 JSON
 	SettingObjectStorage = "storage.object"
 )
