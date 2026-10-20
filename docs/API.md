@@ -140,11 +140,15 @@ Authorization: Bearer <token>
 [{
   "id": 1, "type": "wechat", "name": "微信公众号客服",
   "app_id": "wx123456", "enabled": true, "robot_enabled": false,
+  "hide_header": false, "hide_debug": false, "hide_more_menu": false,
+  "support_order_card": true, "support_product_card": true,
   "created_at": "2026-03-01 09:00:00",
   "agent_count": 3, "pending_count": 2    // 该渠道待接待数
 }]
 ```
 > `agent` 角色只返回自己可接待的渠道。
+> `support_order_card` / `support_product_card`：渠道级**卡片能力开关**（后台「渠道管理」可配，默认 `true`）。
+> 关闭后该渠道不能收发对应卡片：用户端隐藏入口、客服工作台入口置灰、服务端直接拦截。
 
 ### 设备推送自检
 `POST /api/devices/test-push`
@@ -211,10 +215,13 @@ Authorization: Bearer <token>
 `PUT /api/channels/:id/agents`  `{ "user_ids": [2,3] }` —— **全量覆盖**该渠道的接待账号，返回同上数组。
 
 ### `POST /api/channels`（admin）
-请求：`{ "type":"wechat", "name":"微信公众号客服", "app_id":"wx123", "enabled":true, "robot_enabled":false }`
+请求：`{ "type":"wechat", "name":"微信公众号客服", "app_id":"wx123", "enabled":true, "robot_enabled":false,
+"support_order_card":true, "support_product_card":true }`
+> `support_order_card` / `support_product_card` 省略时按 `true` 处理（与存量渠道一致）。
 
 ### `PUT /api/channels/:id`（admin）
 请求体同 POST（字段可选）。
+> 两个卡片开关是 `*bool` 语义：**不传表示不修改**，传 `false` 即关闭；可只传其中一个，另一个保持原值。
 
 ### `DELETE /api/channels/:id`（admin）
 `data: true`
@@ -269,7 +276,8 @@ Query：
 {
   "list": [{
     "id": 11, "channel_id": 1,
-    "channel": {"id":1,"type":"wechat","name":"微信公众号客服"},
+    "channel": {"id":1,"type":"wechat","name":"微信公众号客服",
+                "support_order_card":true,"support_product_card":true},
     "user": {
       "id":3, "external_id":"wx_o_abc", "nickname":"王小明",
       "avatar":"/demo/avatar-3.svg", "phone":"138****8888",
@@ -329,6 +337,10 @@ Query：`before_id`（翻页用，返回更早的消息）、`limit`（缺省 50
 ### `POST /api/conversations/:id/messages`
 请求：`{ "type": "text", "content": "您好，很高兴为您服务" }`
 响应 `data` = 新建的消息对象（用于乐观更新）。
+
+> **渠道卡片能力强校验**：会话所属渠道关闭了对应卡片能力时，`type=order` 返回业务错误
+> `该渠道未开启订单卡片`，`type=product` 返回 `该渠道未开启商品卡片`（HTTP 200 + `code: 400`，消息不落库）。
+> 机器人自动回复产生的卡片不经过此校验。
 
 ### `GET /api/conversations/:id/messages/count`
 不需要。
@@ -505,7 +517,11 @@ http(s)://<host>/kefu/?channel=web&uid=o_abc123&nickname=王小明&avatar=&order
 响应 `data`：
 ```json
 {
-  "channel": { "id":3, "type":"web", "name":"网页在线客服" },
+  "channel": {
+    "id":3, "type":"web", "name":"网页在线客服",
+    "hide_header": false, "hide_debug": false, "hide_more_menu": false,
+    "support_order_card": true, "support_product_card": true
+  },
   "customer": { "id":12, "external_id":"u_10001", "nickname":"王小明", "avatar":"..." },
   "conversation": { "id":31, "status":"pending" },
   "greeting": "您好，我是智能客服助手，请问有什么可以帮您？",
@@ -515,6 +531,8 @@ http(s)://<host>/kefu/?channel=web&uid=o_abc123&nickname=王小明&avatar=&order
 }
 ```
 > 页面按 `greeting` 直接渲染一条机器人欢迎语；若带 `order_no`/`pid`，自动渲染订单/商品卡片。
+> `channel.support_order_card` / `channel.support_product_card` 为 `false` 时，用户端应**隐藏**对应卡片入口
+> （含自动弹出的卡片确认气泡）；此时即便强行调用发消息接口也会被服务端拦截。
 
 ### 13.3 用户端发消息
 `POST /api/guest/message?channel=web&uid=u_10001`
@@ -525,6 +543,8 @@ http(s)://<host>/kefu/?channel=web&uid=o_abc123&nickname=王小明&avatar=&order
 ```
 - `reply`：命中自动回复规则时的机器人回复（可能是文本或商品卡片）
 - `transferred=true`：命中"转人工"关键词，会话已转为待人工接待，前端提示"正在为您转接人工客服"
+- 卡片能力强校验：渠道关闭了订单/商品卡片时，`type=order|product` 返回 `code: 400` +
+  `该渠道未开启订单卡片` / `该渠道未开启商品卡片`，消息不落库。
 
 ### 13.4 实时通道与离线补偿
 

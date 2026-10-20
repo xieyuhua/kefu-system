@@ -9,6 +9,7 @@ import (
 	"kefu-server/internal/common/model"
 	"kefu-server/pkg/dto"
 	"kefu-server/pkg/realtime"
+	"kefu-server/pkg/setting"
 	"kefu-server/pkg/util"
 )
 
@@ -39,12 +40,12 @@ const (
 
 // EnsureCardSendAllowed 校验「会话所属渠道」是否开启了对应卡片能力（服务端强校验）。
 //
-// 只在「用户 / 客服主动发送卡片」的链路上调用（SendMessage / ReceiveMessage）：
-//   - 客服发送：POST /api/conversations/:id/messages
-//   - 用户发送：POST /api/guest/message
+// 调用点（都是「用户 / 客服主动发送卡片」的链路）：
+//   - 客服发送：POST /api/conversations/:id/messages（处理器先拦一次，返回 code 400）；
+//   - 用户发送：POST /api/guest/message（处理器先拦一次，返回 code 400）；
+//   - SendMessage / ReceiveMessage 内部再兜一层，防止将来绕过处理器直接调用。
 //
-// 机器人自动回复产生的卡片走内核内部逻辑（不经过这两个方法），因此不受渠道开关限制。
-// 返回的 error 由处理器原样作为业务错误 message 返回（HTTP 200 + code 非 0）。
+// 机器人自动回复产生的卡片走内核内部逻辑（不经过这些调用点），因此不受渠道开关限制。
 // 非卡片类型（text / image / ...）直接放行；渠道读不到时同样放行，避免误伤历史数据。
 func (s *ConversationService) EnsureCardSendAllowed(tenantID, channelID uint, msgType string) error {
 	if msgType != MsgTypeOrder && msgType != MsgTypeProduct {
@@ -139,6 +140,12 @@ func (s *ConversationService) buildMessageVO(m *model.Message) dto.MessageVO {
 		}
 	default:
 		vo.Sender = dto.SenderRef{Role: "system"}
+	}
+	// 机器人 / 智能助手消息的头像统一取自后台设置「助手头像」：
+	// 用户端与客服工作台共用同一个 sender.avatar，后台改完两边同时生效。
+	// 未配置时留空，由前端回退到内置头像（不覆盖真实客服账号的各自头像）。
+	if vo.Sender.Role == "robot" {
+		vo.Sender.Avatar = setting.AssistantAvatar(m.TenantID)
 	}
 	return vo
 }

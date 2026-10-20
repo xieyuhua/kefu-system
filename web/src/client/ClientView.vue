@@ -513,7 +513,10 @@ const sourceName = computed(() => {
 const sourceIcon = computed(() => channelIcon(channel.value?.type))
 const greetingName = computed(() => BOT_NAME)
 const greetingTime = computed(() => dayjs().format('HH:mm'))
-/** 客服头像：后端暂不下发客服头像，留空走 emoji 兜底 */
+/**
+ * 智能助手头像：取自 guest/init 的 assistant_avatar（后台「助手头像」设置）。
+ * 留空时模板回退到内置 emoji（BOT_AVATAR）；真实客服账号的消息仍用各自 sender.avatar。
+ */
 const serviceAvatar = ref('')
 
 /** 轮询游标持久化：离线消息补拉 */
@@ -569,19 +572,30 @@ function parseMedia(m: Message): MediaPayload | null {
   }
 }
 
+/** 机器人 / 智能助手消息：后端 sender.role = "robot"；真实客服账号为 "agent" */
+function isRobotSender(m: Message): boolean {
+  return (m.sender?.role || '') === 'robot'
+}
+
 function toItem(m: Message): StreamItem {
   const kind = isSystem(m) ? 'system' : isMine(m) ? 'mine' : 'service'
+  // 助手类消息：后台配置的助手头像（guest/init 下发）优先，未配置再退回消息自带 / 内置 emoji；
+  // 真实客服账号的消息仍显示各自的 sender.avatar，不被助手头像覆盖。
+  const robot = kind === 'service' && isRobotSender(m)
+  const avatar =
+    kind === 'mine'
+      ? customerAvatar.value || params.value.avatar || ''
+      : robot
+        ? serviceAvatar.value || m.sender?.avatar || ''
+        : m.sender?.avatar || ''
   return {
     id: m.id,
     kind,
     type: m.type,
     text: m.content || '',
     name: m.sender?.name || '客服',
-    avatar:
-      kind === 'mine'
-        ? customerAvatar.value || params.value.avatar || ''
-        : m.sender?.avatar || serviceAvatar.value,
-    fallback: kind === 'mine' ? '我' : '客',
+    avatar,
+    fallback: kind === 'mine' ? '我' : robot ? BOT_AVATAR : '客',
     order: m.type === 'order' ? parseCardContent<OrderCardPayload>(m.content) : null,
     product: m.type === 'product' ? parseCardContent<ProductCardPayload>(m.content) : null,
     media: parseMedia(m),
@@ -824,7 +838,8 @@ async function init(): Promise<void> {
       cardConfirmVisible.value = true
     }
     customerAvatar.value = res.customer?.avatar || params.value.avatar || ''
-    serviceAvatar.value = ''
+    // 助手头像由后台设置决定；留空则模板回退到内置 emoji（BOT_AVATAR）
+    serviceAvatar.value = res.assistant_avatar || ''
 
     // 关键：链接没带 uid 时服务端会生成一个游客 ID，必须回写到 params。
     // 否则后续 WebSocket（/ws/guest 要求 uid）与轮询都会带空 uid，导致连接被拒。

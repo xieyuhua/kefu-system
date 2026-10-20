@@ -22,6 +22,7 @@ import (
 
 	"kefu-server/internal/common/model"
 	commonsvc "kefu-server/internal/common/service"
+	"kefu-server/pkg/setting"
 )
 
 // Service 用户端（访客）的端内编排层，持有四个公共业务依赖。
@@ -172,4 +173,10 @@ func (s *Service) LookupProductCard(tenantID uint, pid string) map[string]interf
 // 这里只保留端内入口，避免两处各写一遍「取第一个租户」。
 func (s *Service) DefaultTenantID() uint {
 	return s.Cust.DefaultTenantID()
+}
+
+// AssistantAvatar 智能助手（机器人）回复时展示的头像地址（后台可配置）。
+// 未配置返回空串，由用户端回退到内置头像；真实客服账号的头像不经过这里。
+func (s *Service) AssistantAvatar(tenantID uint) string {
+	return setting.AssistantAvatar(tenantID)
 }

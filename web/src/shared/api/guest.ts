@@ -59,6 +59,11 @@ export interface GuestInitResult {
   }
   /** 机器人欢迎语，页面渲染为第一条气泡 */
   greeting: string
+  /**
+   * 智能助手（机器人）头像地址：后台「助手头像」设置项下发。
+   * 未配置时是空串，由前端回退到内置头像（🤖）。
+   */
+  assistant_avatar: string
   order: OrderCardPayload | null
   product: ProductCardPayload | null
   /** 最近 20 条历史消息 */

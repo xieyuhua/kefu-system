@@ -115,9 +115,11 @@ func (h *Handler) GuestInitHandler(c *gin.Context) {
 		"customer":     gin.H{"id": cu.ID, "external_id": cu.ExternalID, "nickname": cu.Nickname, "avatar": cu.Avatar},
 		"conversation": gin.H{"id": conv.ID, "status": conv.Status},
 		"greeting":     "您好，我是智能客服助手，请问有什么可以帮您？",
-		"order":        orderCard,
-		"product":      productCard,
-		"history":      history,
+		// 助手（机器人）头像：后台「助手头像」设置项，未配置时为空串，由前端回退到内置头像
+		"assistant_avatar": h.svc.AssistantAvatar(tenantID),
+		"order":            orderCard,
+		"product":          productCard,
+		"history":          history,
 	})
 }
 

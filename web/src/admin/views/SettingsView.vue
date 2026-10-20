@@ -29,6 +29,8 @@ const auth = useAuthStore()
 const loading = ref(false)
 const saving = ref<Record<string, boolean>>({})
 const uploading = ref(false)
+/** 助手头像单独的上传态：与默认图片互不影响（两个按钮各自 loading） */
+const uploadingAvatar = ref(false)
 const settings = ref<Record<string, string>>({})
 const remarks = ref<Record<string, string>>({})
 
@@ -221,6 +223,57 @@ async function resetDefault(): Promise<void> {
 
 const defaultImage = computed(() => settings.value.default_image || '')
 
+/* ---------------- 助手头像（assistant.avatar） ---------------- *
+ * 智能助手（机器人）回复时展示的头像：用户端 /kefu/ 与客服工作台 /chat/ 共用同一个值。
+ * 留空（或点「恢复内置」）时两端各自回退到内置头像。
+ */
+const avatarFileRef = ref<HTMLInputElement | null>(null)
+const assistantAvatar = computed(() => settings.value['assistant.avatar'] || '')
+
+function pickAssistantAvatar(): void {
+  avatarFileRef.value?.click()
+}
+
+async function onPickAssistantAvatar(): Promise<void> {
+  const el = avatarFileRef.value
+  const file = el?.files?.[0]
+  if (!el || !file) return
+
+  // 只允许图片
+  if (!/\.(jpg|jpeg|png|gif|webp|bmp|svg)$/i.test(file.name)) {
+    ElMessage.error('请选择图片文件')
+    el.value = ''
+    return
+  }
+  const err = validateFile(file)
+  if (err) {
+    ElMessage.error(err)
+    el.value = ''
+    return
+  }
+
+  uploadingAvatar.value = true
+  try {
+    const payload = await uploadAttachment(file)
+    // 上传成功先把返回地址回写输入框，再落库（用户可再手改 URL 后单独点保存）
+    settings.value['assistant.avatar'] = payload.url
+    await save('assistant.avatar')
+    ElMessage.success('助手头像已更新')
+  } catch {
+    ElMessage.error('上传失败')
+  } finally {
+    uploadingAvatar.value = false
+    el.value = ''
+  }
+}
+
+/** 清空设置：两端的助手头像回到内置样式 */
+async function resetAssistantAvatar(): Promise<void> {
+  settings.value['assistant.avatar'] = ''
+  await save('assistant.avatar')
+  ElMessage.success('已恢复内置头像')
+}
+
 /** 提示音模式：on=内置 / off=静音 / custom=自定义 URL */
 const soundMode = computed({
   get: () => {
@@ -348,6 +401,75 @@ onMounted(load)
         hidden
         accept="image/*"
         @change="onPickFile"
+      />
+
+      <!-- 助手头像：智能助手（机器人）回复时展示，用户端与客服工作台共用 -->
+      <div class="setting-item" data-test="assistant-avatar">
+        <div class="setting-item__label">
+          <div class="setting-item__name">助手头像</div>
+          <div class="setting-item__remark">
+            {{ remarks['assistant.avatar'] || '智能助手（机器人）回复时展示的头像；留空使用内置头像' }}
+          </div>
+        </div>
+
+        <div class="setting-item__control">
+          <div class="default-image">
+            <ThumbImage
+              :src="assistantAvatar"
+              :size="88"
+              :radius="6"
+              kind="avatar"
+              alt="助手头像"
+            />
+            <div class="default-image__info">
+              <el-input
+                v-model="settings['assistant.avatar']"
+                size="small"
+                class="setting-input"
+                placeholder="图片地址，如 /uploads/20260101/xxx.png"
+                data-test="assistant-avatar-url"
+              />
+              <div class="default-image__actions">
+                <el-button
+                  size="small"
+                  type="primary"
+                  plain
+                  :icon="Upload"
+                  :loading="uploadingAvatar"
+                  data-test="assistant-avatar-upload"
+                  @click="pickAssistantAvatar"
+                >
+                  上传图片
+                </el-button>
+                <el-button
+                  size="small"
+                  text
+                  :loading="saving['assistant.avatar']"
+                  data-test="assistant-avatar-save"
+                  @click="save('assistant.avatar')"
+                >
+                  保存
+                </el-button>
+                <el-button
+                  size="small"
+                  text
+                  data-test="assistant-avatar-reset"
+                  @click="resetAssistantAvatar"
+                >
+                  恢复内置
+                </el-button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <input
+        ref="avatarFileRef"
+        type="file"
+        hidden
+        accept="image/*"
+        @change="onPickAssistantAvatar"
       />
 
       <!-- 消息提示音 -->

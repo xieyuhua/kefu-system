@@ -25,6 +25,8 @@ const (
 	SettingSystemName = "system.name"
 	// SettingObjectStorage 对象存储（S3 兼容）配置：value 是一段 JSON
 	SettingObjectStorage = "storage.object"
+	// SettingAssistantAvatar 智能助手（机器人）回复时展示的头像 URL，留空用内置头像
+	SettingAssistantAvatar = "assistant.avatar"
 )
 
 // DefaultObjectStorageJSON 对象存储配置的默认值（未配置时的初值，端点留空由使用者填写）。
@@ -49,6 +51,11 @@ var settingDefaults = map[string]struct {
 	SettingObjectStorage: {
 		Value:  DefaultObjectStorageJSON,
 		Remark: "对象存储（S3 兼容）：enabled=true 时上传走对象存储，value 为 JSON 配置",
+	},
+	SettingAssistantAvatar: {
+		// 默认留空：前端（用户端 / 客服工作台）各自回退到内置头像，避免把某个租户的 logo 写死成全局默认
+		Value:  "",
+		Remark: "智能助手（机器人）回复时展示的头像 URL；留空使用内置头像",
 	},
 }
 
@@ -139,6 +146,13 @@ func DefaultImageURL(tenantID uint) string {
 // MessageSound 新消息提示音配置（on / off / 自定义 URL）
 func MessageSound(tenantID uint) string {
 	return GetSetting(tenantID, SettingMessageSound)
+}
+
+// AssistantAvatar 智能助手（机器人）回复时展示的头像地址（用户端 / 客服工作台共用）。
+// 未配置或留空时返回空串：前端据此回退到各自的「内置头像」样式（不用默认图片兜底，
+// 否则助手头像会变成客户 / 商品无图时的占位图，语义不对）。
+func AssistantAvatar(tenantID uint) string {
+	return strings.TrimSpace(GetSetting(tenantID, SettingAssistantAvatar))
 }
 
 // ---------------- 数据访问（原 repository/setting.go） ----------------
