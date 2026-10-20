@@ -71,6 +71,9 @@ export interface Channel {
   hide_header: boolean
   hide_debug: boolean
   hide_more_menu: boolean
+  /** 卡片能力开关（后台渠道配置）：关闭后该渠道不能收发对应卡片 */
+  support_order_card: boolean
+  support_product_card: boolean
   created_at: string
   agent_count: number
   pending_count: number
@@ -93,6 +96,9 @@ export interface ChannelPayload {
   hide_header?: boolean
   hide_debug?: boolean
   hide_more_menu?: boolean
+  /** 卡片能力开关：不传表示不修改（创建时视为 true） */
+  support_order_card?: boolean
+  support_product_card?: boolean
 }
 
 /** 会话中的客户简要信息 */
@@ -162,6 +168,12 @@ export interface ChannelBasic {
   hide_header?: boolean
   hide_debug?: boolean
   hide_more_menu?: boolean
+  /**
+   * 渠道卡片能力开关（后台渠道配置）。
+   * 后端未下发（旧数据 / 旧接口）时按 true 处理，保持改造前行为。
+   */
+  support_order_card?: boolean
+  support_product_card?: boolean
 }
 
 /** 会话列表查询参数 */

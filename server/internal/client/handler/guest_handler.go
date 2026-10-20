@@ -108,6 +108,9 @@ func (h *Handler) GuestInitHandler(c *gin.Context) {
 			"hide_header":    ch.HideHeader,
 			"hide_debug":     ch.HideDebug,
 			"hide_more_menu": ch.HideMoreMenu,
+			// 卡片能力开关：用户端据此隐藏订单 / 商品卡片的发送入口
+			"support_order_card":   ch.SupportOrderCard,
+			"support_product_card": ch.SupportProductCard,
 		},
 		"customer":     gin.H{"id": cu.ID, "external_id": cu.ExternalID, "nickname": cu.Nickname, "avatar": cu.Avatar},
 		"conversation": gin.H{"id": conv.ID, "status": conv.Status},
@@ -139,6 +142,12 @@ func (h *Handler) GuestSendHandler(c *gin.Context) {
 	}
 	if req.Content == "" {
 		response.Default().Param(c, "消息内容不能为空")
+		return
+	}
+	// 渠道卡片能力强校验：渠道关闭了订单 / 商品卡片时，用户端也不能发出去
+	// （HTTP 200 + code 非 0，与其他参数错误同一约定；消息不会落库）。
+	if err := h.svc.Conv.EnsureCardSendAllowed(tenantID, ch.ID, req.Type); err != nil {
+		response.Default().Param(c, err.Error())
 		return
 	}
 

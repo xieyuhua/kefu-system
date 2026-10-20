@@ -169,7 +169,8 @@ func (s *ConversationService) assembleConversationVO(c *model.Conversation) dto.
 	}
 	// 渠道 / 客户 / 客服的展示信息查不到时留空，不阻断 VO 组装（与原逻辑一致）
 	if ch, err := s.channel.FindChannelByID(c.TenantID, c.ChannelID); err == nil {
-		vo.Channel = &dto.ChannelRef{ID: ch.ID, Type: ch.Type, Name: ch.Name}
+		// 渠道卡片能力随会话一起下发，客服工作台切换会话时据此重算入口可用性
+		vo.Channel = ChannelRefOf(ch)
 	}
 	if cu, err := s.customer.FindCustomerByID(c.CustomerID); err == nil {
 		oc, _ := s.customer.CountOrdersOfCustomer(cu.ID)

@@ -46,6 +46,9 @@ interface ChannelForm {
   hide_header: boolean
   hide_debug: boolean
   hide_more_menu: boolean
+  /** 卡片能力开关（默认开启） */
+  support_order_card: boolean
+  support_product_card: boolean
 }
 
 function emptyForm(): ChannelForm {
@@ -58,6 +61,8 @@ function emptyForm(): ChannelForm {
     hide_header: false,
     hide_debug: false,
     hide_more_menu: false,
+    support_order_card: true,
+    support_product_card: true,
   }
 }
 
@@ -165,6 +170,9 @@ function openEdit(row: Channel): void {
     hide_header: row.hide_header,
     hide_debug: row.hide_debug,
     hide_more_menu: row.hide_more_menu,
+    // 老数据没有该字段时按「开启」回显，避免误关
+    support_order_card: row.support_order_card !== false,
+    support_product_card: row.support_product_card !== false,
   })
   dialogVisible.value = true
 }
@@ -186,6 +194,8 @@ async function submit(): Promise<void> {
     hide_header: form.hide_header,
     hide_debug: form.hide_debug,
     hide_more_menu: form.hide_more_menu,
+    support_order_card: form.support_order_card,
+    support_product_card: form.support_product_card,
   }
   submitting.value = true
   try {
@@ -219,6 +229,25 @@ async function toggleRobot(row: Channel, value: boolean): Promise<void> {
     await updateChannel(row.id, { robot_enabled: value })
     row.robot_enabled = value
     ElMessage.success(value ? '已开启机器人自动回复' : '已关闭机器人自动回复')
+  } catch {
+    await load()
+  }
+}
+
+/**
+ * 单独切换某一类卡片能力（另一类保持原值）。
+ * 后端按指针语义写库：只传这一个字段，就不会动到另一个开关。
+ */
+async function toggleCard(
+  row: Channel,
+  field: 'support_order_card' | 'support_product_card',
+  value: boolean,
+): Promise<void> {
+  const label = field === 'support_order_card' ? '订单卡片' : '商品卡片'
+  try {
+    await updateChannel(row.id, { [field]: value })
+    row[field] = value
+    ElMessage.success(value ? `已开启${label}` : `已关闭${label}`)
   } catch {
     await load()
   }
@@ -484,6 +513,38 @@ onMounted(() => {
             />
           </template>
         </el-table-column>
+        <el-table-column label="卡片能力" width="140" align="center">
+          <template #default="{ row }">
+            <div class="display-tags">
+              <el-tooltip
+                :content="row.support_order_card !== false ? '支持订单卡片（点击编辑）' : '不支持订单卡片（该渠道不能收发订单卡片）'"
+                placement="top"
+              >
+                <el-tag
+                  size="small"
+                  :type="row.support_order_card !== false ? 'success' : 'info'"
+                  :effect="row.support_order_card !== false ? 'plain' : 'light'"
+                  @click="openEdit(row)"
+                >
+                  订单卡
+                </el-tag>
+              </el-tooltip>
+              <el-tooltip
+                :content="row.support_product_card !== false ? '支持商品卡片（点击编辑）' : '不支持商品卡片（该渠道不能收发商品卡片）'"
+                placement="top"
+              >
+                <el-tag
+                  size="small"
+                  :type="row.support_product_card !== false ? 'success' : 'info'"
+                  :effect="row.support_product_card !== false ? 'plain' : 'light'"
+                  @click="openEdit(row)"
+                >
+                  商品卡
+                </el-tag>
+              </el-tooltip>
+            </div>
+          </template>
+        </el-table-column>
         <el-table-column label="用户端展示" width="150" align="center">
           <template #default="{ row }">
             <div class="display-tags">
@@ -598,6 +659,24 @@ onMounted(() => {
             </span>
           </div>
 
+          <!-- 卡片能力：可直接在卡片上单独开关某一类卡片 -->
+          <div class="m-card__meta">
+            <span class="switch-row">
+              <span class="switch-row__label">订单卡</span>
+              <el-switch
+                :model-value="row.support_order_card !== false"
+                @update:model-value="(val: boolean) => toggleCard(row, 'support_order_card', val)"
+              />
+            </span>
+            <span class="switch-row">
+              <span class="switch-row__label">商品卡</span>
+              <el-switch
+                :model-value="row.support_product_card !== false"
+                @update:model-value="(val: boolean) => toggleCard(row, 'support_product_card', val)"
+              />
+            </span>
+          </div>
+
           <div class="m-card__meta">
             <span>创建 {{ row.created_at }}</span>
           </div>
@@ -689,6 +768,23 @@ onMounted(() => {
           <div class="form-tip">
             隐藏 header 里的齿轮「接入调试」入口（排查参数用）。正式投放建议关闭。<br />
             链接参数：<code>?hide_debug=1</code>
+          </div>
+        </el-form-item>
+
+        <el-divider content-position="left">卡片能力（关闭后该渠道不能收发对应卡片）</el-divider>
+
+        <el-form-item label="支持订单卡片">
+          <el-switch v-model="form.support_order_card" />
+          <div class="form-tip">
+            关闭后：用户端不出现订单卡片入口，客服工作台该渠道会话的「发送订单」入口
+            置灰并提示原因；直接调接口发送会被服务端拦截（提示「该渠道未开启订单卡片」）。
+          </div>
+        </el-form-item>
+        <el-form-item label="支持商品卡片">
+          <el-switch v-model="form.support_product_card" />
+          <div class="form-tip">
+            关闭后：用户端不出现商品卡片入口，客服工作台该渠道会话的「发送商品」入口
+            置灰并提示原因；直接调接口发送会被服务端拦截（提示「该渠道未开启商品卡片」）。
           </div>
         </el-form-item>
       </el-form>

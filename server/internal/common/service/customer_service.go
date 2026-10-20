@@ -62,7 +62,7 @@ func (s *CustomerService) ListCustomers(tenantID uint, keyword string, channelID
 			LastSeenAt: util.Default().FmtTimePtr(c.LastSeenAt), CreatedAt: util.Default().FmtTime(c.CreatedAt),
 		}
 		if ch, err := s.refs.FindChannelRefByID(tenantID, c.ChannelID); err == nil {
-			item.Channel = &dto.ChannelRef{ID: ch.ID, Type: ch.Type, Name: ch.Name}
+			item.Channel = ChannelRefOf(ch)
 		}
 		vos = append(vos, item)
 	}
@@ -89,7 +89,7 @@ func (s *CustomerService) GetCustomerDetail(tenantID, id uint) (*dto.CustomerDet
 	detail.User.OrderCount, _ = s.orders.CountOrdersOfCustomer(c.ID)
 
 	if ch, err := s.refs.FindChannelRefByID(tenantID, c.ChannelID); err == nil {
-		detail.User.Channel = &dto.ChannelRef{ID: ch.ID, Type: ch.Type, Name: ch.Name}
+		detail.User.Channel = ChannelRefOf(ch)
 	}
 
 	orders, _ := s.orders.ListOrdersOfCustomer(c.ID, 50)
@@ -109,7 +109,7 @@ func (s *CustomerService) GetCustomerDetail(tenantID, id uint) (*dto.CustomerDet
 			ClosedAt: util.Default().FmtTimePtr(cv.ClosedAt), LastMessageAt: util.Default().FmtTime(cv.LastMessageAt),
 		}
 		if cn, err := s.refs.FindChannelRefByID(tenantID, cv.ChannelID); err == nil {
-			item.Channel = &dto.ChannelRef{ID: cn.ID, Type: cn.Type, Name: cn.Name}
+			item.Channel = ChannelRefOf(cn)
 		}
 		if cv.AgentID > 0 {
 			if u, err := s.refs.FindUserRefByID(cv.AgentID); err == nil {

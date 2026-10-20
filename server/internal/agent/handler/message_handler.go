@@ -48,11 +48,18 @@ func (h *Handler) SendMessageHandler(c *gin.Context) {
 	if !httpx.Default().BindJSON(c, &req) {
 		return
 	}
-	mvo, cvo, err := h.svc.Conv.SendMessage(authctx.TenantID(c), httpx.Default().UintParam(c, "id"), authctx.UserID(c), req)
+	convID := httpx.Default().UintParam(c, "id")
+	// 渠道卡片能力强校验：会话所属渠道关闭了订单 / 商品卡片时，
+	// 客服也不能主动发出去（HTTP 200 + code 非 0，与其他参数错误同一约定）。
+	if err := h.svc.Conv.EnsureCardSendAllowedForConversation(authctx.TenantID(c), convID, req.Type); err != nil {
+		response.Default().Param(c, err.Error())
+		return
+	}
+	mvo, cvo, err := h.svc.Conv.SendMessage(authctx.TenantID(c), convID, authctx.UserID(c), req)
 	if err != nil {
 		response.Default().Param(c, err.Error())
 		return
 	}
-	realtime.PublishMessage(authctx.TenantID(c), httpx.Default().UintParam(c, "id"), mvo, cvo)
+	realtime.PublishMessage(authctx.TenantID(c), convID, mvo, cvo)
 	response.Default().OK(c, mvo)
 }

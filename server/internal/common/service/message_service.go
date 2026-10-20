@@ -27,6 +27,56 @@ func (s *ConversationService) SearchMessages(tenantID, convID uint, keyword stri
 	return s.messages.SearchMessagesByContent(tenantID, convID, kw, limit)
 }
 
+// ---------------- 卡片能力校验 ----------------
+
+// 卡片类消息类型（与 docs/API.md 的 message.type 取值一致）
+const (
+	// MsgTypeOrder 订单卡片消息
+	MsgTypeOrder = "order"
+	// MsgTypeProduct 商品卡片消息
+	MsgTypeProduct = "product"
+)
+
+// EnsureCardSendAllowed 校验「会话所属渠道」是否开启了对应卡片能力（服务端强校验）。
+//
+// 只在「用户 / 客服主动发送卡片」的链路上调用（SendMessage / ReceiveMessage）：
+//   - 客服发送：POST /api/conversations/:id/messages
+//   - 用户发送：POST /api/guest/message
+//
+// 机器人自动回复产生的卡片走内核内部逻辑（不经过这两个方法），因此不受渠道开关限制。
+// 返回的 error 由处理器原样作为业务错误 message 返回（HTTP 200 + code 非 0）。
+// 非卡片类型（text / image / ...）直接放行；渠道读不到时同样放行，避免误伤历史数据。
+func (s *ConversationService) EnsureCardSendAllowed(tenantID, channelID uint, msgType string) error {
+	if msgType != MsgTypeOrder && msgType != MsgTypeProduct {
+		return nil
+	}
+	ch, err := s.channel.FindChannelByID(tenantID, channelID)
+	if err != nil {
+		return nil
+	}
+	if msgType == MsgTypeOrder && !ch.SupportOrderCard {
+		return errors.New("该渠道未开启订单卡片")
+	}
+	if msgType == MsgTypeProduct && !ch.SupportProductCard {
+		return errors.New("该渠道未开启商品卡片")
+	}
+	return nil
+}
+
+// EnsureCardSendAllowedForConversation 先按会话定位其所属渠道，再做卡片能力校验。
+// 供「客服发送消息」处理器在调用 SendMessage 之前先行拦截：
+// 这样返回的响应与其它参数错误一致（HTTP 200 + code 400），而不是 service 层的 500。
+func (s *ConversationService) EnsureCardSendAllowedForConversation(tenantID, convID uint, msgType string) error {
+	if msgType != MsgTypeOrder && msgType != MsgTypeProduct {
+		return nil
+	}
+	c, err := s.repo.FindConversationByID(tenantID, convID)
+	if err != nil {
+		return errors.New("会话不存在")
+	}
+	return s.EnsureCardSendAllowed(tenantID, c.ChannelID, msgType)
+}
+
 // ---------------- Message ----------------
 
 // ListMessagesSince 正向增量拉取：返回 id > afterID 的消息（按 id 升序）。
@@ -113,6 +163,10 @@ func (s *ConversationService) SendMessage(tenantID, convID, senderID uint, req d
 			return nil, nil, errors.New("消息内容格式不正确（需为合法 JSON）")
 		}
 	}
+	// 渠道卡片能力强校验：渠道关闭了订单 / 商品卡片时，客服也不能发出去
+	if err := s.EnsureCardSendAllowed(tenantID, c.ChannelID, req.Type); err != nil {
+		return nil, nil, err
+	}
 	if c.AgentID == 0 {
 		// 未分配时由发送者接管；必须先确认他有权接待该渠道，
 		// 否则未绑定的客服也能通过直接发消息「抢」走别人的待接待会话。
@@ -183,6 +237,10 @@ func (s *ConversationService) ReceiveMessage(tenantID, convID, customerID uint, 
 	}
 	if msgType == "" {
 		msgType = "text"
+	}
+	// 渠道卡片能力强校验：渠道关闭了订单 / 商品卡片时，用户也发不出来（消息不落库）
+	if err := s.EnsureCardSendAllowed(tenantID, c.ChannelID, msgType); err != nil {
+		return nil, nil, err
 	}
 	m := &model.Message{
 		TenantID:       tenantID,

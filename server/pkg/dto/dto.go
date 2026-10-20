@@ -54,6 +54,9 @@ type ChannelRequest struct {
 	HideHeader   *bool `json:"hide_header"`
 	HideDebug    *bool `json:"hide_debug"`
 	HideMoreMenu *bool `json:"hide_more_menu"`
+	// 卡片能力开关：nil 表示不修改；创建时 nil 视为 true（保持存量行为）
+	SupportOrderCard   *bool `json:"support_order_card"`
+	SupportProductCard *bool `json:"support_product_card"`
 }
 
 type ChannelVO struct {
@@ -66,11 +69,14 @@ type ChannelVO struct {
 	HideHeader   bool   `json:"hide_header"`
 	HideDebug    bool   `json:"hide_debug"`
 	HideMoreMenu bool   `json:"hide_more_menu"`
-	CreatedAt    string `json:"created_at"`
-	AgentCount   int64  `json:"agent_count"`
-	PendingCount int64  `json:"pending_count"`
-	AccessPath   string `json:"access_path"` // 用户端接入路径，如 /c?channel=web
-	AccessURL    string `json:"access_url"`  // 完整接入地址（基于后端 public_base），可直接对外使用
+	// 卡片能力开关（后台可配；关闭后该渠道不能收发对应卡片）
+	SupportOrderCard   bool   `json:"support_order_card"`
+	SupportProductCard bool   `json:"support_product_card"`
+	CreatedAt          string `json:"created_at"`
+	AgentCount         int64  `json:"agent_count"`
+	PendingCount       int64  `json:"pending_count"`
+	AccessPath         string `json:"access_path"` // 用户端接入路径，如 /c?channel=web
+	AccessURL          string `json:"access_url"`  // 完整接入地址（基于后端 public_base），可直接对外使用
 }
 
 // ChannelAgentVO 渠道的接待账号（用于渠道列表快速设置）
@@ -120,6 +126,10 @@ type ChannelRef struct {
 	ID   uint   `json:"id"`
 	Type string `json:"type"`
 	Name string `json:"name"`
+	// 卡片能力开关（后台渠道配置）：随会话一起下发，
+	// 客服工作台切换会话时据此重算「发送订单 / 发送商品」入口是否可用。
+	SupportOrderCard   bool `json:"support_order_card"`
+	SupportProductCard bool `json:"support_product_card"`
 }
 
 type TagRef struct {

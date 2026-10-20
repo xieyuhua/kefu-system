@@ -50,6 +50,7 @@ func (s *ChannelService) ListChannels(tenantID uint, agentID uint, isAdmin bool)
 			ID: c.ID, Type: c.Type, Name: c.Name, AppID: c.AppID,
 			Enabled: c.Enabled, RobotEnabled: c.RobotEnabled,
 			HideHeader: c.HideHeader, HideDebug: c.HideDebug, HideMoreMenu: c.HideMoreMenu,
+			SupportOrderCard: c.SupportOrderCard, SupportProductCard: c.SupportProductCard,
 			CreatedAt: util.Default().FmtTime(c.CreatedAt), AgentCount: agentCount, PendingCount: pending,
 			// 始终用后端配置的 public_base 拼完整 URL，
 			// 不要让前端用 window.location.origin，避免内网/反代场景下复制到错地址
@@ -76,6 +77,18 @@ func ChannelKey(c *model.Channel) string {
 	return strconv.FormatUint(uint64(c.ID), 10)
 }
 
+// ChannelRefOf 把渠道实体映射成会话 / 客户 VO 里的渠道精简对象（纯函数）。
+// 卡片能力开关随会话一起下发，客服工作台据此判断「发送订单 / 发送商品」入口是否可用。
+func ChannelRefOf(c *model.Channel) *dto.ChannelRef {
+	if c == nil {
+		return nil
+	}
+	return &dto.ChannelRef{
+		ID: c.ID, Type: c.Type, Name: c.Name,
+		SupportOrderCard: c.SupportOrderCard, SupportProductCard: c.SupportProductCard,
+	}
+}
+
 func (s *ChannelService) CreateChannel(tenantID uint, req dto.ChannelRequest) (*dto.ChannelVO, error) {
 	if req.Name == "" {
 		return nil, errors.New("渠道名称不能为空")
@@ -84,16 +97,21 @@ func (s *ChannelService) CreateChannel(tenantID uint, req dto.ChannelRequest) (*
 	if req.Type == "" {
 		req.Type = "custom"
 	}
+	// 卡片能力开关：创建时未传（nil）视为开启，与存量渠道默认行为一致
+	wantOrderCard := req.SupportOrderCard == nil || *req.SupportOrderCard
+	wantProductCard := req.SupportProductCard == nil || *req.SupportProductCard
 	c := &model.Channel{
-		TenantID:     tenantID,
-		Type:         req.Type,
-		Name:         req.Name,
-		AppID:        strings.TrimSpace(req.AppID),
-		Enabled:      true,
-		RobotEnabled: req.RobotEnabled != nil && *req.RobotEnabled,
-		HideHeader:   req.HideHeader != nil && *req.HideHeader,
-		HideDebug:    req.HideDebug != nil && *req.HideDebug,
-		HideMoreMenu: req.HideMoreMenu != nil && *req.HideMoreMenu,
+		TenantID:           tenantID,
+		Type:               req.Type,
+		Name:               req.Name,
+		AppID:              strings.TrimSpace(req.AppID),
+		Enabled:            true,
+		RobotEnabled:       req.RobotEnabled != nil && *req.RobotEnabled,
+		HideHeader:         req.HideHeader != nil && *req.HideHeader,
+		HideDebug:          req.HideDebug != nil && *req.HideDebug,
+		HideMoreMenu:       req.HideMoreMenu != nil && *req.HideMoreMenu,
+		SupportOrderCard:   wantOrderCard,
+		SupportProductCard: wantProductCard,
 	}
 	// app_id 未指定时自动生成一个随机标识（可在渠道管理里重置）
 	if c.AppID == "" {
@@ -107,10 +125,21 @@ func (s *ChannelService) CreateChannel(tenantID uint, req dto.ChannelRequest) (*
 	if err := s.repo.InsertChannel(c); err != nil {
 		return nil, err
 	}
+	// 两个开关的列带 default:true：GORM 在 Create 时会把零值（false）替换成标签默认值
+	// 并回写到结构体，导致「新建渠道时就关闭某类卡片」被悄悄改成开启。
+	// 这里按业务意图校正并补一次全字段保存（仅在需要关闭时才多这一条 UPDATE）。
+	if c.SupportOrderCard != wantOrderCard || c.SupportProductCard != wantProductCard {
+		c.SupportOrderCard = wantOrderCard
+		c.SupportProductCard = wantProductCard
+		if err := s.repo.SaveChannel(c); err != nil {
+			return nil, err
+		}
+	}
 	return &dto.ChannelVO{
 		ID: c.ID, Type: c.Type, Name: c.Name, AppID: c.AppID,
 		Enabled: c.Enabled, RobotEnabled: c.RobotEnabled,
 		HideHeader: c.HideHeader, HideDebug: c.HideDebug, HideMoreMenu: c.HideMoreMenu,
+		SupportOrderCard: c.SupportOrderCard, SupportProductCard: c.SupportProductCard,
 		CreatedAt: util.Default().FmtTime(c.CreatedAt),
 	}, nil
 }
@@ -191,6 +220,13 @@ func (s *ChannelService) UpdateChannel(tenantID, id uint, req dto.ChannelRequest
 	}
 	if req.HideMoreMenu != nil {
 		c.HideMoreMenu = *req.HideMoreMenu
+	}
+	// 卡片能力开关：按指针语义写库，nil 表示本次不修改（可单独切换其中一项）
+	if req.SupportOrderCard != nil {
+		c.SupportOrderCard = *req.SupportOrderCard
+	}
+	if req.SupportProductCard != nil {
+		c.SupportProductCard = *req.SupportProductCard
 	}
 	return s.repo.SaveChannel(c)
 }

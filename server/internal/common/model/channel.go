@@ -14,4 +14,9 @@ type Channel struct {
 	HideHeader   bool `gorm:"default:false" json:"hide_header"`    // 隐藏顶部 header
 	HideDebug    bool `gorm:"default:false" json:"hide_debug"`     // 隐藏「接入调试」入口
 	HideMoreMenu bool `gorm:"default:false" json:"hide_more_menu"` // 隐藏「更多」菜单入口
+
+	// 卡片能力开关（后台配置，关闭后该渠道不能收发对应卡片）
+	// 默认 true：AutoMigrate 加列时给默认值，存量渠道行为保持不变。
+	SupportOrderCard   bool `gorm:"default:true" json:"support_order_card"`
+	SupportProductCard bool `gorm:"default:true" json:"support_product_card"`
 }

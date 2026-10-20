@@ -66,7 +66,8 @@
             v-for="o in orders"
             :key="o.id"
             class="order-item"
-            :class="{ disabled: !canSend }"
+            :class="{ disabled: !canSend || !orderCardEnabled }"
+            :title="orderCardEnabled ? '' : orderCardHint"
             @click="sendOrder(o)"
           >
             <div class="order-thumb">
@@ -81,7 +82,10 @@
               </div>
               <div class="order-no">{{ o.order_no }}</div>
             </div>
-            <el-tooltip content="发送给客户" placement="left">
+            <el-tooltip
+              :content="orderCardEnabled ? '发送给客户' : orderCardHint"
+              placement="left"
+            >
               <span class="send-icon">➤</span>
             </el-tooltip>
           </div>
@@ -167,6 +171,11 @@ const props = defineProps<{
   canSend?: boolean
   /** 嵌入抽屉时：去掉固定栏样式，自适应容器高度 */
   embedded?: boolean
+  /**
+   * 当前会话所属渠道是否支持订单卡片（后台渠道配置）。
+   * 不支持时历史订单上的「发送」置灰并提示原因；默认 true。
+   */
+  orderCardEnabled?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -179,6 +188,9 @@ const emit = defineEmits<{
 const customer = computed(() => props.customer)
 const orders = computed(() => props.orders)
 const tags = computed(() => props.customer?.tags || [])
+/** 订单卡片是否可用（未传视为可用，兼容旧调用点） */
+const orderCardEnabled = computed(() => props.orderCardEnabled !== false)
+const orderCardHint = '该渠道未开启订单卡片'
 
 /* ---------------- 标签 / 备注编辑 ---------------- */
 const tagEditorVisible = ref(false)
@@ -267,6 +279,11 @@ async function saveTagsAndRemark(): Promise<void> {
 
 function sendOrder(order: Order): void {
   if (!props.canSend) return
+  // 渠道未开启订单卡片：历史订单上的「发送」置灰，这里再兜一层
+  if (!orderCardEnabled.value) {
+    ElMessage.warning(orderCardHint)
+    return
+  }
   emit('send-order', order)
 }
 

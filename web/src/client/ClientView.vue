@@ -474,6 +474,14 @@ const hideDebug = computed(() => {
   return channel.value?.hide_debug === true
 })
 
+/**
+ * 渠道卡片能力（后台 渠道管理 → 「支持订单卡片 / 支持商品卡片」）。
+ * 为 false 时隐藏对应的卡片发送入口（含进线自动弹出的卡片气泡）。
+ * 后端未下发该字段（旧接口 / 旧数据）时按 true 处理，保持改造前的行为。
+ */
+const orderCardEnabled = computed(() => channel.value?.support_order_card !== false)
+const productCardEnabled = computed(() => channel.value?.support_product_card !== false)
+
 /** 剥掉纯展示层参数，避免传给后端 */
 function businessParams(): GuestParams {
   const { chrome: _c, hide_header: _h, hide_debug: _d, hide_more_menu: _m, ...rest } = params.value
@@ -808,8 +816,9 @@ async function init(): Promise<void> {
     conversationId.value = res.conversation?.id ?? null
     convStatus.value = res.conversation?.status ?? ''
     greeting.value = res.greeting || '您好，我是智能客服助手，请问有什么可以帮您？'
-    ctxOrder.value = res.order ?? null
-    ctxProduct.value = res.product ?? null
+    // 渠道关闭了某类卡片时不接收该类型上下文卡片 → 自动弹出的卡片气泡入口自然不出现
+    ctxOrder.value = orderCardEnabled.value ? res.order ?? null : null
+    ctxProduct.value = productCardEnabled.value ? res.product ?? null : null
     // 进线带订单/商品卡片时，弹窗让用户确认是否发送给客服（电商咨询效果），可叉掉
     if (ctxOrder.value || ctxProduct.value) {
       cardConfirmVisible.value = true
@@ -966,8 +975,9 @@ function removeLocal(id: number): void {
  */
 async function sendContextCards(): Promise<void> {
   if (sendingCard.value) return
-  const order = ctxOrder.value
-  const product = ctxProduct.value
+  // 渠道关闭了某类卡片：对应卡片不发送（入口本就不展示，这里再兜一层）
+  const order = orderCardEnabled.value ? ctxOrder.value : null
+  const product = productCardEnabled.value ? ctxProduct.value : null
   if (!order && !product) {
     cardConfirmVisible.value = false
     return

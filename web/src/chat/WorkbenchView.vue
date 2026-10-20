@@ -102,13 +102,15 @@
           :panel-open="sidePanelVisible"
           :compact-header="isMobile"
           :show-back="false"
+          :order-card-enabled="orderCardEnabled"
+          :product-card-enabled="productCardEnabled"
           @send="onSend"
           @claim="onClaim"
           @transfer="onTransfer"
           @close="onClose"
           @toggle-panel="onTogglePanel"
-          @pick-order="orderPickerOpen = true"
-          @pick-product="productPickerOpen = true"
+          @pick-order="openOrderPicker"
+          @pick-product="openProductPicker"
           @load-more="onLoadMore"
           @search="onSearchMessages"
           @clear-search="chat.clearSearch()"
@@ -122,6 +124,7 @@
         :orders="customerOrders"
         :loading="customerLoading"
         :can-send="canSend"
+        :order-card-enabled="orderCardEnabled"
         @close="panelOpen = false"
         @send-order="sendOrderCard"
         @updated="onCustomerUpdated"
@@ -141,6 +144,7 @@
           :orders="customerOrders"
           :loading="customerLoading"
           :can-send="canSend"
+          :order-card-enabled="orderCardEnabled"
           :embedded="true"
           @close="mobileProfileOpen = false"
           @send-order="sendOrderCard"
@@ -235,6 +239,37 @@ const agents = ref<Agent[]>([])
 const messageSound = ref('on')
 
 const canSend = computed(() => !!chat.current && chat.current.status !== 'closed')
+
+/**
+ * 当前会话所属渠道的卡片能力（后台 渠道管理 可配）。
+ *
+ * 关键：这里按「当前选中的会话」实时计算 —— 切换会话时 chat.current 变化，
+ * computed 自动重算，绝不会沿用上一个会话的状态。
+ * 后端未下发该字段（旧数据）时按 true 处理，保持改造前行为。
+ */
+const orderCardEnabled = computed(() => chat.current?.channel?.support_order_card !== false)
+const productCardEnabled = computed(() => chat.current?.channel?.support_product_card !== false)
+/** 入口不可用时的原因（tooltip / 提示文案） */
+const orderCardHint = '该渠道未开启订单卡片'
+const productCardHint = '该渠道未开启商品卡片'
+
+/** 打开订单选择器：渠道关闭该能力时只提示、不打开 */
+function openOrderPicker(): void {
+  if (!orderCardEnabled.value) {
+    ElMessage.warning(orderCardHint)
+    return
+  }
+  orderPickerOpen.value = true
+}
+
+/** 打开商品选择器：渠道关闭该能力时只提示、不打开 */
+function openProductPicker(): void {
+  if (!productCardEnabled.value) {
+    ElMessage.warning(productCardHint)
+    return
+  }
+  productPickerOpen.value = true
+}
 
 const offs: Array<() => void> = []
 
@@ -356,6 +391,11 @@ async function onSend(payload: { type: MessageType; content: string }): Promise<
 }
 
 async function onPickOrder(order: Order): Promise<void> {
+  // 渠道未开启订单卡片：入口已置灰，这里再兜一层，避免从客户资料等处绕过
+  if (!orderCardEnabled.value) {
+    ElMessage.warning(orderCardHint)
+    return
+  }
   const card: OrderCardPayload = {
     order_no: order.order_no,
     title: order.title,
@@ -370,6 +410,11 @@ async function onPickOrder(order: Order): Promise<void> {
 }
 
 async function onPickProduct(product: Product): Promise<void> {
+  // 渠道未开启商品卡片：入口已置灰，这里再兜一层
+  if (!productCardEnabled.value) {
+    ElMessage.warning(productCardHint)
+    return
+  }
   const card: ProductCardPayload = {
     id: product.id,
     title: product.title,
@@ -554,6 +599,15 @@ watch(
   () => chat.current?.user?.id,
   (id) => {
     void loadCustomer(id)
+  },
+)
+
+/** 切换会话：关闭上一条会话可能还开着的卡片选择器，避免用错渠道的能力发卡片 */
+watch(
+  () => chat.currentId,
+  () => {
+    orderPickerOpen.value = false
+    productPickerOpen.value = false
   },
 )
 

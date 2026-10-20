@@ -18,10 +18,35 @@
 
       <el-button text size="small" title="发送图片 / 视频 / 文件" :icon="Paperclip" @click="pickMedia" />
 
-      <!-- PC 端：订单 / 商品 / 快捷回复 / 搜索 平铺展示 -->
+      <!-- PC 端：订单 / 商品 / 快捷回复 / 搜索 平铺展示。
+           渠道关闭了对应卡片能力时按钮置灰，并用 tooltip 说明原因。 -->
       <template v-if="!compact">
-        <el-button text size="small" title="订单" @click="emit('pick-order')">🧾 订单</el-button>
-        <el-button text size="small" title="商品" @click="emit('pick-product')">🛍 商品</el-button>
+        <el-tooltip :content="orderCardHint" placement="top" :disabled="orderCardEnabled">
+          <span class="toolbar-btn">
+            <el-button
+              text
+              size="small"
+              :title="orderCardEnabled ? '订单' : orderCardHint"
+              :disabled="!orderCardEnabled"
+              @click="emit('pick-order')"
+            >
+              🧾 订单
+            </el-button>
+          </span>
+        </el-tooltip>
+        <el-tooltip :content="productCardHint" placement="top" :disabled="productCardEnabled">
+          <span class="toolbar-btn">
+            <el-button
+              text
+              size="small"
+              :title="productCardEnabled ? '商品' : productCardHint"
+              :disabled="!productCardEnabled"
+              @click="emit('pick-product')"
+            >
+              🛍 商品
+            </el-button>
+          </span>
+        </el-tooltip>
 
         <el-popover placement="top-start" trigger="click" width="260">
           <template #reference>
@@ -52,8 +77,20 @@
         <el-button text size="small" title="更多" :icon="MoreFilled" />
         <template #dropdown>
           <el-dropdown-menu>
-            <el-dropdown-item command="order">🧾 发送订单</el-dropdown-item>
-            <el-dropdown-item command="product">🛍 发送商品</el-dropdown-item>
+            <el-dropdown-item
+              command="order"
+              :disabled="!orderCardEnabled"
+              :title="orderCardEnabled ? '发送订单卡片' : orderCardHint"
+            >
+              🧾 发送订单<template v-if="!orderCardEnabled">（{{ orderCardHint }}）</template>
+            </el-dropdown-item>
+            <el-dropdown-item
+              command="product"
+              :disabled="!productCardEnabled"
+              :title="productCardEnabled ? '发送商品卡片' : productCardHint"
+            >
+              🛍 发送商品<template v-if="!productCardEnabled">（{{ productCardHint }}）</template>
+            </el-dropdown-item>
             <el-dropdown-item command="quick">⚡ 快捷回复</el-dropdown-item>
             <el-dropdown-item command="search">🔍 搜索聊天记录</el-dropdown-item>
           </el-dropdown-menu>
@@ -127,6 +164,12 @@ const props = defineProps<{
   sending?: boolean
   /** 紧凑模式（移动端）：次要按钮收进「更多」下拉 */
   compact?: boolean
+  /**
+   * 当前会话所属渠道是否支持订单 / 商品卡片（后台渠道配置）。
+   * 不支持时入口置灰并提示原因；默认 true，保持改造前行为。
+   */
+  orderCardEnabled?: boolean
+  productCardEnabled?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -136,13 +179,28 @@ const emit = defineEmits<{
   'toggle-search': []
 }>()
 
+/** 卡片能力（未传视为支持，兼容旧调用点） */
+const orderCardEnabled = computed(() => props.orderCardEnabled !== false)
+const productCardEnabled = computed(() => props.productCardEnabled !== false)
+/** 入口不可用时的原因说明（tooltip / 标题） */
+const orderCardHint = '该渠道未开启订单卡片'
+const productCardHint = '该渠道未开启商品卡片'
+
 /** 移动端「更多」菜单分发 */
 function onMore(command: string): void {
   switch (command) {
     case 'order':
+      if (!orderCardEnabled.value) {
+        ElMessage.warning(orderCardHint)
+        return
+      }
       emit('pick-order')
       break
     case 'product':
+      if (!productCardEnabled.value) {
+        ElMessage.warning(productCardHint)
+        return
+      }
       emit('pick-product')
       break
     case 'quick':
@@ -291,6 +349,13 @@ defineExpose({ focus, insert })
   margin-left: auto;
   font-size: 12px;
   color: var(--kf-text-weak);
+}
+
+/* 卡片入口的外层包裹：按钮 disabled 后浏览器不再派发鼠标事件，
+   tooltip 需要挂在这个仍可悬停的 span 上（同时保持工具栏横向对齐）。 */
+.toolbar-btn {
+  display: inline-flex;
+  align-items: center;
 }
 
 .toolbar-uploading {

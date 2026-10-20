@@ -96,6 +96,8 @@
         :search-active="searchOpen"
         :sending="props.sending"
         :compact="compactHeader"
+        :order-card-enabled="orderCardEnabled"
+        :product-card-enabled="productCardEnabled"
         @send="onSend"
         @pick-order="emit('pick-order')"
         @pick-product="emit('pick-product')"
@@ -201,6 +203,12 @@ const props = defineProps<{
   compactHeader?: boolean
   /** 移动端：是否显示返回按钮（由父级控制顶栏，这里仅作占位） */
   showBack?: boolean
+  /**
+   * 当前会话所属渠道是否支持订单 / 商品卡片（后台渠道配置）。
+   * 由父级按「当前会话」计算后传入，切换会话即重新计算；默认 true。
+   */
+  orderCardEnabled?: boolean
+  productCardEnabled?: boolean
 }>()
 
 const emit = defineEmits<{
