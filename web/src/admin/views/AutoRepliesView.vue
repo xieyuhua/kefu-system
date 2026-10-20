@@ -13,6 +13,10 @@ import {
   type AutoReply,
 } from '@/shared/api/admin'
 import type { Channel } from '@/shared/types'
+import { useIsMobile } from '@/shared/composables/useIsMobile'
+
+/** 窄屏（≤768px）改用卡片列表 + 全屏抽屉 */
+const { isMobile } = useIsMobile()
 
 const loading = ref(false)
 const submitting = ref(false)
@@ -213,6 +217,7 @@ onMounted(() => {
       </div>
 
       <el-table
+        v-if="!isMobile"
         v-loading="loading"
         class="admin-table"
         :data="list"
@@ -271,10 +276,76 @@ onMounted(() => {
           </template>
         </el-table-column>
       </el-table>
+
+      <!-- 窄屏：规则卡片列表 -->
+      <div v-else v-loading="loading" class="m-list">
+        <div v-for="row in list" :key="row.id" class="m-card">
+          <div class="m-card__top">
+            <span class="m-card__title">{{ row.name }}</span>
+            <span class="m-card__tags">
+              <el-tag v-if="!row.channel_id" size="small" type="success">全渠道</el-tag>
+              <el-tag v-else size="small" effect="plain">{{ row.channel_name || '--' }}</el-tag>
+            </span>
+          </div>
+
+          <div class="m-card__meta">
+            <el-tag size="small">匹配 {{ matchTypeLabel(row.match_type) }}</el-tag>
+            <el-tag v-if="row.transfer_to_human" size="small" type="warning">转人工</el-tag>
+            <span>优先级 {{ row.priority }}</span>
+            <span>命中 {{ row.hit_count ?? 0 }}</span>
+          </div>
+
+          <div class="m-field">
+            <span class="m-field__label">关键词</span>
+            <span class="m-field__value">
+              <span v-if="!keywordTags(row.keywords).length" class="muted">--</span>
+              <span v-else class="kw-list">
+                <el-tag v-for="kw in keywordTags(row.keywords)" :key="kw" size="small" effect="plain">
+                  {{ kw }}
+                </el-tag>
+              </span>
+            </span>
+          </div>
+
+          <div class="m-field">
+            <span class="m-field__label">回复</span>
+            <span class="m-field__value">
+              <span v-if="row.transfer_to_human" class="muted">—（转人工）</span>
+              <span v-else>{{ row.reply || '--' }}</span>
+            </span>
+          </div>
+
+          <div class="m-card__foot m-card__foot--between">
+            <span class="enable-row">
+              <span class="enable-row__label">启用</span>
+              <el-switch
+                :model-value="row.enabled"
+                @update:model-value="(val: boolean) => toggleEnabled(row, val)"
+              />
+            </span>
+            <span class="card-actions">
+              <el-button link type="primary" @click="openEdit(row)">编辑</el-button>
+              <el-button link type="danger" @click="remove(row)">删除</el-button>
+            </span>
+          </div>
+        </div>
+
+        <el-empty v-if="!loading && !list.length" description="暂无自动回复规则" :image-size="60" />
+      </div>
     </div>
 
-    <el-drawer v-model="drawerVisible" :title="drawerTitle" size="480px">
-      <el-form ref="formRef" :model="form" :rules="rules" label-width="110px">
+    <el-drawer
+      v-model="drawerVisible"
+      :title="drawerTitle"
+      :size="isMobile ? '100%' : '480px'"
+      class="reply-drawer"
+    >
+      <el-form
+        ref="formRef"
+        :model="form"
+        :rules="rules"
+        :label-width="isMobile ? '88px' : '110px'"
+      >
         <el-form-item label="规则名" prop="name">
           <el-input v-model="form.name" placeholder="如：发货咨询" maxlength="30" show-word-limit />
         </el-form-item>
@@ -407,5 +478,49 @@ onMounted(() => {
 
 .muted {
   color: #7f7f7f;
+}
+
+/* ---------------- 移动端（≤768px，与 useIsMobile 断点一致） ---------------- */
+@media (max-width: 768px) {
+  .toolbar {
+    margin-bottom: 10px;
+  }
+
+  .enable-row {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .enable-row__label {
+    font-size: 12px;
+    color: #7f7f7f;
+  }
+
+  .card-actions {
+    display: inline-flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .kw-list {
+    gap: 4px;
+  }
+
+  /* 全屏抽屉：表单可滚动，底部按钮固定可见 */
+  :global(.reply-drawer .el-drawer__body) {
+    padding: 12px 16px;
+    overflow-y: auto;
+  }
+
+  :global(.reply-drawer .el-drawer__footer) {
+    padding: 10px 16px calc(10px + env(safe-area-inset-bottom, 0));
+    border-top: 1px solid #f0f0f0;
+  }
+
+  :global(.reply-drawer .el-form-item) {
+    margin-bottom: 14px;
+  }
 }
 </style>

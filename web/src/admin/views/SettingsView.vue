@@ -173,8 +173,8 @@ onMounted(load)
               <el-input
                 v-model="settings.default_image"
                 size="small"
+                class="setting-input"
                 placeholder="图片地址，如 /uploads/20260101/xxx.png"
-                style="width: 320px"
               />
               <div class="default-image__actions">
                 <el-button
@@ -233,8 +233,8 @@ onMounted(load)
             <el-input
               v-model="settings.message_sound"
               size="small"
+              class="setting-input setting-input--wide"
               placeholder="音频 URL，如 /uploads/20260101/xxx.mp3 或 https://..."
-              style="width: 360px"
             />
             <el-button
               size="small"
@@ -342,5 +342,80 @@ onMounted(load)
   align-items: center;
   gap: 8px;
   margin-top: 10px;
+}
+
+/* 输入框宽度：与原内联样式一致（PC 端几何不变），窄屏再改为 100% */
+.setting-input {
+  width: 320px;
+}
+
+.setting-input--wide {
+  width: 360px;
+}
+
+/* ---------------- 移动端（≤768px） ---------------- */
+@media (max-width: 768px) {
+  .toolbar {
+    align-items: flex-start;
+    margin-bottom: 10px;
+
+    &__title {
+      display: block;
+      white-space: normal;
+    }
+
+    &__sub {
+      display: block;
+      margin-left: 0;
+      margin-top: 2px;
+    }
+  }
+
+  /* 标签与控件上下堆叠，控件占满整行 */
+  .setting-item {
+    flex-direction: column;
+    gap: 8px;
+    padding: 12px 0;
+
+    &__label {
+      width: auto;
+    }
+
+    &__control {
+      width: 100%;
+    }
+  }
+
+  .default-image {
+    align-items: flex-start;
+    gap: 12px;
+
+    &__info {
+      flex: 1;
+      min-width: 0;
+      width: 100%;
+    }
+
+    &__actions {
+      flex-wrap: wrap;
+      row-gap: 8px;
+    }
+  }
+
+  .setting-input,
+  .setting-input--wide {
+    width: 100%;
+  }
+
+  .sound-row {
+    flex-wrap: wrap;
+    row-gap: 8px;
+  }
+
+  .sound-custom {
+    flex-wrap: wrap;
+    align-items: stretch;
+    row-gap: 8px;
+  }
 }
 </style>

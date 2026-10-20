@@ -10,7 +10,11 @@ import {
   type UserQuery,
 } from '@/shared/api/admin'
 import type { Channel, Customer, CustomerDetailResult } from '@/shared/types'
+import { useIsMobile } from '@/shared/composables/useIsMobile'
 import ThumbImage from '@/shared/components/ThumbImage.vue'
+
+/** 窄屏（≤768px）改用卡片列表 + 全屏抽屉 */
+const { isMobile } = useIsMobile()
 
 const loading = ref(false)
 const detailLoading = ref(false)
@@ -132,6 +136,7 @@ onMounted(() => {
       </div>
 
       <el-table
+        v-if="!isMobile"
         v-loading="loading"
         class="admin-table"
         :data="list"
@@ -184,10 +189,56 @@ onMounted(() => {
         </el-table-column>
       </el-table>
 
+      <!-- 窄屏：客户卡片列表 -->
+      <div v-else v-loading="loading" class="m-list">
+        <div v-for="row in list" :key="row.id" class="m-card">
+          <div class="m-card__top">
+            <ThumbImage
+              :src="row.avatar"
+              :size="36"
+              round
+              kind="avatar"
+              :fallback="(row.nickname || '?').slice(0, 1)"
+              :alt="row.nickname"
+            />
+            <span class="m-card__title">{{ row.nickname }}</span>
+            <span class="m-card__tags">
+              <span v-if="row.channel" class="channel-tag">
+                <span
+                  class="channel-tag__icon"
+                  :style="{ color: channelTypeMeta(row.channel.type).color }"
+                >{{ channelTypeMeta(row.channel.type).icon }}</span>
+                <span class="channel-tag__label">{{ row.channel.name }}</span>
+              </span>
+            </span>
+          </div>
+
+          <div class="m-card__sub">{{ row.external_id }}</div>
+
+          <div class="m-card__meta">
+            <span>手机 {{ row.phone || '--' }}</span>
+            <span>订单 {{ row.order_count ?? 0 }}</span>
+            <span>会话 {{ row.conversation_count ?? 0 }}</span>
+          </div>
+
+          <div class="m-card__meta">
+            <span>最近来访 {{ row.last_seen_at || '--' }}</span>
+          </div>
+
+          <div class="m-card__foot">
+            <el-button link type="primary" @click="openDetail(row)">详情</el-button>
+          </div>
+        </div>
+
+        <el-empty v-if="!loading && !list.length" description="暂无客户" :image-size="60" />
+      </div>
+
       <div class="pager">
         <el-pagination
           background
-          layout="total, sizes, prev, pager, next, jumper"
+          :small="isMobile"
+          :pager-count="isMobile ? 5 : 7"
+          :layout="isMobile ? 'prev, pager, next' : 'total, sizes, prev, pager, next, jumper'"
           :current-page="query.page"
           :page-size="query.page_size"
           :page-sizes="[10, 20, 50, 100]"
@@ -198,7 +249,12 @@ onMounted(() => {
       </div>
     </div>
 
-    <el-drawer v-model="drawerVisible" title="客户档案" size="620px">
+    <el-drawer
+      v-model="drawerVisible"
+      title="客户档案"
+      :size="isMobile ? '100%' : '620px'"
+      class="user-detail-drawer"
+    >
       <div v-loading="detailLoading">
         <template v-if="detail">
           <div class="profile">
@@ -228,67 +284,116 @@ onMounted(() => {
           </div>
 
           <h3 class="section-title">历史订单（{{ detail.orders?.length || 0 }}）</h3>
-          <el-table
-            v-if="detail.orders && detail.orders.length"
-            :data="detail.orders"
-            size="small"
-            border
-          >
-            <el-table-column prop="order_no" label="订单号" min-width="150" />
-            <el-table-column label="商品" min-width="200">
-              <template #default="{ row }">
-                <div class="order-cell">
-                  <ThumbImage :src="row.image" :size="32" :fallback="'图'" :alt="row.title" />
-                  <span class="kf-ellipsis">{{ row.title }}</span>
+          <template v-if="detail.orders && detail.orders.length">
+            <el-table
+              v-if="!isMobile"
+              :data="detail.orders"
+              size="small"
+              border
+            >
+              <el-table-column prop="order_no" label="订单号" min-width="150" />
+              <el-table-column label="商品" min-width="200">
+                <template #default="{ row }">
+                  <div class="order-cell">
+                    <ThumbImage :src="row.image" :size="32" :fallback="'图'" :alt="row.title" />
+                    <span class="kf-ellipsis">{{ row.title }}</span>
+                  </div>
+                </template>
+              </el-table-column>
+              <el-table-column prop="status" label="状态" width="90" />
+              <el-table-column label="金额" width="100" align="right">
+                <template #default="{ row }">¥{{ Number(row.amount).toFixed(2) }}</template>
+              </el-table-column>
+              <el-table-column prop="created_at" label="下单时间" min-width="150" />
+            </el-table>
+
+            <!-- 窄屏：订单卡片 -->
+            <div v-else class="m-list">
+              <div v-for="row in detail.orders" :key="row.order_no" class="m-card">
+                <div class="m-card__top">
+                  <ThumbImage :src="row.image" :size="36" :fallback="'图'" :alt="row.title" />
+                  <span class="m-card__title">{{ row.title }}</span>
+                  <span class="m-card__tags">
+                    <span class="amount">¥{{ Number(row.amount).toFixed(2) }}</span>
+                  </span>
                 </div>
-              </template>
-            </el-table-column>
-            <el-table-column prop="status" label="状态" width="90" />
-            <el-table-column label="金额" width="100" align="right">
-              <template #default="{ row }">¥{{ Number(row.amount).toFixed(2) }}</template>
-            </el-table-column>
-            <el-table-column prop="created_at" label="下单时间" min-width="150" />
-          </el-table>
+                <div class="m-card__sub">{{ row.order_no }}</div>
+                <div class="m-card__meta">
+                  <span>状态 {{ row.status }}</span>
+                  <span>{{ row.created_at }}</span>
+                </div>
+              </div>
+            </div>
+          </template>
           <el-empty v-else description="暂无历史订单" :image-size="60" />
 
           <h3 class="section-title">历史会话（{{ detail.conversations?.length || 0 }}）</h3>
-          <el-table
-            v-if="detail.conversations && detail.conversations.length"
-            :data="detail.conversations"
-            size="small"
-            border
-          >
-            <el-table-column label="渠道" min-width="150">
-              <template #default="{ row }">
-                <span v-if="row.channel" class="channel-tag">
-                  <span
-                    class="channel-tag__icon"
-                    :style="{ color: channelTypeMeta(row.channel.type).color }"
-                  >{{ channelTypeMeta(row.channel.type).icon }}</span>
-                  <span class="channel-tag__label">{{ row.channel.name }}</span>
-                </span>
-                <span v-else class="muted">--</span>
-              </template>
-            </el-table-column>
-            <el-table-column label="状态" width="90">
-              <template #default="{ row }">
-                <el-tag
-                  size="small"
-                  :type="row.status === 'open' ? 'success' : row.status === 'pending' ? 'warning' : 'info'"
-                >
-                  {{ row.status === 'open' ? '进行中' : row.status === 'pending' ? '待接待' : '已结束' }}
-                </el-tag>
-              </template>
-            </el-table-column>
-            <el-table-column label="接待客服" width="100">
-              <template #default="{ row }">{{ row.agent?.name || '--' }}</template>
-            </el-table-column>
-            <el-table-column label="消息数" width="80" align="center">
-              <template #default="{ row }">{{ row.message_count ?? 0 }}</template>
-            </el-table-column>
-            <el-table-column prop="summary" label="摘要" min-width="150" show-overflow-tooltip />
-            <el-table-column prop="created_at" label="发起时间" min-width="150" />
-          </el-table>
+          <template v-if="detail.conversations && detail.conversations.length">
+            <el-table
+              v-if="!isMobile"
+              :data="detail.conversations"
+              size="small"
+              border
+            >
+              <el-table-column label="渠道" min-width="150">
+                <template #default="{ row }">
+                  <span v-if="row.channel" class="channel-tag">
+                    <span
+                      class="channel-tag__icon"
+                      :style="{ color: channelTypeMeta(row.channel.type).color }"
+                    >{{ channelTypeMeta(row.channel.type).icon }}</span>
+                    <span class="channel-tag__label">{{ row.channel.name }}</span>
+                  </span>
+                  <span v-else class="muted">--</span>
+                </template>
+              </el-table-column>
+              <el-table-column label="状态" width="90">
+                <template #default="{ row }">
+                  <el-tag
+                    size="small"
+                    :type="row.status === 'open' ? 'success' : row.status === 'pending' ? 'warning' : 'info'"
+                  >
+                    {{ row.status === 'open' ? '进行中' : row.status === 'pending' ? '待接待' : '已结束' }}
+                  </el-tag>
+                </template>
+              </el-table-column>
+              <el-table-column label="接待客服" width="100">
+                <template #default="{ row }">{{ row.agent?.name || '--' }}</template>
+              </el-table-column>
+              <el-table-column label="消息数" width="80" align="center">
+                <template #default="{ row }">{{ row.message_count ?? 0 }}</template>
+              </el-table-column>
+              <el-table-column prop="summary" label="摘要" min-width="150" show-overflow-tooltip />
+              <el-table-column prop="created_at" label="发起时间" min-width="150" />
+            </el-table>
+
+            <!-- 窄屏：会话卡片 -->
+            <div v-else class="m-list">
+              <div v-for="row in detail.conversations" :key="row.id" class="m-card">
+                <div class="m-card__top">
+                  <span class="m-card__title">
+                    {{ row.channel?.name || '未知渠道' }}
+                  </span>
+                  <span class="m-card__tags">
+                    <el-tag
+                      size="small"
+                      :type="row.status === 'open' ? 'success' : row.status === 'pending' ? 'warning' : 'info'"
+                    >
+                      {{ row.status === 'open' ? '进行中' : row.status === 'pending' ? '待接待' : '已结束' }}
+                    </el-tag>
+                  </span>
+                </div>
+                <div v-if="row.summary" class="m-card__body">{{ row.summary }}</div>
+                <div class="m-card__meta">
+                  <span>接待 {{ row.agent?.name || '--' }}</span>
+                  <span>{{ row.message_count ?? 0 }} 条消息</span>
+                </div>
+                <div class="m-card__meta">
+                  <span>发起 {{ row.created_at }}</span>
+                </div>
+              </div>
+            </div>
+          </template>
           <el-empty v-else description="暂无历史会话" :image-size="60" />
         </template>
       </div>
@@ -401,5 +506,49 @@ onMounted(() => {
   align-items: center;
   gap: 8px;
   min-width: 0;
+}
+
+/* ---------------- 移动端（≤768px，与 useIsMobile 断点一致） ---------------- */
+@media (max-width: 768px) {
+  .toolbar {
+    margin-bottom: 10px;
+
+    &__title {
+      white-space: normal;
+    }
+  }
+
+  .pager {
+    margin-top: 12px;
+  }
+
+  /* 卡片内昵称过长时省略，避免撑破卡片 */
+  .customer__name {
+    min-width: 0;
+  }
+
+  .profile {
+    flex-wrap: wrap;
+    gap: 10px;
+
+    &__name {
+      flex-wrap: wrap;
+      font-size: 15px;
+    }
+
+    &__sub {
+      word-break: break-word;
+    }
+  }
+
+  .section-title {
+    margin: 14px 0 8px;
+  }
+
+  /* 全屏抽屉：内容区自己滚动 */
+  :global(.user-detail-drawer .el-drawer__body) {
+    padding: 12px 16px calc(16px + env(safe-area-inset-bottom, 0));
+    overflow-y: auto;
+  }
 }
 </style>

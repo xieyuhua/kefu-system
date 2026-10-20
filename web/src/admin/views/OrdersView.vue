@@ -2,8 +2,12 @@
 import { onMounted, reactive, ref } from 'vue'
 import { Refresh, Search } from '@element-plus/icons-vue'
 import { listOrders, type OrderQuery } from '@/shared/api/admin'
+import { useIsMobile } from '@/shared/composables/useIsMobile'
 import ThumbImage from '@/shared/components/ThumbImage.vue'
 import type { Order } from '@/shared/types'
+
+/** 窄屏（≤768px）改用卡片列表，避免宽表被裁切 */
+const { isMobile } = useIsMobile()
 
 const loading = ref(false)
 const list = ref<Order[]>([])
@@ -107,6 +111,7 @@ onMounted(load)
       </div>
 
       <el-table
+        v-if="!isMobile"
         v-loading="loading"
         class="admin-table"
         :data="list"
@@ -145,10 +150,40 @@ onMounted(load)
         </el-table-column>
       </el-table>
 
+      <!-- 窄屏：卡片列表（订单号 / 商品 / 金额 / 状态一屏可读） -->
+      <div v-else v-loading="loading" class="m-list">
+        <div v-for="row in list" :key="row.id" class="m-card">
+          <div class="m-card__top">
+            <ThumbImage :src="row.image" :size="40" :fallback="'图'" :alt="row.title" />
+            <span class="m-card__title">{{ row.title }}</span>
+            <span class="m-card__tags">
+              <el-tag size="small" :type="statusType(row.status)">{{ row.status }}</el-tag>
+            </span>
+          </div>
+
+          <div class="m-card__sub">{{ row.order_no }}</div>
+
+          <div class="m-card__meta">
+            <span>规格 {{ row.sku || '--' }}</span>
+            <span>数量 {{ row.quantity ?? 1 }}</span>
+            <span class="amount">{{ formatAmount(row.amount) }}</span>
+          </div>
+
+          <div class="m-card__meta">
+            <span>下单 {{ row.created_at }}</span>
+            <span>支付 {{ row.paid_at || '--' }}</span>
+          </div>
+        </div>
+
+        <el-empty v-if="!loading && !list.length" description="暂无订单" :image-size="60" />
+      </div>
+
       <div class="pager">
         <el-pagination
           background
-          layout="total, sizes, prev, pager, next, jumper"
+          :small="isMobile"
+          :pager-count="isMobile ? 5 : 7"
+          :layout="isMobile ? 'prev, pager, next' : 'total, sizes, prev, pager, next, jumper'"
           :current-page="query.page"
           :page-size="query.page_size"
           :page-sizes="[10, 20, 50, 100]"

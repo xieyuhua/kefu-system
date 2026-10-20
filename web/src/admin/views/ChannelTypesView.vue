@@ -9,6 +9,10 @@ import {
   updateChannelType,
   type ChannelTypeItem,
 } from '@/shared/api/admin'
+import { useIsMobile } from '@/shared/composables/useIsMobile'
+
+/** 窄屏（≤768px）改用卡片列表 */
+const { isMobile } = useIsMobile()
 
 const ICON_PRESETS = ['💬', '🏢', '🌐', '📱', '📣', '🎵', '🤖', '📒', '✉️', '⚡', '🛍', '🎮']
 
@@ -143,6 +147,7 @@ onMounted(load)
       </div>
 
       <el-table
+        v-if="!isMobile"
         v-loading="loading"
         class="admin-table"
         :data="list"
@@ -191,10 +196,64 @@ onMounted(load)
           </template>
         </el-table-column>
       </el-table>
+
+      <!-- 窄屏：渠道类型卡片列表 -->
+      <div v-else v-loading="loading" class="m-list">
+        <div v-for="row in list" :key="row.id" class="m-card">
+          <div class="m-card__top">
+            <span class="type-icon" :style="{ color: row.color }">{{ row.icon || '💬' }}</span>
+            <span class="m-card__title">{{ row.name }}</span>
+            <span class="m-card__tags">
+              <el-tag v-if="row.built_in" size="small" effect="plain">内置</el-tag>
+            </span>
+          </div>
+
+          <div class="m-card__sub">{{ row.code }}</div>
+
+          <div class="m-card__meta">
+            <span class="type-color">
+              <i :style="{ background: row.color }"></i>
+              <span>{{ row.color }}</span>
+            </span>
+            <span>排序 {{ row.sort }}</span>
+            <span :class="{ 'in-use': (row.used_count ?? 0) > 0 }">
+              引用 {{ row.used_count ?? 0 }}
+            </span>
+          </div>
+
+          <div class="m-card__meta">
+            <span>创建 {{ row.created_at }}</span>
+          </div>
+
+          <div class="m-card__foot">
+            <el-button link type="primary" @click="openEdit(row)">编辑</el-button>
+            <el-button
+              link
+              type="danger"
+              :disabled="!!row.built_in || (row.used_count ?? 0) > 0"
+              @click="remove(row)"
+            >
+              删除
+            </el-button>
+          </div>
+        </div>
+
+        <el-empty v-if="!loading && !list.length" description="暂无渠道类型" :image-size="60" />
+      </div>
     </div>
 
-    <el-dialog v-model="dialogVisible" :title="editingId === null ? '新增渠道类型' : '编辑渠道类型'" width="480px">
-      <el-form ref="formRef" :model="form" :rules="rules" label-width="100px">
+    <el-dialog
+      v-model="dialogVisible"
+      :title="editingId === null ? '新增渠道类型' : '编辑渠道类型'"
+      width="480px"
+      class="type-dialog"
+    >
+      <el-form
+        ref="formRef"
+        :model="form"
+        :rules="rules"
+        :label-width="isMobile ? '80px' : '100px'"
+      >
         <el-form-item label="类型标识" prop="code">
           <el-input
             v-model="form.code"
@@ -342,5 +401,26 @@ onMounted(load)
   width: 100%;
   font-size: 12px;
   color: #7f7f7f;
+}
+
+/* ---------------- 移动端（≤768px，与 useIsMobile 断点一致） ---------------- */
+@media (max-width: 768px) {
+  .toolbar {
+    margin-bottom: 10px;
+  }
+
+  .type-color {
+    gap: 4px;
+  }
+
+  /* 图标预设按钮在窄屏放大到 34px，便于点按 */
+  .icon-preset {
+    width: 34px;
+    height: 34px;
+  }
+
+  .icon-input {
+    width: 100%;
+  }
 }
 </style>

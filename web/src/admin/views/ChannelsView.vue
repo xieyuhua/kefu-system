@@ -19,8 +19,12 @@ import {
   type ChannelTypeItem,
 } from '@/shared/api/admin'
 import { getToken } from '@/shared/api/token'
+import { useIsMobile } from '@/shared/composables/useIsMobile'
 import ThumbImage from '@/shared/components/ThumbImage.vue'
 import type { Channel, ChannelPayload } from '@/shared/types'
+
+/** 窄屏（≤768px）改用卡片列表，弹窗由全局样式收窄到视口内 */
+const { isMobile } = useIsMobile()
 
 const loading = ref(false)
 const submitting = ref(false)
@@ -412,6 +416,7 @@ onMounted(() => {
       </div>
 
       <el-table
+        v-if="!isMobile"
         v-loading="loading"
         class="admin-table"
         :data="list"
@@ -519,10 +524,106 @@ onMounted(() => {
           </template>
         </el-table-column>
       </el-table>
+
+      <!-- 窄屏：渠道卡片列表（类型 / 标识 / 开关 / 操作全在卡片内） -->
+      <div v-else v-loading="loading" class="m-list">
+        <div v-for="row in list" :key="row.id" class="m-card">
+          <div class="m-card__top">
+            <span class="channel-tag">
+              <span class="channel-tag__icon" :style="{ color: typeMeta(row.type).color }">
+                {{ typeMeta(row.type).icon }}
+              </span>
+            </span>
+            <span class="m-card__title">{{ row.name }}</span>
+            <span class="m-card__tags">
+              <el-tag size="small" effect="plain">{{ typeMeta(row.type).name }}</el-tag>
+            </span>
+          </div>
+
+          <div class="m-field">
+            <span class="m-field__label">标识</span>
+            <span class="m-field__value">
+              <code class="appid-cell__code">{{ row.app_id || '--' }}</code>
+            </span>
+            <el-button
+              link
+              size="small"
+              :icon="CopyDocument"
+              title="复制 app_id"
+              @click="copyText(row.app_id, '渠道标识已复制')"
+            />
+            <el-button
+              link
+              size="small"
+              :icon="Refresh"
+              :loading="resettingId === row.id"
+              title="重置为新的随机标识（旧链接会失效）"
+              @click="resetAppId(row)"
+            />
+          </div>
+
+          <div class="m-card__meta">
+            <span>客服 {{ row.agent_count ?? 0 }}</span>
+            <span>
+              待接待
+              <b :class="{ 'pending-strong': (row.pending_count ?? 0) > 0 }">
+                {{ row.pending_count ?? 0 }}
+              </b>
+            </span>
+            <span>类型 {{ row.type }}</span>
+          </div>
+
+          <div class="m-card__meta">
+            <span class="switch-row">
+              <span class="switch-row__label">启用</span>
+              <el-switch
+                :model-value="row.enabled"
+                @update:model-value="(val: boolean) => toggleEnabled(row, val)"
+              />
+            </span>
+            <span class="switch-row">
+              <span class="switch-row__label">机器人</span>
+              <el-switch
+                :model-value="row.robot_enabled"
+                @update:model-value="(val: boolean) => toggleRobot(row, val)"
+              />
+            </span>
+            <span v-if="row.hide_header || row.hide_debug" class="m-card__tags">
+              <el-tag v-if="row.hide_header" size="small" type="warning" effect="plain">
+                无header
+              </el-tag>
+              <el-tag v-if="row.hide_debug" size="small" type="info" effect="plain">
+                无调试
+              </el-tag>
+            </span>
+          </div>
+
+          <div class="m-card__meta">
+            <span>创建 {{ row.created_at }}</span>
+          </div>
+
+          <div class="m-card__foot">
+            <el-button link type="primary" :icon="Picture" @click="openQr(row)">二维码</el-button>
+            <el-button link type="primary" :icon="Link" @click="copyAccessUrl(row)">地址</el-button>
+            <el-button link type="primary" @click="openAgents(row)">
+              接待账号({{ row.agent_count ?? 0 }})
+            </el-button>
+            <el-button link type="primary" @click="openEdit(row)">编辑</el-button>
+            <el-button link type="danger" @click="remove(row)">删除</el-button>
+          </div>
+        </div>
+
+        <el-empty v-if="!loading && !list.length" description="暂无渠道" :image-size="60" />
+      </div>
     </div>
 
-    <el-dialog v-model="dialogVisible" :title="dialogTitle" width="480px">
-      <el-form ref="formRef" :model="form" :rules="rules" label-width="110px">
+    <el-dialog v-model="dialogVisible" :title="dialogTitle" width="480px" class="channel-dialog">
+      <el-form
+        ref="formRef"
+        :model="form"
+        :rules="rules"
+        :label-width="isMobile ? '92px' : '110px'"
+      >
         <el-form-item label="渠道类型" prop="type">
           <el-select
             v-model="form.type"
@@ -931,6 +1032,64 @@ onMounted(() => {
 
   &__spacer {
     flex: 1;
+  }
+}
+
+/* ---------------- 移动端（≤768px，与 useIsMobile 断点一致） ---------------- */
+@media (max-width: 768px) {
+  .toolbar {
+    margin-bottom: 10px;
+  }
+
+  .tip {
+    margin-bottom: 10px;
+  }
+
+  /* 卡片里的开关行 */
+  .switch-row {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .switch-row__label {
+    font-size: 12px;
+    color: #7f7f7f;
+  }
+
+  /* app_id 在窄屏允许换行，避免戳破卡片 */
+  .appid-cell__code {
+    white-space: normal;
+    word-break: break-all;
+  }
+
+  /* 二维码图自适应弹窗宽度 */
+  .qr__image img {
+    width: 100%;
+    max-width: 220px;
+    height: auto;
+  }
+
+  /* 表单间距收紧，长表单在弹窗内滚动即可 */
+  :global(.channel-dialog .el-form-item) {
+    margin-bottom: 14px;
+  }
+
+  /* 分区标题（el-divider）文字在窄屏可能溢出，去掉左内边距 */
+  :global(.channel-dialog .el-divider__text) {
+    font-size: 13px;
+    max-width: 90%;
+  }
+
+  /* 接待账号弹窗：列表区高度跟随视口，内部可滚动 */
+  .agents {
+    max-height: 52vh;
+    overflow-y: auto;
+  }
+
+  .agents__footer {
+    flex-wrap: wrap;
+    row-gap: 8px;
   }
 }
 </style>

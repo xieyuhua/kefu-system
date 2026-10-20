@@ -13,6 +13,10 @@ import {
   type AgentPayload,
 } from '@/shared/api/admin'
 import type { Channel, Role } from '@/shared/types'
+import { useIsMobile } from '@/shared/composables/useIsMobile'
+
+/** 窄屏（≤768px）改用卡片列表 + 全屏抽屉 */
+const { isMobile } = useIsMobile()
 
 const loading = ref(false)
 const submitting = ref(false)
@@ -230,6 +234,7 @@ onMounted(refreshAll)
       </div>
 
       <el-table
+        v-if="!isMobile"
         v-loading="loading"
         class="admin-table"
         :data="agents"
@@ -294,10 +299,78 @@ onMounted(refreshAll)
           </template>
         </el-table-column>
       </el-table>
+
+      <!-- 窄屏：子账号卡片列表 -->
+      <div v-else v-loading="loading" class="m-list">
+        <div v-for="row in agents" :key="row.id" class="m-card">
+          <div class="m-card__top">
+            <span class="m-card__title">{{ row.name }}</span>
+            <span class="m-card__tags">
+              <el-tag size="small" :type="statusType(row)" effect="plain">{{ statusText(row) }}</el-tag>
+              <el-tag :type="row.role === 'admin' ? 'warning' : 'info'" size="small" effect="plain">
+                {{ row.role === 'admin' ? '管理员' : '客服' }}
+              </el-tag>
+            </span>
+          </div>
+
+          <div class="m-card__sub">账号 {{ row.account }}</div>
+
+          <div class="m-card__meta">
+            <span>当前接待 {{ row.active_count ?? 0 }} / {{ row.max_concurrent }}</span>
+          </div>
+
+          <div class="m-field">
+            <span class="m-field__label">可接待</span>
+            <span class="m-field__value">
+              <span v-if="row.channels && row.channels.length" class="channel-tags">
+                <el-tag
+                  v-for="ch in row.channels"
+                  :key="ch.id"
+                  size="small"
+                  class="channel-tag"
+                  :color="channelTypeMeta(ch.type).color"
+                  effect="dark"
+                >
+                  <span class="channel-tag__icon">{{ channelTypeMeta(ch.type).icon }}</span>
+                  <span class="channel-tag__label">{{ ch.name }}</span>
+                </el-tag>
+              </span>
+              <span v-else class="muted">未分配</span>
+            </span>
+          </div>
+
+          <div class="m-card__foot m-card__foot--between">
+            <span class="enable-row">
+              <span class="enable-row__label">启用</span>
+              <el-switch
+                :model-value="row.enabled !== false"
+                @update:model-value="(val: boolean) => toggleEnabled(row, val)"
+              />
+            </span>
+            <span class="card-actions">
+              <el-button link type="primary" @click="openEdit(row)">编辑</el-button>
+              <el-button link type="primary" @click="resetPassword(row)">重置密码</el-button>
+              <el-button link type="danger" @click="remove(row)">删除</el-button>
+            </span>
+          </div>
+        </div>
+
+        <el-empty v-if="!loading && !agents.length" description="暂无子账号" :image-size="60" />
+      </div>
     </div>
 
-    <el-drawer v-model="drawerVisible" :title="drawerTitle" size="480px">
-      <el-form ref="formRef" :model="form" :rules="rules" label-width="120px">
+    <el-drawer
+      v-model="drawerVisible"
+      :title="drawerTitle"
+      :size="isMobile ? '100%' : '480px'"
+      class="agent-drawer"
+    >
+      <el-form
+        ref="formRef"
+        :model="form"
+        :rules="rules"
+        :label-width="isMobile ? '88px' : '120px'"
+      >
         <el-form-item label="账号" prop="account">
           <el-input v-model="form.account" placeholder="登录账号，如 kf01" />
         </el-form-item>
@@ -413,5 +486,51 @@ onMounted(refreshAll)
   display: flex;
   justify-content: flex-end;
   gap: 8px;
+}
+
+/* ---------------- 移动端（≤768px，与 useIsMobile 断点一致） ---------------- */
+@media (max-width: 768px) {
+  .toolbar {
+    margin-bottom: 10px;
+  }
+
+  /* 卡片底部：启用开关 + 操作按钮分两行也不挤 */
+  .enable-row {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .enable-row__label {
+    font-size: 12px;
+    color: #7f7f7f;
+  }
+
+  .card-actions {
+    display: inline-flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .channel-tags {
+    gap: 4px;
+  }
+
+  /* 全屏抽屉：表单区可滚动，底部按钮不遮挡内容 */
+  :global(.agent-drawer .el-drawer__body) {
+    padding: 12px 16px;
+    overflow-y: auto;
+  }
+
+  :global(.agent-drawer .el-drawer__footer) {
+    padding: 10px 16px calc(10px + env(safe-area-inset-bottom, 0));
+    border-top: 1px solid #f0f0f0;
+  }
+
+  /* label 宽度改由 :label-width 响应式设置，这里只调间距 */
+  :global(.agent-drawer .el-form-item) {
+    margin-bottom: 14px;
+  }
 }
 </style>

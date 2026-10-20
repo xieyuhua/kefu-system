@@ -3,7 +3,11 @@ import { computed, onMounted, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Promotion } from '@element-plus/icons-vue'
 import { deleteDevice, listDevices, testDevicePush, type Device, type DeviceKind } from '@/shared/api/admin'
+import { useIsMobile } from '@/shared/composables/useIsMobile'
 import dayjs from 'dayjs'
+
+/** 窄屏（≤768px）改用卡片列表，避免宽表被裁切 */
+const { isMobile } = useIsMobile()
 
 const loading = ref(false)
 const testing = ref(false)
@@ -123,6 +127,7 @@ onMounted(load)
       </el-alert>
 
       <el-table
+        v-if="!isMobile"
         v-loading="loading"
         class="admin-table"
         :data="devices"
@@ -159,6 +164,37 @@ onMounted(load)
           </template>
         </el-table-column>
       </el-table>
+
+      <!-- 窄屏：卡片列表（设备 / 平台 / Token / 注销） -->
+      <div v-else v-loading="loading" class="m-list">
+        <div v-for="row in devices" :key="row.id" class="m-card">
+          <div class="m-card__top">
+            <span class="channel-tag">
+              <span class="channel-tag__icon">{{ deviceIcon(row.device) }}</span>
+            </span>
+            <span class="m-card__title">{{ row.name }}</span>
+            <span class="m-card__tags">
+              <el-tag size="small" effect="plain">{{ platformLabel(row.platform) }}</el-tag>
+            </span>
+          </div>
+
+          <div class="m-card__meta">
+            <span>{{ deviceLabel(row.device) }}</span>
+            <span>{{ formatTime(row.created_at) }}</span>
+          </div>
+
+          <div class="m-card__sub">
+            <template v-if="row.push_token">Token {{ maskToken(row.push_token) }}</template>
+            <template v-else>未注册推送 Token（仅 WebSocket）</template>
+          </div>
+
+          <div class="m-card__foot">
+            <el-button link type="danger" @click="remove(row)">注销</el-button>
+          </div>
+        </div>
+
+        <el-empty v-if="!loading && !devices.length" description="暂无已注册设备" :image-size="60" />
+      </div>
     </div>
   </div>
 </template>

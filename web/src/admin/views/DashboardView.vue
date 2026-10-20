@@ -3,7 +3,11 @@ import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Refresh } from '@element-plus/icons-vue'
 import { getStatsOverview, type StatsOverviewResult, type TrendPoint } from '@/shared/api/admin'
+import { useIsMobile } from '@/shared/composables/useIsMobile'
 import ThumbImage from '@/shared/components/ThumbImage.vue'
+
+/** 窄屏（≤768px）：统计卡两列、客服工作量改卡片 */
+const { isMobile } = useIsMobile()
 
 const DAY_OPTIONS = [7, 14, 30]
 
@@ -352,7 +356,7 @@ onBeforeUnmount(() => {
           </span>
         </div>
 
-        <el-table class="admin-table" :data="agents" stripe border empty-text="暂无客服数据">
+        <el-table v-if="!isMobile" class="admin-table" :data="agents" stripe border empty-text="暂无客服数据">
           <el-table-column label="客服" min-width="180">
             <template #default="{ row }">
               <span class="agent">
@@ -395,6 +399,45 @@ onBeforeUnmount(() => {
             </template>
           </el-table-column>
         </el-table>
+
+        <!-- 窄屏：客服工作量卡片 -->
+        <div v-else class="m-list">
+          <div v-for="row in agents" :key="row.agent_id" class="m-card">
+            <div class="m-card__top">
+              <ThumbImage
+                :src="row.avatar"
+                :size="26"
+                round
+                kind="avatar"
+                :fallback="row.name.slice(0, 1)"
+                :alt="row.name"
+              />
+              <span class="m-card__title">{{ row.name }}</span>
+              <span class="m-card__tags">
+                <el-tag
+                  v-if="row.role === 'admin'"
+                  size="small"
+                  type="warning"
+                  effect="plain"
+                >管理员</el-tag>
+              </span>
+            </div>
+
+            <div class="m-card__meta">
+              <span>接待 {{ row.handled }}</span>
+              <span>结束 {{ row.closed }}</span>
+              <span :class="{ 'in-progress': (row.active_now ?? 0) > 0 }">
+                进行中 {{ row.active_now ?? 0 }}
+              </span>
+              <span>消息 {{ row.messages ?? 0 }}</span>
+              <span class="muted">
+                结束率 {{ row.handled > 0 ? formatRate((row.closed / row.handled) * 100) : '--' }}
+              </span>
+            </div>
+          </div>
+
+          <el-empty v-if="!agents.length" description="暂无客服数据" :image-size="60" />
+        </div>
       </div>
     </div>
   </div>
@@ -693,5 +736,72 @@ onBeforeUnmount(() => {
 
 .muted {
   color: #7f7f7f;
+}
+
+/* ---------------- 移动端（≤768px，与 useIsMobile 断点一致） ---------------- */
+@media (max-width: 768px) {
+  .head {
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 12px;
+
+    &__right {
+      gap: 8px;
+    }
+  }
+
+  /* 统计卡：窄屏两列，单卡内部不换行挤压 */
+  .stat-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+    margin-bottom: 12px;
+  }
+
+  .stat-card {
+    padding: 12px 12px 12px 0;
+
+    &__body {
+      min-width: 0;
+      padding-left: 10px;
+    }
+
+    &__value {
+      font-size: 20px;
+    }
+
+    &__label,
+    &__extra {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+  }
+
+  /* 图表容器不做固定宽，跟着卡片宽度走 */
+  .admin-card {
+    padding: 12px;
+    margin-bottom: 12px;
+  }
+
+  .section-head {
+    flex-wrap: wrap;
+    gap: 4px 10px;
+
+    &__title {
+      font-size: 14px;
+    }
+  }
+
+  .chart__tip {
+    min-width: 108px;
+  }
+
+  .dist-item {
+    padding: 10px;
+
+    &__meta {
+      gap: 6px 12px;
+    }
+  }
 }
 </style>
