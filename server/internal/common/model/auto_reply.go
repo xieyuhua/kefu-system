@@ -4,6 +4,7 @@ package model
 type AutoReply struct {
 	Model
 	TenantID        uint   `gorm:"index;not null" json:"tenant_id"`
+	UserID          uint   `gorm:"index" json:"user_id"`    // 0 = 管理员建的公共规则；>0 = 该客服创建的规则
 	ChannelID       uint   `gorm:"index" json:"channel_id"` // 0 = 全渠道
 	Name            string `gorm:"size:64" json:"name"`
 	MatchType       string `gorm:"size:16;default:'contain'" json:"match_type"` // contain|equal|prefix

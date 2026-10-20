@@ -34,3 +34,7 @@ Thumbs.db
 web/.pwtest/
 # 重构临时产物
 .refactor/
+
+# 验收脚本产物（浏览器 profile、临时配置等）
+.acceptance/
+*.acceptance.yaml

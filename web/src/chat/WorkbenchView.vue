@@ -25,6 +25,9 @@
           <span class="topbar-stat">进行中 {{ chat.stats.open }}</span>
           <span class="topbar-stat">未读 {{ chat.stats.unread }}</span>
           <DemoPanel />
+          <el-button size="small" title="自动回复规则（团队共用）" @click="autoReplyOpen = true">
+            🤖 自动回复
+          </el-button>
           <el-button
             size="small"
             :icon="Delete"
@@ -55,6 +58,8 @@
                 <el-dropdown-item divided command="clear" :disabled="!chat.total">
                   一键清空会话列表
                 </el-dropdown-item>
+                <!-- 自动回复（团队共用规则）：与 PC 顶栏按钮同一入口 -->
+                <el-dropdown-item command="auto-reply">🤖 自动回复管理</el-dropdown-item>
                 <el-dropdown-item v-if="auth.isAdmin" command="admin">管理后台</el-dropdown-item>
                 <el-dropdown-item command="profile">个人资料</el-dropdown-item>
                 <el-dropdown-item command="refresh">刷新</el-dropdown-item>
@@ -169,6 +174,9 @@
 
     <!-- 个人资料（移动端「更多」菜单入口；PC 端复用侧边栏） -->
     <ProfileDialog v-model="profileOpen" />
+
+    <!-- 自动回复管理（PC 顶栏按钮 / 移动端「更多」菜单同一入口） -->
+    <AutoReplyDialog v-model="autoReplyOpen" />
   </div>
 </template>
 
@@ -184,6 +192,7 @@ import DemoPanel from '@/chat/components/DemoPanel.vue'
 import OrderPicker from '@/chat/components/OrderPicker.vue'
 import ProductPicker from '@/chat/components/ProductPicker.vue'
 import TransferPicker from '@/chat/components/TransferPicker.vue'
+import AutoReplyDialog from '@/chat/components/AutoReplyDialog.vue'
 import ProfileDialog from '@/shared/components/ProfileDialog.vue'
 import { useAuthStore } from '@/shared/stores/auth'
 import { useChatStore } from '@/chat/stores/chat'
@@ -329,12 +338,17 @@ function refresh(): void {
 
 /** 个人资料弹窗（移动端「更多」菜单入口；PC 端在侧边栏底部） */
 const profileOpen = ref(false)
+/** 自动回复管理对话框（PC 顶栏按钮 / 移动端「更多」菜单） */
+const autoReplyOpen = ref(false)
 
 /** 移动端「更多」菜单分发 */
 function onMobileMenu(command: string): void {
   switch (command) {
     case 'clear':
       void onClearAll()
+      break
+    case 'auto-reply':
+      autoReplyOpen.value = true
       break
     case 'admin':
       goAdmin()

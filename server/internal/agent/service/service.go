@@ -15,20 +15,22 @@ import (
 	commonsvc "kefu-server/internal/common/service"
 )
 
-// Service 客服端的端内编排层，持有四个公共业务依赖（设备 / 提醒由 handler 直接用通知内核）。
+// Service 客服端的端内编排层，持有公共业务依赖（设备 / 提醒由 handler 直接用通知内核）。
 type Service struct {
-	Conv      *commonsvc.ConversationService
-	Cust      *commonsvc.CustomerService
-	Channels  *commonsvc.ChannelService
-	AutoReply *commonsvc.AutomationService
+	Conv       *commonsvc.ConversationService
+	Cust       *commonsvc.CustomerService
+	Channels   *commonsvc.ChannelService
+	AutoReply  *commonsvc.AutomationService
+	QuickReply *commonsvc.QuickReplyService
 }
 
 // NewService 创建端内业务层实例（自带各公共业务依赖）。
 func NewService() *Service {
 	return &Service{
-		Conv:      commonsvc.NewConversationService(),
-		Cust:      commonsvc.NewCustomerService(),
-		Channels:  commonsvc.NewChannelService(),
-		AutoReply: commonsvc.NewAutomationService(),
+		Conv:       commonsvc.NewConversationService(),
+		Cust:       commonsvc.NewCustomerService(),
+		Channels:   commonsvc.NewChannelService(),
+		AutoReply:  commonsvc.NewAutomationService(),
+		QuickReply: commonsvc.NewQuickReplyService(),
 	}
 }

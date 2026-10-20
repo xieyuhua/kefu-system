@@ -77,6 +77,7 @@ func Init() error {
 		&model.Device{},
 		&model.Notification{},
 		&model.AutoReply{},
+		&model.QuickReply{},
 	); err != nil {
 		return err
 	}

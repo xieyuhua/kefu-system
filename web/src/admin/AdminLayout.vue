@@ -2,6 +2,7 @@
 import { computed, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
+  ChatLineSquare,
   ChatRound,
   CollectionTag,
   DataLine,
@@ -33,6 +34,7 @@ const MENUS: MenuItem[] = [
   { path: '/channels', title: '渠道管理', icon: Grid },
   { path: '/channel-types', title: '渠道类型', icon: CollectionTag },
   { path: '/auto-replies', title: '自动回复', icon: ChatRound },
+  { path: '/quick-replies', title: '快捷回复', icon: ChatLineSquare },
   { path: '/agents', title: '子账号管理', icon: UserFilled },
   { path: '/users', title: '客户管理', icon: Headset },
   { path: '/conversation-records', title: '对话记录', icon: Tickets },

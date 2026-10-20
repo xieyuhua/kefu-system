@@ -19,25 +19,27 @@ import (
 // Service 后台端的端内编排层，持有各公共业务依赖（含共享统计内核）。
 // 字段导出：handler 已拆到 admin/handler 包，需要按能力直接取用对应的公共 service。
 type Service struct {
-	Conv      *commonsvc.ConversationService
-	Cust      *commonsvc.CustomerService
-	Channels  *commonsvc.ChannelService
-	Account   *commonsvc.AccountService
-	AutoReply *commonsvc.AutomationService
-	Stats     *commonsvc.StatsService
-	Storage   *commonsvc.ObjectStorageService
+	Conv       *commonsvc.ConversationService
+	Cust       *commonsvc.CustomerService
+	Channels   *commonsvc.ChannelService
+	Account    *commonsvc.AccountService
+	AutoReply  *commonsvc.AutomationService
+	QuickReply *commonsvc.QuickReplyService
+	Stats      *commonsvc.StatsService
+	Storage    *commonsvc.ObjectStorageService
 }
 
 // NewService 创建端内业务层实例（自带各公共业务依赖）。
 func NewService() *Service {
 	return &Service{
-		Conv:      commonsvc.NewConversationService(),
-		Cust:      commonsvc.NewCustomerService(),
-		Channels:  commonsvc.NewChannelService(),
-		Account:   commonsvc.NewAccountService(),
-		AutoReply: commonsvc.NewAutomationService(),
-		Stats:     commonsvc.NewStatsService(),
-		Storage:   commonsvc.NewObjectStorageService(),
+		Conv:       commonsvc.NewConversationService(),
+		Cust:       commonsvc.NewCustomerService(),
+		Channels:   commonsvc.NewChannelService(),
+		Account:    commonsvc.NewAccountService(),
+		AutoReply:  commonsvc.NewAutomationService(),
+		QuickReply: commonsvc.NewQuickReplyService(),
+		Stats:      commonsvc.NewStatsService(),
+		Storage:    commonsvc.NewObjectStorageService(),
 	}
 }
 

@@ -30,6 +30,12 @@ export const adminRoutes: RouteRecordRaw[] = [
     meta: { title: '自动回复' },
   },
   {
+    path: '/quick-replies',
+    name: 'admin-quick-replies',
+    component: () => import('./views/QuickRepliesView.vue'),
+    meta: { title: '快捷回复' },
+  },
+  {
     path: '/agents',
     name: 'admin-agents',
     component: () => import('./views/AgentsView.vue'),

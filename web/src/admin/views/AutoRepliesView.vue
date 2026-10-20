@@ -214,6 +214,8 @@ onMounted(() => {
 
       <div class="tip">
         命中规则即由机器人自动回复；开启「转人工」的规则命中后会把会话转入人工接待池并通知客服。
+        规则按「创建人」归属：管理员新建的是<b>公共规则</b>（客服只读），客服在工作台可增删改自己创建的规则；
+        管理员在这里可以改全部。
       </div>
 
       <el-table
@@ -226,6 +228,12 @@ onMounted(() => {
         empty-text="暂无自动回复规则"
       >
         <el-table-column prop="name" label="规则名" min-width="130" show-overflow-tooltip />
+        <el-table-column label="创建人" width="110" align="center">
+          <template #default="{ row }">
+            <el-tag v-if="row.shared" size="small" type="info" effect="plain">公共</el-tag>
+            <span v-else>{{ row.owner || '--' }}</span>
+          </template>
+        </el-table-column>
         <el-table-column label="适用渠道" min-width="150">
           <template #default="{ row }">
             <el-tag v-if="!row.channel_id" size="small" type="success">全渠道</el-tag>
@@ -283,6 +291,8 @@ onMounted(() => {
           <div class="m-card__top">
             <span class="m-card__title">{{ row.name }}</span>
             <span class="m-card__tags">
+              <el-tag v-if="row.shared" size="small" type="info" effect="plain">公共</el-tag>
+              <el-tag v-else size="small" effect="plain">{{ row.owner || '--' }}</el-tag>
               <el-tag v-if="!row.channel_id" size="small" type="success">全渠道</el-tag>
               <el-tag v-else size="small" effect="plain">{{ row.channel_name || '--' }}</el-tag>
             </span>

@@ -38,6 +38,13 @@ func Register(g *gin.RouterGroup, authed *gin.RouterGroup) {
 	authed.GET("/users/:id", h.GetCustomerHandler)
 	authed.PUT("/users/:id/tags", h.SetCustomerTagsHandler)
 
+	// 快捷回复（常用语）：客服自己的话术，登录即可用。
+	// 列表 = 自己的私有 + 租户共享（user_id = 0）；改 / 删只能动自己的。
+	authed.GET("/quick-replies", h.ListQuickRepliesHandler)
+	authed.POST("/quick-replies", h.CreateQuickReplyHandler)
+	authed.PUT("/quick-replies/:id", h.UpdateQuickReplyHandler)
+	authed.DELETE("/quick-replies/:id", h.DeleteQuickReplyHandler)
+
 	// 设备（APP / PC 桌面端推送注册）
 	authed.GET("/devices", h.ListDevicesHandler)
 	authed.POST("/devices", h.RegisterDeviceHandler)

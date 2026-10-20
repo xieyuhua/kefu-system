@@ -48,13 +48,41 @@
           </span>
         </el-tooltip>
 
-        <el-popover placement="top-start" trigger="click" width="260">
+        <!-- 快捷回复：数据来自 /api/quick-replies（我的私有 + 租户共享），
+             点条目插入输入框；「管理」打开自己的话术管理对话框。 -->
+        <el-popover
+          v-model:visible="quickPopoverOpen"
+          placement="top-start"
+          trigger="click"
+          width="300"
+          @show="ensureQuickReplies()"
+        >
           <template #reference>
             <el-button text size="small" title="快捷回复">⚡ 快捷回复</el-button>
           </template>
-          <div class="quick-list">
-            <div v-for="q in QUICK_REPLIES" :key="q" class="quick-item" @click="useQuick(q)">
-              {{ q }}
+          <div class="quick-panel">
+            <div class="quick-panel__head">
+              <span class="quick-panel__title">快捷回复</span>
+              <el-button link type="primary" size="small" @click="openQuickManage">管理</el-button>
+            </div>
+            <div v-if="quickLoading" class="quick-empty">加载中…</div>
+            <div v-else-if="!quickList.length" class="quick-empty">
+              还没有快捷回复，点「管理」新增一条
+            </div>
+            <div v-else class="quick-list">
+              <button
+                v-for="q in quickList"
+                :key="q.id"
+                type="button"
+                class="quick-item"
+                @click="useQuick(q)"
+              >
+                <span class="quick-item__head">
+                  <span class="quick-item__title kf-ellipsis">{{ q.title }}</span>
+                  <el-tag v-if="q.shared" size="small" type="info" effect="plain">公共</el-tag>
+                </span>
+                <span class="quick-item__content">{{ q.content }}</span>
+              </button>
             </div>
           </div>
         </el-popover>
@@ -131,20 +159,39 @@
 
     <input ref="fileRef" type="file" hidden accept="image/*,video/*,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv,.zip,.rar,.7z,.json,.log" @change="onFile" />
 
-    <!-- 移动端快捷回复弹层 -->
-    <el-dialog v-model="quickOpen" title="快捷回复" width="86%" append-to-body>
-      <div class="quick-list quick-list--dialog">
+    <!-- 移动端快捷回复弹层：窄屏下宽度自适应、内容可滚动 -->
+    <el-dialog
+      v-model="quickDialogOpen"
+      title="快捷回复"
+      width="92%"
+      append-to-body
+      class="quick-pick-dialog"
+    >
+      <div v-if="quickLoading" class="quick-empty">加载中…</div>
+      <div v-else-if="!quickList.length" class="quick-empty">还没有快捷回复，点下方「管理」新增</div>
+      <div v-else class="quick-list quick-list--dialog kf-scroll">
         <button
-          v-for="q in QUICK_REPLIES"
-          :key="q"
+          v-for="q in quickList"
+          :key="q.id"
           type="button"
           class="quick-item"
-          @click="useQuickFromDialog(q)"
+          @click="useQuick(q)"
         >
-          {{ q }}
+          <span class="quick-item__head">
+            <span class="quick-item__title kf-ellipsis">{{ q.title }}</span>
+            <el-tag v-if="q.shared" size="small" type="info" effect="plain">公共</el-tag>
+          </span>
+          <span class="quick-item__content">{{ q.content }}</span>
         </button>
       </div>
+      <template #footer>
+        <el-button size="small" @click="openQuickManage">管理</el-button>
+        <el-button size="small" type="primary" @click="quickDialogOpen = false">关闭</el-button>
+      </template>
     </el-dialog>
+
+    <!-- 快捷回复管理（新增 / 编辑 / 删除自己的话术） -->
+    <QuickReplyDialog v-model="quickManageOpen" @changed="onQuickChanged" />
   </div>
 </template>
 
@@ -153,7 +200,9 @@ import { computed, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { MoreFilled, Paperclip, Search } from '@element-plus/icons-vue'
 import { uploadAttachment, validateFile } from '@/shared/api/upload'
+import { listQuickReplies, type QuickReply } from '@/shared/api/quickReplies'
 import type { MessageType } from '@/shared/types'
+import QuickReplyDialog from './QuickReplyDialog.vue'
 
 const props = defineProps<{
   disabled?: boolean
@@ -212,11 +261,53 @@ function onMore(command: string): void {
   }
 }
 
-/** 移动端快捷回复（不用 popover，用轻量弹层） */
-const quickOpen = ref(false)
+/** 移动端快捷回复弹层 */
+const quickDialogOpen = ref(false)
+/** PC 端快捷回复 popover 的展开状态（点「管理」时先收起） */
+const quickPopoverOpen = ref(false)
 
 function showQuick(): void {
-  quickOpen.value = true
+  void ensureQuickReplies()
+  quickDialogOpen.value = true
+}
+
+// ---------------- 快捷回复数据（接口驱动，首次打开时拉取并缓存） ----------------
+/** 待插入的话术列表（已过滤停用项） */
+const quickList = ref<QuickReply[]>([])
+const quickLoading = ref(false)
+/** 是否已拉取过：进入工作台后只拉一次，管理对话框改动后由 onQuickChanged 置回 false 再刷新 */
+const quickLoaded = ref(false)
+
+/** 拉取快捷回复（已加载且非强制刷新时直接返回缓存） */
+async function ensureQuickReplies(force = false): Promise<void> {
+  if (quickLoading.value) return
+  if (quickLoaded.value && !force) return
+  quickLoading.value = true
+  try {
+    const rows = await listQuickReplies()
+    quickList.value = rows.filter((q) => q.enabled)
+    quickLoaded.value = true
+  } catch {
+    // 错误已由拦截器提示；保持空列表，避免每次打开都重试打爆接口
+    quickList.value = []
+  } finally {
+    quickLoading.value = false
+  }
+}
+
+/** 快捷回复管理对话框 */
+const quickManageOpen = ref(false)
+
+function openQuickManage(): void {
+  quickPopoverOpen.value = false
+  quickDialogOpen.value = false
+  quickManageOpen.value = true
+}
+
+/** 管理对话框完成增删改：清缓存并重新拉一次，弹层里立刻能看到新话术 */
+function onQuickChanged(): void {
+  quickLoaded.value = false
+  void ensureQuickReplies(true)
 }
 
 const searchActive = computed(() => props.searchActive === true)
@@ -227,15 +318,6 @@ const EMOJIS = [
   '😊', '😄', '😁', '🙂', '😉', '😍', '🤔', '😅',
   '👍', '🙏', '👏', '💪', '🎉', '❤️', '🌟', '🔥',
   '😢', '😭', '😡', '🤝', '✅', '❌', '📦', '🚚',
-]
-
-const QUICK_REPLIES = [
-  '您好，很高兴为您服务～',
-  '请稍等，我帮您查询一下。',
-  '已为您登记，稍后会有专人跟进。',
-  '麻烦提供一下订单号，方便我核实。',
-  '感谢您的耐心等待！',
-  '不好意思给您带来不便，我们会尽快处理。',
 ]
 
 const draft = ref('')
@@ -273,15 +355,11 @@ function insert(text: string): void {
   })
 }
 
-function useQuick(text: string): void {
-  draft.value = text
-  focus()
-}
-
-/** 移动端弹层里选用快捷回复：填充草稿、关弹层并聚焦输入框 */
-function useQuickFromDialog(text: string): void {
-  draft.value = text
-  quickOpen.value = false
+/** 点选快捷回复：替换草稿内容（保持改造前行为），并收起弹层 */
+function useQuick(q: QuickReply): void {
+  draft.value = q.content
+  quickPopoverOpen.value = false
+  quickDialogOpen.value = false
   focus()
 }
 
@@ -410,20 +488,50 @@ defineExpose({ focus, insert })
   }
 }
 
+.quick-panel {
+  &__head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 6px;
+    padding: 0 2px;
+  }
+
+  &__title {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--kf-text);
+  }
+}
+
+.quick-empty {
+  padding: 14px 4px;
+  text-align: center;
+  font-size: 12px;
+  color: var(--kf-text-weak);
+}
+
 .quick-list {
   display: flex;
   flex-direction: column;
   gap: 2px;
+  max-height: 300px;
+  overflow-y: auto;
 }
 
 .quick-list--dialog {
   display: flex;
   flex-direction: column;
   gap: 4px;
+  max-height: 52vh;
 }
 
 .quick-item {
-  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  padding: 8px 12px;
   border: none;
   background: transparent;
   border-radius: var(--kf-radius-sm);
@@ -439,5 +547,38 @@ defineExpose({ focus, insert })
   &:active {
     background: var(--kf-bg-active);
   }
+
+  &__head {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+  }
+
+  &__title {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--kf-text);
+  }
+
+  &__content {
+    font-size: 13px;
+    line-height: 1.5;
+    color: var(--kf-text-sub);
+    word-break: break-word;
+    white-space: pre-wrap;
+    max-height: 3em;
+    overflow: hidden;
+  }
+}
+
+/* 移动端弹层：窄屏宽度自适应，内容可滚动，不出现横向溢出 */
+:global(.quick-pick-dialog) {
+  max-width: 94%;
+}
+
+:global(.quick-pick-dialog .el-dialog__body) {
+  padding: 10px 14px;
+  overflow-x: hidden;
 }
 </style>

@@ -56,10 +56,22 @@ func Register(g *gin.RouterGroup, authed *gin.RouterGroup) {
 	authed.DELETE("/tags/:id", h.DeleteTagHandler)
 
 	// 自动回复规则（关键词 → 机器人回复 / 转人工）
+	// 这组端点是后台与客服工作台共用的：客服端也能增删改（权限由业务层按归属判定，
+	// 客服只能改自己创建的，公共规则只读）。因此不在 agent 端重复注册同一 method+path
+	// —— 同一个 engine 上重复注册会 panic（handlers are already registered for path）。
 	authed.GET("/auto-replies", h.ListAutoRepliesHandler)
 	authed.POST("/auto-replies", h.CreateAutoReplyHandler)
 	authed.PUT("/auto-replies/:id", h.UpdateAutoReplyHandler)
 	authed.DELETE("/auto-replies/:id", h.DeleteAutoReplyHandler)
+
+	// 快捷回复（管理员维护租户全部，含公共话术 user_id = 0）
+	// 路径前缀说明：/quick-replies 已被客服端分组占用（同上，重复注册会 panic），
+	// 且 /quick-replies/:id 与任何 /quick-replies/xxx 静态段在 gin 路由树里会冲突，
+	// 因此管理员侧按 API 文档的写法挂在 /admin/ 前缀下。
+	authed.GET("/admin/quick-replies", h.ListTenantQuickRepliesHandler)
+	authed.POST("/admin/quick-replies", h.CreateTenantQuickReplyHandler)
+	authed.PUT("/admin/quick-replies/:id", h.UpdateTenantQuickReplyHandler)
+	authed.DELETE("/admin/quick-replies/:id", h.DeleteTenantQuickReplyHandler)
 
 	// 数据统计
 	authed.GET("/stats/overview", h.StatsOverviewHandler)

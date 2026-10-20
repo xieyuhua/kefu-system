@@ -430,6 +430,14 @@ export function matchTypeLabel(type: string): string {
 /** 自动回复规则 */
 export interface AutoReply {
   id: number
+  /** 归属：0 = 公共规则（管理员建的）；> 0 = 创建该规则的客服账号 ID */
+  user_id: number
+  /** 「公共」或创建人昵称 */
+  owner: string
+  /** user_id = 0：公共规则（客服只读） */
+  shared: boolean
+  /** 当前登录账号能否改 / 删（客服对公共规则与别人的规则为 false） */
+  editable: boolean
   name: string
   /** 0 = 全渠道 */
   channel_id: number
@@ -458,22 +466,22 @@ export interface AutoReplyPayload {
   priority: number
 }
 
-/** GET /api/auto-replies */
+/** GET /api/auto-replies —— 全租户可见（含其它客服建的规则），每条带 editable */
 export function listAutoReplies(): Promise<AutoReply[]> {
   return http.get<AutoReply[]>('/auto-replies')
 }
 
-/** POST /api/auto-replies（admin） */
+/** POST /api/auto-replies —— 客服建的归属自己；管理员建的为公共规则（user_id = 0） */
 export function createAutoReply(payload: AutoReplyPayload): Promise<AutoReply> {
   return http.post<AutoReply>('/auto-replies', payload)
 }
 
-/** PUT /api/auto-replies/:id（admin） */
+/** PUT /api/auto-replies/:id —— 客服只能改自己创建的，公共规则返回「公共规则仅管理员可修改」 */
 export function updateAutoReply(id: number, payload: AutoReplyPayload): Promise<boolean> {
   return http.put<boolean>(`/auto-replies/${id}`, payload)
 }
 
-/** DELETE /api/auto-replies/:id（admin） */
+/** DELETE /api/auto-replies/:id —— 权限口径同修改 */
 export function deleteAutoReply(id: number): Promise<boolean> {
   return http.del<boolean>(`/auto-replies/${id}`)
 }

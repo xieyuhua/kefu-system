@@ -17,6 +17,10 @@ import (
 
 // Run 初始化演示数据。已存在数据时幂等跳过。
 func Run() error {
+	// 快捷回复的演示数据独立于「首次建库」流程：
+	// 老库升级上来时 Tenant 已经存在，同样需要几条示例话术，因此放在提前返回之前。
+	seedQuickReplies()
+
 	var cnt int64
 	db.DB.Model(&model.Tenant{}).Count(&cnt)
 	if cnt > 0 {
@@ -230,6 +234,10 @@ func Run() error {
 	}
 	_ = transferTrue
 
+	// ---- 快捷回复（公共 + 私有示例） ----
+	// 首次建库时演示租户与客服账号刚建好，这里再灌一次；函数自身幂等，重复调用无副作用。
+	seedQuickReplies()
+
 	log.Println("[seed] 演示数据初始化完成")
 	log.Println("[seed] 账号：admin/admin123（管理员）、kf01/123456、kf02/123456")
 	_ = rand.Intn
@@ -237,8 +245,63 @@ func Run() error {
 	return nil
 }
 
-// appIDExists 返回「该租户内 app_id 是否已被占用」的判定闭包。
-// pkg/idgen 是可复用 SDK、不认识 channels 表，唯一性校验由调用方注入；
+// seedQuickReplies 给演示租户灌 3-5 条快捷回复示例（公共 + 私有各几条）。
+//
+// 幂等口径：该租户已有任意一条快捷回复就直接跳过，重复启动不会灌出重复话术。
+// 演示租户 = id 最小的租户；客服账号按 kf01 / kf02 定位（角色不写死，老库也能对上）。
+func seedQuickReplies() {
+	var tenant model.Tenant
+	if err := db.DB.Order("id asc").First(&tenant).Error; err != nil || tenant.ID == 0 {
+		return
+	}
+	var cnt int64
+	if err := db.DB.Model(&model.QuickReply{}).Where("tenant_id = ?", tenant.ID).Count(&cnt).Error; err != nil {
+		return
+	}
+	if cnt > 0 {
+		return
+	}
+
+	findUser := func(account string) uint {
+		var u model.User
+		if err := db.DB.Where("tenant_id = ? AND account = ?", tenant.ID, account).First(&u).Error; err != nil {
+			return 0
+		}
+		return u.ID
+	}
+	kf1ID := findUser("kf01")
+	kf2ID := findUser("kf02")
+
+	// 共享话术（user_id = 0）：管理员维护，所有客服可见、只读
+	rows := []*model.QuickReply{
+		{TenantID: tenant.ID, UserID: 0, Title: "问候语", Sort: 10, Enabled: true,
+			Content: "您好，很高兴为您服务～请问有什么可以帮您？"},
+		{TenantID: tenant.ID, UserID: 0, Title: "稍等查询", Sort: 20, Enabled: true,
+			Content: "请稍等，我帮您查询一下，马上回复您。"},
+		{TenantID: tenant.ID, UserID: 0, Title: "结束语", Sort: 30, Enabled: true,
+			Content: "感谢您的耐心等待，如果还有其他问题随时联系我～"},
+	}
+	// 私有话术：只有本人（和管理员）能改
+	if kf1ID > 0 {
+		rows = append(rows, &model.QuickReply{
+			TenantID: tenant.ID, UserID: kf1ID, Title: "我的核实话术", Sort: 40, Enabled: true,
+			Content: "麻烦提供一下订单号，我这边帮您核实处理。",
+		})
+	}
+	if kf2ID > 0 {
+		rows = append(rows, &model.QuickReply{
+			TenantID: tenant.ID, UserID: kf2ID, Title: "我的售后话术", Sort: 50, Enabled: true,
+			Content: "已为您登记售后，稍后会有专人跟进，请保持手机畅通。",
+		})
+	}
+
+	for _, r := range rows {
+		db.DB.Create(r)
+	}
+	log.Printf("[seed] 快捷回复示例 %d 条（公共 %d 条）", len(rows), 3)
+}
+
+// appIDExists 返回「该租户内 app_id 是否已被占用」的判定闭包。// pkg/idgen 是可复用 SDK、不认识 channels 表，唯一性校验由调用方注入；
 // 查询失败按「未被占用」处理，与原逻辑一致。
 func appIDExists(tenantID uint) func(id string) bool {
 	return func(id string) bool {
