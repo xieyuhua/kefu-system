@@ -154,8 +154,12 @@ func Setup() *gin.Engine {
 	r.StaticFile("/favicon.svg", filepath.Join(webDir, "favicon.svg"))
 	r.StaticFile("/icons.svg", filepath.Join(webDir, "icons.svg"))
 
-	// 根路径：用户端（index.html）
-	r.GET("/", spaEntry(webDir, "index.html"))
+	// 根路径：默认空白页。
+	// 直接落到用户端聊天页会让「没有携带 channel/uid 参数的访问」进入一个空会话，
+	// 因此根路径只返回一张空白页，三端各自走 /admin/ /chat/ /kefu/ 前缀。
+	r.GET("/", func(c *gin.Context) {
+		c.Data(http.StatusOK, "text/html; charset=utf-8", []byte(blankPage))
+	})
 
 	// 每个前缀返回自己的入口 HTML，并对前缀下的任意路径做 SPA 回退。
 	// gin 的路由树不允许同层同时出现 "/x" 与 "/x/*any"，
@@ -206,3 +210,17 @@ func Setup() *gin.Engine {
 	}
 	return r
 }
+
+// blankPage 根路径返回的空白页：只有正确的 charset 与移动端 viewport，不放任何内容。
+// 三端入口固定在 /admin/ /chat/ /kefu/ 三个前缀下，根路径不再默认进入任何一端。
+const blankPage = `<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title></title>
+<style>html,body{margin:0;padding:0;height:100%;background:#fff}</style>
+</head>
+<body></body>
+</html>
+`
