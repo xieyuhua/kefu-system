@@ -7,6 +7,7 @@ package setting
 
 import (
 	"errors"
+	"gorm.io/gorm/clause"
 	"strings"
 
 	"kefu-server/internal/common/model"
@@ -116,17 +117,16 @@ func SaveSetting(tenantID uint, key, value string) error {
 	}
 	value = strings.TrimSpace(value)
 
-	s, err := findSettingByKey(tenantID, key)
-	if err != nil {
-		// 不存在则新建
-		row := model.Setting{TenantID: tenantID, Key: key, Value: value}
-		if d, ok := settingDefaults[key]; ok {
-			row.Remark = d.Remark
-		}
-		return createSetting(&row)
+	// 用 upsert 一步写入：存在则更新 value（与 remark 同步），不存在则插入。
+	// 这样既不走「先查后插」的竞态，也不依赖 findSettingByKey 的查询是否命中。
+	row := model.Setting{TenantID: tenantID, Key: key, Value: value}
+	if d, ok := settingDefaults[key]; ok {
+		row.Remark = d.Remark
 	}
-	s.Value = value
-	return saveSetting(s)
+	return storage.Default().DB().Clauses(clause.OnConflict{
+		Columns:   []clause.Column{{Name: "tenant_id"}, {Name: "key"}},
+		DoUpdates: clause.AssignmentColumns([]string{"value", "updated_at"}),
+	}).Create(&row).Error
 }
 
 // DefaultImageURL 默认图片地址（供前端兜底）
@@ -144,7 +144,9 @@ func MessageSound(tenantID uint) string {
 // findSettingByKey 按租户 + key 查询单个配置项；未命中返回 gorm.ErrRecordNotFound。
 func findSettingByKey(tenantID uint, key string) (*model.Setting, error) {
 	var s model.Setting
-	if err := storage.Default().DB().Where("tenant_id = ? AND key = ?", tenantID, key).First(&s).Error; err != nil {
+	// 用结构体条件而不是裸 SQL：`key` 是 MySQL 保留字，写成 "key = ?" 会报语法错，
+	// 被上层当成「不存在」→ 走 INSERT → 撞 idx_tenant_key 唯一索引（1062）。GORM 对结构体条件会自动加反引号。
+	if err := storage.Default().DB().Where(&model.Setting{TenantID: tenantID, Key: key}).First(&s).Error; err != nil {
 		return nil, err
 	}
 	return &s, nil
