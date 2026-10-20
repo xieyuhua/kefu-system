@@ -11,6 +11,8 @@ package service
 // 形态约定：端内编排都是 Service 的方法（指针接收者），跨层依赖在构造时建好。
 
 import (
+	"context"
+
 	commonsvc "kefu-server/internal/common/service"
 )
 
@@ -23,6 +25,7 @@ type Service struct {
 	Account   *commonsvc.AccountService
 	AutoReply *commonsvc.AutomationService
 	Stats     *commonsvc.StatsService
+	Storage   *commonsvc.ObjectStorageService
 }
 
 // NewService 创建端内业务层实例（自带各公共业务依赖）。
@@ -34,6 +37,7 @@ func NewService() *Service {
 		Account:   commonsvc.NewAccountService(),
 		AutoReply: commonsvc.NewAutomationService(),
 		Stats:     commonsvc.NewStatsService(),
+		Storage:   commonsvc.NewObjectStorageService(),
 	}
 }
 
@@ -42,4 +46,15 @@ func NewService() *Service {
 // StatsOverviewData 生成指定天数的数据概览：口径在统计内核，本端只做委派。
 func (s *Service) StatsOverviewData(tenantID uint, days int) (*commonsvc.StatsOverview, error) {
 	return s.Stats.StatsOverviewData(tenantID, days)
+}
+
+// ---------------- 对象存储配置（天翼云 OOS） ----------------
+
+// ObjectStorageConfig 对象存储配置的入参类型（handler 绑定请求体用）。
+// 字段与 settings 里 storage.object 的 JSON 一致；secret_key 允许传 ****** 表示沿用已存密钥。
+type ObjectStorageConfig = commonsvc.ObjectStorage
+
+// TestObjectStorage 用给定配置测试对象存储连通性：构造客户端并上传 / 删除一个探针对象。
+func (s *Service) TestObjectStorage(ctx context.Context, tenantID uint, cfg *ObjectStorageConfig) error {
+	return s.Storage.TestObjectStorage(ctx, tenantID, cfg)
 }

@@ -5,10 +5,24 @@
 import { computed, onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Refresh, Upload } from '@element-plus/icons-vue'
-import { listSettings, saveSetting, type SettingItem } from '@/shared/api/admin'
+import {
+  STORAGE_OBJECT_DEFAULTS,
+  STORAGE_OBJECT_KEY,
+  STORAGE_SECRET_MASK,
+  listSettings,
+  parseStorageObject,
+  saveSetting,
+  serializeStorageObject,
+  testStorageObject,
+  type SettingItem,
+  type StorageObjectConfig,
+} from '@/shared/api/admin'
 import { uploadAttachment, validateFile } from '@/shared/api/upload'
 import { playMessageSound } from '@/shared/utils/sound'
+import { useIsMobile } from '@/shared/composables/useIsMobile'
 import ThumbImage from '@/shared/components/ThumbImage.vue'
+
+const { isMobile } = useIsMobile()
 
 const loading = ref(false)
 const saving = ref<Record<string, boolean>>({})
@@ -18,6 +32,40 @@ const remarks = ref<Record<string, string>>({})
 
 /** 变更过的项（用于显示"保存"按钮） */
 const dirty = computed(() => Object.keys(settings.value).length > 0)
+
+/* ---------------- 对象存储（storage.object） ---------------- *
+ * 该配置以整份 JSON 字符串存在 settings 表里，字段较多，
+ * 因此单独维护一份表单状态，不塞进 settings（避免污染「保存全部」的逐项逻辑）。
+ */
+const storage = ref<StorageObjectConfig>({ ...STORAGE_OBJECT_DEFAULTS })
+/** 后端已保存过密钥（返回 ******）：未改动时提交 ******，由后端保留原值 */
+const secretSaved = ref(false)
+/** 表单有未保存改动（用于刷新时不冲掉正在编辑的内容） */
+const storageDirty = ref(false)
+const testing = ref(false)
+const savingStorage = ref(false)
+/** 最近一次「测试连接」结果（常驻展示，便于截图/排查） */
+const testResult = ref<{ ok: boolean; message: string } | null>(null)
+
+/** 把配置写进表单（同时刷新「密钥已保存」标记） */
+function applyStorage(cfg: StorageObjectConfig): void {
+  const masked = cfg.secret_key === STORAGE_SECRET_MASK
+  // 已脱敏时表单里保留 ****** 原样展示，未改动则原样回写
+  storage.value = { ...cfg, provider: cfg.provider || 'ctyun' }
+  secretSaved.value = masked
+}
+
+/** 编辑任一存储字段：标记为待保存 */
+function markStorageDirty(): void {
+  storageDirty.value = true
+}
+
+/** 提交给后端的配置：密钥未改动 / 留空时提交 ******，由后端保留原值 */
+function storageForSubmit(): StorageObjectConfig {
+  const cfg: StorageObjectConfig = { ...storage.value, provider: 'ctyun' }
+  if (!cfg.secret_key && secretSaved.value) cfg.secret_key = STORAGE_SECRET_MASK
+  return cfg
+}
 
 async function load(): Promise<void> {
   loading.value = true
@@ -31,6 +79,8 @@ async function load(): Promise<void> {
     })
     settings.value = vals
     remarks.value = rms
+    // 读取失败 / 字段缺失时 parseStorageObject 会自动兜底成默认值
+    if (!storageDirty.value) applyStorage(parseStorageObject(vals[STORAGE_OBJECT_KEY]))
   } catch {
     ElMessage.error('配置加载失败')
   } finally {
@@ -52,9 +102,60 @@ async function save(key: string): Promise<void> {
 }
 
 async function saveAll(): Promise<void> {
-  const keys = Object.keys(settings.value)
+  // 对象存储由下方 saveStorage 统一序列化提交，这里跳过它的原始 JSON，避免重复写入
+  const keys = Object.keys(settings.value).filter((k) => k !== STORAGE_OBJECT_KEY)
   for (const k of keys) {
     await save(k)
+  }
+  // 对象存储改动一并落库（未改动则不打扰后端）
+  if (storageDirty.value) {
+    await saveStorage()
+  }
+}
+
+/** 保存对象存储配置：整份配置序列化成 JSON 写入 storage.object */
+async function saveStorage(): Promise<void> {
+  savingStorage.value = true
+  try {
+    await saveSetting(STORAGE_OBJECT_KEY, serializeStorageObject(storageForSubmit()))
+    storageDirty.value = false
+    ElMessage.success('对象存储配置已保存')
+    // 重新拉取：后端回显的 secret_key 是脱敏值，落回表单后即为 ******
+    await load()
+  } catch {
+    ElMessage.error('保存失败')
+  } finally {
+    savingStorage.value = false
+  }
+}
+
+/** 测试连接：body 为配置对象本体，结果用后端返回的 message 提示 */
+async function testStorage(): Promise<void> {
+  if (!storage.value.endpoint.trim() || !storage.value.bucket.trim()) {
+    ElMessage.warning('请先填写 Endpoint 和 Bucket')
+    return
+  }
+  testing.value = true
+  try {
+    const res = await testStorageObject(storageForSubmit())
+    const message = (res && res.message) || (res && res.ok ? '连接成功' : '连接失败')
+    const ok = !!(res && res.ok)
+    testResult.value = { ok, message }
+    if (ok) {
+      ElMessage.success(message)
+    } else {
+      ElMessage.error(message)
+    }
+  } catch (err) {
+    // 后端未就绪 / 网络异常：http 拦截器已弹过 message，这里只补结果行与兜底提示，不让页面报错
+    const msg = err instanceof Error && err.message ? err.message.trim() : ''
+    const message = msg || '接口暂不可用，请确认后端服务已就绪'
+    testResult.value = { ok: false, message }
+    if (!msg) {
+      ElMessage.error(`测试连接失败：${message}`)
+    }
+  } finally {
+    testing.value = false
   }
 }
 
@@ -254,6 +355,225 @@ onMounted(load)
         聊天中的图片消息单独使用内置占位图，不受此项影响。提示音「内置」无需上传音频文件，由浏览器直接合成。
       </el-alert>
     </div>
+
+    <!-- ---------------- 对象存储（天翼云 OOS） ---------------- -->
+    <div v-loading="loading" class="admin-card storage-card" data-test="storage-card">
+      <div class="toolbar">
+        <span class="toolbar__title">
+          对象存储
+          <span class="toolbar__sub">天翼云 OOS（S3 兼容），图片 / 文件直传对象存储</span>
+        </span>
+        <div>
+          <el-button
+            size="small"
+            :loading="testing"
+            data-test="storage-test"
+            @click="testStorage"
+          >
+            测试连接
+          </el-button>
+          <el-button
+            size="small"
+            type="primary"
+            :loading="savingStorage"
+            data-test="storage-save"
+            @click="saveStorage"
+          >
+            保存
+          </el-button>
+        </div>
+      </div>
+
+      <div :class="['storage-form', isMobile ? 'storage-form--mobile' : '']">
+        <!-- 启用开关 -->
+        <div class="setting-item">
+          <div class="setting-item__label">
+            <div class="setting-item__name">启用对象存储</div>
+            <div class="setting-item__remark">
+              关闭时继续使用服务器本地存储，下方参数仅可查看
+            </div>
+          </div>
+          <div class="setting-item__control">
+            <div class="storage-switch">
+              <el-switch
+                v-model="storage.enabled"
+                :size="isMobile ? 'default' : 'small'"
+                data-test="storage-enabled"
+                @change="markStorageDirty"
+              />
+              <span class="storage-switch__state">
+                {{ storage.enabled ? '已启用' : '未启用（参数置灰）' }}
+              </span>
+            </div>
+          </div>
+        </div>
+
+        <!-- 服务商（只读） -->
+        <div class="setting-item">
+          <div class="setting-item__label">
+            <div class="setting-item__name">服务商</div>
+            <div class="setting-item__remark">当前仅支持天翼云 OOS，S3 协议兼容</div>
+          </div>
+          <div class="setting-item__control">
+            <div class="storage-readonly" data-test="storage-provider">
+              天翼云 OOS（S3 兼容）
+            </div>
+          </div>
+        </div>
+
+        <!-- Endpoint -->
+        <div class="setting-item">
+          <div class="setting-item__label">
+            <div class="setting-item__name">Endpoint</div>
+          </div>
+          <div class="setting-item__control">
+            <el-input
+              v-model="storage.endpoint"
+              size="small"
+              class="setting-input setting-input--wide"
+              placeholder="https://oos-cn.ctyunapi.cn"
+              :disabled="!storage.enabled"
+              data-test="storage-endpoint"
+              @input="markStorageDirty"
+            />
+            <div class="storage-hint">S3 端点，不要带 bucket</div>
+          </div>
+        </div>
+
+        <!-- 区域 -->
+        <div class="setting-item">
+          <div class="setting-item__label">
+            <div class="setting-item__name">区域 Region</div>
+          </div>
+          <div class="setting-item__control">
+            <el-input
+              v-model="storage.region"
+              size="small"
+              class="setting-input"
+              placeholder="留空使用默认"
+              :disabled="!storage.enabled"
+              data-test="storage-region"
+              @input="markStorageDirty"
+            />
+            <div class="storage-hint">可选，留空使用默认</div>
+          </div>
+        </div>
+
+        <!-- Bucket -->
+        <div class="setting-item">
+          <div class="setting-item__label">
+            <div class="setting-item__name">Bucket</div>
+          </div>
+          <div class="setting-item__control">
+            <el-input
+              v-model="storage.bucket"
+              size="small"
+              class="setting-input"
+              placeholder="kefu"
+              :disabled="!storage.enabled"
+              data-test="storage-bucket"
+              @input="markStorageDirty"
+            />
+            <div class="storage-hint">存储桶名称，如 kefu</div>
+          </div>
+        </div>
+
+        <!-- Access Key -->
+        <div class="setting-item">
+          <div class="setting-item__label">
+            <div class="setting-item__name">Access Key</div>
+          </div>
+          <div class="setting-item__control">
+            <el-input
+              v-model="storage.access_key"
+              size="small"
+              class="setting-input setting-input--wide"
+              placeholder="Access Key"
+              :disabled="!storage.enabled"
+              data-test="storage-ak"
+              @input="markStorageDirty"
+            />
+          </div>
+        </div>
+
+        <!-- Secret Key -->
+        <div class="setting-item">
+          <div class="setting-item__label">
+            <div class="setting-item__name">Secret Key</div>
+          </div>
+          <div class="setting-item__control">
+            <el-input
+              v-model="storage.secret_key"
+              type="password"
+              show-password
+              size="small"
+              class="setting-input setting-input--wide"
+              placeholder="Secret Key"
+              :disabled="!storage.enabled"
+              data-test="storage-sk"
+              @input="markStorageDirty"
+            />
+            <div v-if="secretSaved" class="storage-hint" data-test="storage-sk-hint">
+              已保存，留空表示不修改
+            </div>
+            <div v-else class="storage-hint">与 Access Key 配对使用</div>
+          </div>
+        </div>
+
+        <!-- 访问域名 -->
+        <div class="setting-item">
+          <div class="setting-item__label">
+            <div class="setting-item__name">访问域名</div>
+          </div>
+          <div class="setting-item__control">
+            <el-input
+              v-model="storage.public_base"
+              size="small"
+              class="setting-input setting-input--wide"
+              placeholder="https://kefu.oos-cn.ctyunapi.cn"
+              :disabled="!storage.enabled"
+              data-test="storage-public-base"
+              @input="markStorageDirty"
+            />
+            <div class="storage-hint">文件对外访问的域名（CDN 或 bucket 域名）</div>
+          </div>
+        </div>
+
+        <!-- 路径前缀 -->
+        <div class="setting-item">
+          <div class="setting-item__label">
+            <div class="setting-item__name">路径前缀</div>
+          </div>
+          <div class="setting-item__control">
+            <el-input
+              v-model="storage.path_prefix"
+              size="small"
+              class="setting-input"
+              placeholder="uploads/"
+              :disabled="!storage.enabled"
+              data-test="storage-prefix"
+              @input="markStorageDirty"
+            />
+            <div class="storage-hint">对象 key 前缀，默认 uploads/，保存时自动补尾部 /</div>
+          </div>
+        </div>
+      </div>
+
+      <div
+        v-if="testResult"
+        class="storage-test-result"
+        :class="testResult.ok ? 'is-ok' : 'is-fail'"
+        data-test="storage-test-result"
+      >
+        上次测试：{{ testResult.message }}
+      </div>
+
+      <el-alert type="info" :closable="false" class="tip">
+        说明：开启后新上传的图片 / 文件写入天翼云 OOS，历史文件仍按原地址访问；
+        测试连接只校验 Endpoint / Bucket / 密钥是否可用，不会写入任何文件。
+        密钥已保存时页面只显示 <b>******</b>，留空提交表示保留原密钥。
+      </el-alert>
+    </div>
   </div>
 </template>
 
@@ -353,6 +673,83 @@ onMounted(load)
   width: 360px;
 }
 
+/* ---------------- 对象存储卡片 ---------------- */
+.storage-card {
+  /* 右上角操作按钮：窄屏自动换行，避免撑出横向滚动 */
+  .toolbar > div {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+  }
+}
+
+.storage-switch {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 24px;
+
+  &__state {
+    font-size: 12px;
+    color: #7f7f7f;
+  }
+}
+
+.storage-readonly {
+  font-size: 14px;
+  color: #191919;
+  line-height: 24px;
+}
+
+.storage-hint {
+  margin-top: 4px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: #909399;
+  word-break: break-word;
+}
+
+.storage-test-result {
+  margin-top: 12px;
+  padding: 8px 10px;
+  border-radius: 4px;
+  font-size: 12px;
+  line-height: 1.6;
+  word-break: break-word;
+
+  &.is-ok {
+    color: #067a46;
+    background: #e8f8ef;
+  }
+
+  &.is-fail {
+    color: #c45656;
+    background: #fef0f0;
+  }
+}
+
+/* JS 判定为移动端时同样上下堆叠（与下方媒体查询保持一致，双保险） */
+.storage-form--mobile {
+  .setting-item {
+    flex-direction: column;
+    gap: 8px;
+    padding: 12px 0;
+
+    &__label {
+      width: auto;
+    }
+
+    &__control {
+      width: 100%;
+    }
+  }
+
+  .setting-input,
+  .setting-input--wide {
+    width: 100%;
+  }
+}
+
 /* ---------------- 移动端（≤768px） ---------------- */
 @media (max-width: 768px) {
   .toolbar {
@@ -416,6 +813,20 @@ onMounted(load)
     flex-wrap: wrap;
     align-items: stretch;
     row-gap: 8px;
+  }
+
+  /* 对象存储：标题与操作按钮上下排列，避免按钮把标题挤成竖排 */
+  .storage-card .toolbar {
+    flex-direction: column;
+    row-gap: 8px;
+
+    > div {
+      justify-content: flex-start;
+    }
+  }
+
+  .storage-readonly {
+    line-height: 1.6;
   }
 }
 </style>

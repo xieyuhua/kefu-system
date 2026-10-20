@@ -67,6 +67,8 @@ func Register(g *gin.RouterGroup, authed *gin.RouterGroup) {
 	// 系统配置（默认图片等）
 	authed.GET("/settings", h.ListSettingsHandler)
 	authed.PUT("/settings", h.SaveSettingHandler)
+	// 对象存储配置连通性测试（管理员；密钥可传 ****** 沿用已存值）
+	authed.POST("/settings/storage/test", h.TestStorageSettingHandler)
 
 	// 设备推送自检（APP / PC 桌面端）
 	authed.POST("/devices/test-push", h.TestDevicePushHandler)

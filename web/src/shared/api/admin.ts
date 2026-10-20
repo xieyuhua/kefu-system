@@ -246,6 +246,119 @@ export function saveSetting(key: string, value: string): Promise<boolean> {
 }
 
 /* ------------------------------------------------------------------ *
+ * 对象存储（天翼云 OOS，S3 兼容）
+ *
+ * 存储方式：settings 表里 key = "storage.object"，value 是整份配置的
+ * JSON 字符串；后端返回时会把 secret_key 脱敏成 "******"。
+ * ------------------------------------------------------------------ */
+
+/** 配置 key */
+export const STORAGE_OBJECT_KEY = 'storage.object'
+
+/** secret_key 脱敏占位符：提交该值表示「保留后端已有密钥」 */
+export const STORAGE_SECRET_MASK = '******'
+
+/** 对象存储配置（字段与后端 JSON 契约严格一致） */
+export interface StorageObjectConfig {
+  /** 是否启用对象存储（关闭时上传走服务器本地存储） */
+  enabled: boolean
+  /** 服务商，固定 ctyun（天翼云 OOS，S3 兼容） */
+  provider: string
+  /** S3 端点，不带 bucket */
+  endpoint: string
+  /** 区域，留空使用默认 */
+  region: string
+  bucket: string
+  access_key: string
+  /** 密钥；后端返回时已脱敏为 ****** */
+  secret_key: string
+  /** 文件对外访问域名（CDN 或 bucket 域名） */
+  public_base: string
+  /** 对象 key 路径前缀，默认 uploads/ */
+  path_prefix: string
+}
+
+/** 配置缺省值：「读取失败 / 字段缺失」时的兜底，保证页面不白屏 */
+export const STORAGE_OBJECT_DEFAULTS: StorageObjectConfig = {
+  enabled: false,
+  provider: 'ctyun',
+  endpoint: 'https://oos-cn.ctyunapi.cn',
+  region: '',
+  bucket: 'kefu',
+  access_key: '',
+  secret_key: '',
+  public_base: 'https://kefu.oos-cn.ctyunapi.cn',
+  path_prefix: 'uploads/',
+}
+
+/** 规范化路径前缀：去空白、补尾部斜杠，空值回落 uploads/ */
+export function normalizePathPrefix(value: string): string {
+  const v = (value || '').trim().replace(/^\/+/, '')
+  if (!v) return STORAGE_OBJECT_DEFAULTS.path_prefix
+  return v.endsWith('/') ? v : `${v}/`
+}
+
+function str(value: unknown, fallback: string): string {
+  return typeof value === 'string' ? value : fallback
+}
+
+/**
+ * 解析 settings 里的 storage.object（JSON 字符串）。
+ * 解析失败、非对象、字段缺失一律用默认值兜底，绝不抛错。
+ */
+export function parseStorageObject(raw: string | null | undefined): StorageObjectConfig {
+  const cfg: StorageObjectConfig = { ...STORAGE_OBJECT_DEFAULTS }
+  if (!raw) return cfg
+
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(raw)
+  } catch {
+    return cfg
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return cfg
+
+  const src = parsed as Record<string, unknown>
+  cfg.enabled = typeof src.enabled === 'boolean' ? src.enabled : cfg.enabled
+  cfg.provider = str(src.provider, cfg.provider) || cfg.provider
+  cfg.endpoint = str(src.endpoint, cfg.endpoint)
+  cfg.region = str(src.region, cfg.region)
+  cfg.bucket = str(src.bucket, cfg.bucket)
+  cfg.access_key = str(src.access_key, cfg.access_key)
+  cfg.secret_key = str(src.secret_key, cfg.secret_key)
+  cfg.public_base = str(src.public_base, cfg.public_base)
+  cfg.path_prefix = normalizePathPrefix(str(src.path_prefix, cfg.path_prefix))
+  return cfg
+}
+
+/** 序列化 storage.object：字段顺序与后端契约一致 */
+export function serializeStorageObject(cfg: StorageObjectConfig): string {
+  const payload: StorageObjectConfig = {
+    enabled: !!cfg.enabled,
+    provider: cfg.provider || 'ctyun',
+    endpoint: (cfg.endpoint || '').trim(),
+    region: (cfg.region || '').trim(),
+    bucket: (cfg.bucket || '').trim(),
+    access_key: (cfg.access_key || '').trim(),
+    secret_key: (cfg.secret_key || '').trim(),
+    public_base: (cfg.public_base || '').trim(),
+    path_prefix: normalizePathPrefix(cfg.path_prefix),
+  }
+  return JSON.stringify(payload)
+}
+
+/** POST /api/settings/storage/test 返回值：body 为配置对象本体 */
+export interface StorageTestResult {
+  ok: boolean
+  message: string
+}
+
+/** POST /api/settings/storage/test —— 用当前表单值实测一次连通性 */
+export function testStorageObject(cfg: StorageObjectConfig): Promise<StorageTestResult> {
+  return http.post<StorageTestResult>('/settings/storage/test', cfg)
+}
+
+/* ------------------------------------------------------------------ *
  * 渠道类型库（可自定义，不限制枚举）—— §3 扩展
  * ------------------------------------------------------------------ */
 

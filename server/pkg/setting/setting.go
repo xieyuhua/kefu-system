@@ -20,7 +20,13 @@ const (
 	SettingDefaultImage = "default_image"
 	// SettingMessageSound 新消息提示音：on=内置提示音（默认），off=静音，或填音频 URL
 	SettingMessageSound = "message_sound"
+	// SettingObjectStorage 对象存储（天翼云 OOS，S3 兼容）配置：value 是一段 JSON
+	SettingObjectStorage = "storage.object"
 )
+
+// DefaultObjectStorageJSON 对象存储配置的默认值（未配置时的初值，指向天翼云 OOS）。
+// 与 common/service 里 ObjectStorage 的字段一一对应；连接参数的解析与校验在那一边。
+const DefaultObjectStorageJSON = `{"enabled":false,"provider":"ctyun","endpoint":"https://oos-cn.ctyunapi.cn","region":"","bucket":"","access_key":"","secret_key":"","public_base":"","path_prefix":"uploads/"}`
 
 // defaultImageFallback 前端未配置时使用的内置兜底图
 const defaultImageFallback = "/img/placeholder.svg"
@@ -36,6 +42,10 @@ var settingDefaults = map[string]struct {
 	SettingMessageSound: {
 		Value:  "on",
 		Remark: "新消息提示音：on=内置提示音（默认），off=静音，或填自定义音频 URL",
+	},
+	SettingObjectStorage: {
+		Value:  DefaultObjectStorageJSON,
+		Remark: "对象存储（天翼云 OOS，S3 兼容）：enabled=true 时上传走对象存储，value 为 JSON 配置",
 	},
 }
 
