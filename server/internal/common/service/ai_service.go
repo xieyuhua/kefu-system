@@ -25,7 +25,6 @@ import (
 	"log"
 	"strings"
 
-	"kefu-server/internal/common/model"
 	"kefu-server/pkg/ai"
 	"kefu-server/pkg/setting"
 )
@@ -155,23 +154,23 @@ func (s *AIService) Answer(tenantID, channelID uint, question string) string {
 		return ""
 	}
 
-	rules, scores, err := s.rag.Retrieve(tenantID, channelID, question, cfg.TopK, cfg.MinScore)
+	docs, scores, err := s.rag.Retrieve(tenantID, channelID, question, cfg.TopK, cfg.MinScore)
 	if err != nil {
-		log.Printf("[ai] 租户 %d 自动回复规则检索失败，降级为兜底话术: %v", tenantID, err)
+		log.Printf("[ai] 租户 %d 检索失败，降级为兜底话术: %v", tenantID, err)
 		return ""
 	}
-	if len(rules) == 0 {
+	if len(docs) == 0 {
 		// 检索无命中：不猜，直接走兜底话术（也不会产生一次模型调用费用）
-		log.Printf("[ai] 租户 %d 自动回复规则无命中（阈值 %.2f，问题：%s），降级为兜底话术",
+		log.Printf("[ai] 租户 %d 检索无命中（阈值 %.2f，问题：%s），降级为兜底话术",
 			tenantID, cfg.MinScore, clipLog(question))
 		return ""
 	}
 
-	prompt := BuildRagPrompt(question, rules, scores)
+	prompt := BuildRagPrompt(question, docs, scores)
 	reply, err := client.Chat(context.Background(), prompt)
 	if err != nil {
-		log.Printf("[ai] 租户 %d 调用模型失败（命中 %d 条规则），降级为兜底话术: %v",
-			tenantID, len(rules), err)
+		log.Printf("[ai] 租户 %d 调用模型失败（命中 %d 条语料），降级为兜底话术: %v",
+			tenantID, len(docs), err)
 		return ""
 	}
 	reply = strings.TrimSpace(reply)
@@ -179,23 +178,23 @@ func (s *AIService) Answer(tenantID, channelID uint, question string) string {
 		log.Printf("[ai] 租户 %d 模型返回空文本，降级为兜底话术", tenantID)
 		return ""
 	}
-	log.Printf("[ai] 租户 %d AI 应答成功（命中规则：%s）", tenantID, autoReplyTitles(rules))
+	log.Printf("[ai] 租户 %d AI 应答成功（命中语料：%s）", tenantID, ragDocTitles(docs))
 	return reply
 }
 
-// autoReplyTitles 把命中的规则名拼成一行，用于成功日志（便于复核回答依据）。
-func autoReplyTitles(rules []*model.AutoReply) string {
-	titles := make([]string, 0, len(rules))
-	for _, r := range rules {
-		if r == nil {
+// ragDocTitles 把命中的语料标题拼成一行，用于成功日志（便于复核回答依据）。
+func ragDocTitles(docs []*RagDoc) string {
+	titles := make([]string, 0, len(docs))
+	for _, d := range docs {
+		if d == nil {
 			continue
 		}
-		if t := strings.TrimSpace(r.Name); t != "" {
+		if t := strings.TrimSpace(d.Title); t != "" {
 			titles = append(titles, t)
 		}
 	}
 	if len(titles) == 0 {
-		return "（未命名规则）"
+		return "（未命名语料）"
 	}
 	return strings.Join(titles, " / ")
 }

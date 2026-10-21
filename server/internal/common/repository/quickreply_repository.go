@@ -60,6 +60,22 @@ func (r *QuickReplyRepository) ListQuickRepliesByTenant(tenantID uint, keyword s
 	return list, nil
 }
 
+// ListQuickRepliesForUsers 列出「公共(user_id=0) + 指定客服私有」的启用快捷回复。
+// AI 检索用：把当前渠道接待客服的快捷回复作为语料之一。
+func (r *QuickReplyRepository) ListQuickRepliesForUsers(tenantID uint, userIDs []uint) ([]*model.QuickReply, error) {
+	var list []*model.QuickReply
+	q := storage.Default().DB().Where("tenant_id = ? AND enabled = true", tenantID)
+	if len(userIDs) > 0 {
+		q = q.Where("(user_id = 0 OR user_id IN ?)", userIDs)
+	} else {
+		q = q.Where("user_id = 0")
+	}
+	if err := q.Order("sort asc, id asc").Find(&list).Error; err != nil {
+		return nil, err
+	}
+	return list, nil
+}
+
 // FindQuickReplyByID 按租户 + 主键查询快捷回复；未命中返回 gorm.ErrRecordNotFound。
 func (r *QuickReplyRepository) FindQuickReplyByID(tenantID, id uint) (*model.QuickReply, error) {
 	var qr model.QuickReply

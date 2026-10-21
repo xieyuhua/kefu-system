@@ -19,7 +19,6 @@ import (
 	"strings"
 	"unicode"
 
-	"kefu-server/internal/common/model"
 	"kefu-server/internal/common/repository"
 )
 
@@ -39,27 +38,44 @@ const (
 	ragMinTokenLen = 2
 )
 
-// RagService AI 应答检索内核，持有自动回复仓储。
+// RagService AI 应答检索内核，持有自动回复与快捷回复仓储。
 type RagService struct {
-	repo *repository.AutoReplyRepository
+	auto     *repository.AutoReplyRepository
+	quick    *repository.QuickReplyRepository
+	channels *repository.ChannelRepository
 }
 
 // NewRagService 创建检索实例（自带数据访问层依赖）。
 func NewRagService() *RagService {
-	return &RagService{repo: repository.NewAutoReplyRepository()}
+	return &RagService{
+		auto:     repository.NewAutoReplyRepository(),
+		quick:    repository.NewQuickReplyRepository(),
+		channels: repository.NewChannelRepository(),
+	}
 }
 
-// Retrieve 检索与问题最相关的「该渠道自动回复规则」，返回命中的规则与各自分数（同序、按分数降序）。
+// RagDoc 检索命中的统一文档（来源：自动回复规则 或 客服快捷回复）。
+type RagDoc struct {
+	ID      uint   `json:"id"`
+	Kind    string `json:"kind"` // "auto_reply" | "quick_reply"
+	Title   string `json:"title"`
+	Tags    string `json:"tags"`
+	Content string `json:"content"`
+}
+
+// Retrieve 检索与问题最相关的语料：该渠道的自动回复规则 + 该渠道接待客服的快捷回复。
+// 返回命中的文档与各自分数（同序、按分数降序）。
 //
 // 契约：
-//   - 只检索启用中的规则，且规则适用于 channelID（含全渠道规则）；
-//   - 分数低于 minScore 的规则一律丢弃：宁可「无命中」走兜底话术，也不拿弱相关内容去猜；
+//   - 自动回复只看启用中、适用于 channelID（含全渠道）且非「转人工」的规则；
+//   - 快捷回复只看启用中、属于「公共 + 该渠道接待客服私有」的话术；
+//   - 分数低于 minScore 一律丢弃：宁可「无命中」走兜底话术，也不拿弱相关内容去猜；
 //   - topK <= 0 时按 1 处理，超过 ragScanLimit 时按上限夹取；
 //   - 无命中返回 (空切片, 空切片, nil)，不返回 error（无命中不是错误）。
-func (s *RagService) Retrieve(tenantID, channelID uint, question string, topK int, minScore float64) ([]*model.AutoReply, []float64, error) {
+func (s *RagService) Retrieve(tenantID, channelID uint, question string, topK int, minScore float64) ([]*RagDoc, []float64, error) {
 	q := strings.TrimSpace(question)
 	if q == "" {
-		return []*model.AutoReply{}, []float64{}, nil
+		return []*RagDoc{}, []float64{}, nil
 	}
 	if topK <= 0 {
 		topK = 1
@@ -74,73 +90,115 @@ func (s *RagService) Retrieve(tenantID, channelID uint, question string, topK in
 		minScore = 1
 	}
 
-	rules, err := s.repo.ListEnabledAutoReplies(tenantID)
+	type hit struct {
+		doc   *RagDoc
+		score float64
+	}
+	hits := make([]hit, 0, ragScanLimit)
+
+	// ① 自动回复规则（该渠道生效 + 非转人工）
+	rules, err := s.auto.ListEnabledAutoReplies(tenantID)
 	if err != nil {
 		return nil, nil, err
 	}
-
-	type hit struct {
-		rule  *model.AutoReply
-		score float64
-	}
-	hits := make([]hit, 0, len(rules))
 	for _, r := range rules {
 		if r == nil || r.TransferToHuman {
-			continue // 转人工规则不参与 AI 检索
+			continue
 		}
 		if !MatchChannel(r, channelID) {
-			continue // 只检索适用于该渠道的规则
+			continue
 		}
-		if score := scoreAutoReply(q, r); score >= minScore && score > 0 {
-			hits = append(hits, hit{rule: r, score: score})
+		title := strings.TrimSpace(r.Name)
+		if title == "" {
+			title = firstKeyword(r.Keywords)
+		}
+		doc := &RagDoc{ID: r.ID, Kind: "auto_reply", Title: title, Tags: r.Keywords, Content: r.Reply}
+		if score := scoreRagDoc(q, title, r.Keywords, r.Reply); score >= minScore && score > 0 {
+			hits = append(hits, hit{doc: doc, score: score})
 		}
 	}
-	// 分数降序；同分按 id 升序（结果稳定，便于后台复现与单测）
+
+	// ② 快捷回复（公共 + 该渠道接待客服的私有话术）
+	userIDs := s.channelAgentIDs(channelID)
+	quickReplies, err := s.quick.ListQuickRepliesForUsers(tenantID, userIDs)
+	if err != nil {
+		return nil, nil, err
+	}
+	for _, qr := range quickReplies {
+		if qr == nil {
+			continue
+		}
+		title := strings.TrimSpace(qr.Title)
+		doc := &RagDoc{ID: qr.ID, Kind: "quick_reply", Title: title, Tags: "", Content: qr.Content}
+		if score := scoreRagDoc(q, title, "", qr.Content); score >= minScore && score > 0 {
+			hits = append(hits, hit{doc: doc, score: score})
+		}
+	}
+
+	// 分数降序；同分按来源 id 升序（结果稳定，便于后台复现与单测）
 	sort.SliceStable(hits, func(i, j int) bool {
 		if hits[i].score != hits[j].score {
 			return hits[i].score > hits[j].score
 		}
-		return hits[i].rule.ID < hits[j].rule.ID
+		if hits[i].doc.ID != hits[j].doc.ID {
+			return hits[i].doc.ID < hits[j].doc.ID
+		}
+		return hits[i].doc.Kind < hits[j].doc.Kind
 	})
 	if len(hits) > topK {
 		hits = hits[:topK]
 	}
 
-	outRules := make([]*model.AutoReply, 0, len(hits))
+	outDocs := make([]*RagDoc, 0, len(hits))
 	outScores := make([]float64, 0, len(hits))
 	for _, h := range hits {
-		outRules = append(outRules, h.rule)
+		outDocs = append(outDocs, h.doc)
 		outScores = append(outScores, h.score)
 	}
-	return outRules, outScores, nil
+	return outDocs, outScores, nil
+}
+
+// channelAgentIDs 返回某渠道分配的接待客服 ID 列表（失败返回空，只影响快捷回复召回）。
+func (s *RagService) channelAgentIDs(channelID uint) []uint {
+	if channelID == 0 {
+		return []uint{}
+	}
+	acs, err := s.channels.ListAgentChannelsByChannel(channelID)
+	if err != nil || len(acs) == 0 {
+		return []uint{}
+	}
+	ids := make([]uint, 0, len(acs))
+	seen := make(map[uint]bool, len(acs))
+	for _, ac := range acs {
+		if ac == nil || ac.UserID == 0 || seen[ac.UserID] {
+			continue
+		}
+		seen[ac.UserID] = true
+		ids = append(ids, ac.UserID)
+	}
+	return ids
 }
 
 // ---------------- 打分（纯函数，便于单测） ----------------
 
-// scoreAutoReply 计算一条自动回复规则与问题的相关度（0~1）。
+// scoreRagDoc 计算一条语料与问题的相关度（0~1）。
 // 纯函数：不碰数据库、不读设置，同样的入参永远得到同样的分数。
 //
 // 字段映射：
-//   - title   = 规则名 + 关键词（命中权重最高）；
-//   - tags    = 关键词（后台用关键词标出来的就是「这条规则解决什么问题」）；
-//   - content = 回复正文。
-func scoreAutoReply(question string, rule *model.AutoReply) float64 {
-	if rule == nil {
-		return 0
-	}
+//   - title   命中权重最高（自动回复规则名 / 快捷回复标题）；
+//   - tags    关键词（自动回复规则的关键词；快捷回复无关键词传空串）；
+//   - content 回复正文。
+func scoreRagDoc(question, title, tags, content string) float64 {
 	bigrams, unigrams := splitQueryTokens(question)
 	if len(bigrams) == 0 && len(unigrams) == 0 {
 		return 0
 	}
-	title := strings.TrimSpace(rule.Name)
-	if title == "" {
-		title = strings.TrimSpace(rule.Keywords)
-	}
-	tags := strings.TrimSpace(rule.Keywords)
+	title = strings.TrimSpace(title)
+	tags = strings.TrimSpace(tags)
 
 	titleBigram, titleUnigram := indexText(title)
 	tagBigram, tagUnigram := indexText(tags)
-	bodyBigram, bodyUnigram := indexText(rule.Reply)
+	bodyBigram, bodyUnigram := indexText(content)
 
 	bigramCov := coverage(bigrams, []fieldIndex{
 		{set: titleBigram, weight: ragWeightTitle},
@@ -312,7 +370,7 @@ func clamp01(v float64) float64 {
 
 // ---------------- 提示词拼装 ----------------
 
-// BuildRagPrompt 把命中的自动回复规则拼进提示词，附带来源标题，便于模型引用与人工核对。
+// BuildRagPrompt 把命中的语料（自动回复规则 / 快捷回复）拼进提示词，附带来源标题。
 // 输出形如：
 //
 //	【参考资料】
@@ -324,11 +382,11 @@ func clamp01(v float64) float64 {
 //
 //	【回答要求】
 //	只依据上面的参考资料回答；资料没有覆盖的信息不要编造，直接说明需要转接人工客服。
-func BuildRagPrompt(question string, rules []*model.AutoReply, scores []float64) string {
+func BuildRagPrompt(question string, docs []*RagDoc, scores []float64) string {
 	var b strings.Builder
 	b.WriteString("【参考资料】\n")
-	for i, rule := range rules {
-		if rule == nil {
+	for i, doc := range docs {
+		if doc == nil {
 			continue
 		}
 		score := 0.0
@@ -338,18 +396,22 @@ func BuildRagPrompt(question string, rules []*model.AutoReply, scores []float64)
 		b.WriteString("[")
 		b.WriteString(itoa(i + 1))
 		b.WriteString("] ")
-		title := strings.TrimSpace(rule.Name)
+		title := strings.TrimSpace(doc.Title)
 		if title == "" {
-			title = firstKeyword(rule.Keywords)
+			title = firstKeyword(doc.Tags)
 		}
 		if title == "" {
-			title = "自动回复规则"
+			if doc.Kind == "quick_reply" {
+				title = "快捷回复"
+			} else {
+				title = "自动回复规则"
+			}
 		}
 		b.WriteString(title)
 		b.WriteString("（相关度 ")
 		b.WriteString(formatScore(score))
 		b.WriteString("）\n")
-		b.WriteString(strings.TrimSpace(rule.Reply))
+		b.WriteString(strings.TrimSpace(doc.Content))
 		b.WriteString("\n\n")
 	}
 	b.WriteString("【客户问题】\n")
