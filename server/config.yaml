@@ -31,6 +31,12 @@ jwt:
 upload:
   dir: data/uploads
 
+# 种子数据（首次启动自动写入演示租户/账号/话术规则/快捷回复等）
+# 正式环境：false = 启动时不插入任何初始化数据（只建表 + app_id 幂等迁移）。
+# 开发/演示需要演示数据时改回 true，或用环境变量覆盖：KEFU_SEED_ENABLED=1
+seed:
+  enabled: false
+
 # IP 归属地查询（会话列表展示客户所在城市）
 # url 支持 {ip} 占位符，需返回含 city/region/country 的 JSON。
 # 留空则不解析城市（工作台只显示 IP 地址），内网 IP 始终不解析。

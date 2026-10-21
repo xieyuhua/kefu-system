@@ -62,15 +62,20 @@ func main() {
 	// 厂商推送网关（未在 config.yaml 启用厂商时只记录日志）
 	realtime.InitPush()
 
-	// 演示数据（首次启动自动写入）
-	if err := seed.Run(); err != nil {
-		log.Printf("初始化演示数据失败: %v", err)
+	// 演示数据 / 初始化插入：正式环境可在 config.yaml 设 seed.enabled=false，
+	// 或设环境变量 KEFU_SEED_ENABLED=0，启动时跳过全部种子写入（不插演示租户/账号/话术）。
+	if config.C.Seed.Enabled {
+		if err := seed.Run(); err != nil {
+			log.Printf("初始化演示数据失败: %v", err)
+		}
+		// 补齐演示静态资源（幂等，防止 data/demo 被清理后图片全部 404）
+		seed.EnsureDemoAssets()
+	} else {
+		log.Printf("种子数据已关闭（seed.enabled=false），跳过初始化插入")
 	}
-	// 历史渠道补齐随机标识 app_id（幂等）
+	// 历史渠道补齐随机标识 app_id（幂等的数据迁移，与演示数据无关，始终执行）
 	seed.BackfillChannelAppID()
-	// 补齐演示静态资源（幂等，防止 data/demo 被清理后图片全部 404）
 	// 重启后没有任何 WebSocket 连接，把所有客服重置为离线
-	seed.EnsureDemoAssets()
 	if err := service.NewAccountService().ResetAllOnline(); err != nil {
 		log.Printf("重置在线状态失败: %v", err)
 	}

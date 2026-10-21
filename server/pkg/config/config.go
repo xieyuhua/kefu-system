@@ -15,6 +15,14 @@ type Config struct {
 	Redis    RedisConfig    `yaml:"redis"`
 	IPLookup IPLookupConfig `yaml:"ip_lookup"`
 	Push     PushConfig     `yaml:"push"`
+	Seed     SeedConfig     `yaml:"seed"`
+}
+
+// SeedConfig 启动种子数据配置：正式环境可关闭，启动时不插入演示/初始化数据。
+type SeedConfig struct {
+	// Enabled 是否在启动时写入种子数据（演示租户/账号/话术规则/快捷回复等）。
+	// 默认 true 保持原有行为；正式环境设为 false 后跳过全部初始化插入。
+	Enabled bool `yaml:"enabled"`
 }
 
 // PushConfig 厂商推送配置（对接文档见 docs/推送对接.md）。
@@ -106,6 +114,8 @@ func Load(path string) error {
 			DB:      0,
 			Prefix:  "kefu:",
 		},
+		// 默认开启种子数据（首次启动插入演示租户/账号/话术），正式环境可关闭
+		Seed: SeedConfig{Enabled: true},
 	}
 
 	data, err := os.ReadFile(path)
@@ -161,6 +171,10 @@ func Load(path string) error {
 		if n, err := strconv.Atoi(v); err == nil {
 			C.Redis.DB = n
 		}
+	}
+	// 种子数据开关（正式环境设 false / 0 跳过初始化插入）
+	if v := os.Getenv("KEFU_SEED_ENABLED"); v != "" {
+		C.Seed.Enabled = v == "1" || v == "true"
 	}
 	return nil
 }
@@ -219,7 +233,7 @@ func parseSimpleYAML(s string, c *Config) {
 		}
 		if val == "" {
 			switch key {
-			case "server", "database", "jwt", "upload", "redis", "ip_lookup", "push", "apns", "jpush":
+			case "server", "database", "jwt", "upload", "redis", "ip_lookup", "push", "apns", "jpush", "seed":
 				section = key
 			}
 			continue
@@ -337,6 +351,10 @@ func applyKV(section, key, val string, c *Config) {
 			}
 		case "prefix":
 			c.Redis.Prefix = val
+		}
+	case "seed":
+		if key == "enabled" {
+			c.Seed.Enabled = val == "true" || val == "1"
 		}
 	}
 }
