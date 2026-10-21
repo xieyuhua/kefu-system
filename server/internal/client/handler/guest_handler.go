@@ -98,8 +98,8 @@ func (h *Handler) GuestInitHandler(c *gin.Context) {
 
 	history, _ := h.svc.Conv.ListMessages(tenantID, conv.ID, 0, 20)
 
-	// 每次访问都刷新 IP 与归属城市（展示在客服工作台的会话列表）
-	h.svc.RecordCustomerIP(cu.ID, ip)
+	// 每次访问都刷新 IP / 归属城市 / User-Agent（展示在客服工作台的客户资料）
+	h.svc.RecordCustomerTrace(cu.ID, ip, c.Request.UserAgent())
 
 	response.Default().OK(c, gin.H{
 		"channel": gin.H{
@@ -175,7 +175,7 @@ func (h *Handler) GuestSendHandler(c *gin.Context) {
 		response.Default().Server(c, err.Error())
 		return
 	}
-	h.svc.RecordCustomerIP(cu.ID, util.Default().ClientIP(c.Request.RemoteAddr, c.Request.Header))
+	h.svc.RecordCustomerTrace(cu.ID, util.Default().ClientIP(c.Request.RemoteAddr, c.Request.Header), c.Request.UserAgent())
 	realtime.PublishMessage(tenantID, conv.ID, mvo, cvo)
 
 	// 同步判定自动回复 / 转人工（供接口直接返回）

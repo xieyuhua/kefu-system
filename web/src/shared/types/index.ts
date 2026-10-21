@@ -325,6 +325,8 @@ export interface Customer {
   ip?: string
   /** IP 归属城市 */
   city?: string
+  /** 最近一次访问的 User-Agent（浏览器 / 设备信息） */
+  user_agent?: string
 }
 
 /** 客户详情（历史档案） */

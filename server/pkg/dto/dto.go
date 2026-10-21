@@ -283,6 +283,7 @@ type CustomerDetailUser struct {
 	Tags       []TagRef    `json:"tags"`
 	IP         string      `json:"ip"`
 	City       string      `json:"city"`
+	UserAgent  string      `json:"user_agent"` // 最近一次访问的 User-Agent（浏览器/设备信息）
 	OrderCount int64       `json:"order_count"`
 	CreatedAt  string      `json:"created_at"`
 }

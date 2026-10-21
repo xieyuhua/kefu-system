@@ -114,6 +114,11 @@ func (s *Service) RecordCustomerIP(customerID uint, ip string) {
 	s.Cust.RecordCustomerIP(customerID, ip)
 }
 
+// RecordCustomerTrace 记录访客最近一次访问的 IP、归属城市与 User-Agent。
+func (s *Service) RecordCustomerTrace(customerID uint, ip, userAgent string) {
+	s.Cust.RecordCustomerTrace(customerID, ip, userAgent)
+}
+
 // FindGuestCustomer 按「租户 + 渠道 + 外部用户标识」定位客户。
 // 未命中说明用户还没走过 /api/guest/init，由 handler 给出初始化提示。
 func (s *Service) FindGuestCustomer(tenantID, channelID uint, externalID string) (*model.Customer, error) {

@@ -39,17 +39,36 @@ func (s *CustomerService) CityOrLookup(cu *model.Customer) string {
 	return s.ResolveCity(cu.IP)
 }
 
-// RecordCustomerIP 记录客户最新 IP 与归属城市。
+// RecordCustomerIP 记录客户最新 IP 与归属城市（UA 不更新）。
 // 城市解析带 3s 超时与缓存；查询失败静默忽略，不影响主流程。
 func (s *CustomerService) RecordCustomerIP(customerID uint, ip string) {
+	s.RecordCustomerTrace(customerID, ip, "")
+}
+
+// RecordCustomerTrace 记录客户最近一次访问的 IP、归属城市与 User-Agent。
+// UA 为空时只更新 IP / 城市，不动 UA 列。
+func (s *CustomerService) RecordCustomerTrace(customerID uint, ip, userAgent string) {
 	ip = strings.TrimSpace(ip)
-	if customerID == 0 || ip == "" || util.Default().IsPrivateIP(ip) {
+	userAgent = strings.TrimSpace(userAgent)
+	if customerID == 0 {
 		return
 	}
-	// 只更新 ip / city 两列，不动其它字段。
-	// SQL 条件与 customer 仓储里的 UpdateCustomerColumns 保持一致。
-	_ = storage.Default().DB().Model(&model.Customer{}).Where("id = ?", customerID).
-		Updates(map[string]interface{}{"ip": ip, "city": s.ResolveCity(ip)}).Error
+	updates := map[string]interface{}{}
+	if ip != "" && !util.Default().IsPrivateIP(ip) {
+		updates["ip"] = ip
+		updates["city"] = s.ResolveCity(ip)
+	}
+	// User-Agent 可能有意义也可能为空（如部分 WebView 不带），空则保持原值不覆盖
+	if userAgent != "" {
+		if len([]rune(userAgent)) > 512 {
+			userAgent = string([]rune(userAgent)[:512])
+		}
+		updates["user_agent"] = userAgent
+	}
+	if len(updates) == 0 {
+		return
+	}
+	_ = storage.Default().DB().Model(&model.Customer{}).Where("id = ?", customerID).Updates(updates).Error
 }
 
 // ResolveCity 解析 IP 归属城市，格式如「广东 深圳」；无法解析时返回空串。

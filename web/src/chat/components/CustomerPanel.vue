@@ -54,6 +54,10 @@
             <li v-if="customer.external_id"><span>ID</span>{{ customer.external_id }}</li>
             <li><span>归属地</span>{{ customer.city || '未知' }}</li>
             <li><span>IP</span>{{ customer.ip || '未知' }}</li>
+            <li v-if="customer.user_agent" class="profile-ua-row">
+              <span>设备</span>
+              <span class="profile-ua kf-ellipsis" :title="customer.user_agent">{{ customer.user_agent }}</span>
+            </li>
             <li><span>订单</span>{{ customer.order_count ?? 0 }} 笔</li>
             <li><span>会话</span>{{ customer.conversation_count ?? 0 }} 次</li>
           </ul>
@@ -449,6 +453,12 @@ watch(
       color: var(--kf-text-sub);
     }
   }
+}
+
+.profile-ua {
+  max-width: 72%;
+  text-align: right;
+  color: var(--kf-text) !important;
 }
 
 .panel-section {

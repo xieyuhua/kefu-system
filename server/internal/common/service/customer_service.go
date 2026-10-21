@@ -80,6 +80,7 @@ func (s *CustomerService) GetCustomerDetail(tenantID, id uint) (*dto.CustomerDet
 			Avatar: c.Avatar, Phone: c.Phone, Remark: c.Remark,
 			Tags: s.GetCustomerTags(tenantID, c.ID),
 			IP:   c.IP, City: s.CityOrLookup(c),
+			UserAgent: c.UserAgent,
 			CreatedAt: util.Default().FmtTime(c.CreatedAt),
 		},
 		Orders:        []dto.OrderVO{},
