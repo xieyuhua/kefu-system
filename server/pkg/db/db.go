@@ -78,6 +78,8 @@ func Init() error {
 		&model.Notification{},
 		&model.AutoReply{},
 		&model.QuickReply{},
+		// 知识库（AI / RAG 应答的资料来源）
+		&model.KnowledgeDoc{},
 	); err != nil {
 		return err
 	}

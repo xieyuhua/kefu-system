@@ -6,14 +6,21 @@ import { computed, onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Refresh, Upload } from '@element-plus/icons-vue'
 import {
+  AI_API_KEY_MASK,
+  AI_SETTING_DEFAULTS,
+  AI_SETTING_KEYS,
   STORAGE_OBJECT_DEFAULTS,
   STORAGE_OBJECT_KEY,
   STORAGE_SECRET_MASK,
   listSettings,
+  parseAISetting,
   parseStorageObject,
   saveSetting,
+  serializeAISetting,
   serializeStorageObject,
+  testAISetting,
   testStorageObject,
+  type AISettingForm,
   type SettingItem,
   type StorageObjectConfig,
 } from '@/shared/api/admin'
@@ -92,6 +99,8 @@ async function load(): Promise<void> {
     remarks.value = rms
     // 读取失败 / 字段缺失时 parseStorageObject 会自动兜底成默认值
     if (!storageDirty.value) applyStorage(parseStorageObject(vals[STORAGE_OBJECT_KEY]))
+    // AI 应答表单同理：有未保存改动时不冲掉正在编辑的内容
+    if (!aiDirty.value) applyAI(parseAISetting(vals))
   } catch {
     ElMessage.error('配置加载失败')
   } finally {
@@ -118,14 +127,21 @@ async function save(key: string): Promise<void> {
 }
 
 async function saveAll(): Promise<void> {
-  // 对象存储由下方 saveStorage 统一序列化提交，这里跳过它的原始 JSON，避免重复写入
-  const keys = Object.keys(settings.value).filter((k) => k !== STORAGE_OBJECT_KEY)
+  // 对象存储由下方 saveStorage 统一序列化提交，这里跳过它的原始 JSON，避免重复写入；
+  // AI 应答卡片同理（有自己的「保存」按钮，且 api_key 需要按密钥口径回写）。
+  const aiKeys = new Set<string>(Object.values(AI_SETTING_KEYS))
+  const keys = Object.keys(settings.value).filter(
+    (k) => k !== STORAGE_OBJECT_KEY && !aiKeys.has(k),
+  )
   for (const k of keys) {
     await save(k)
   }
   // 对象存储改动一并落库（未改动则不打扰后端）
   if (storageDirty.value) {
     await saveStorage()
+  }
+  if (aiDirty.value) {
+    await saveAI()
   }
 }
 
@@ -175,9 +191,104 @@ async function testStorage(): Promise<void> {
   }
 }
 
+/* ---------------- AI 应答（ai.* / rag.*） ---------------- *
+ * 未命中关键词规则时的兜底链路：知识库检索 → 大模型 → 兜底话术。
+ * 默认关闭：不填不启用时，机器人行为与改造前完全一致。
+ * api_key 由后端脱敏成 ******，未改动时提交 ****** 即表示沿用已保存的 Key。
+ */
+const aiForm = ref<AISettingForm>({ ...AI_SETTING_DEFAULTS })
+/** 后端已保存过 API Key（返回 ******） */
+const aiKeySaved = ref(false)
+/** AI 表单有未保存改动（用于刷新时不冲掉正在编辑的内容） */
+const aiDirty = ref(false)
+const aiTesting = ref(false)
+const aiSaving = ref(false)
+const aiTestResult = ref<{ ok: boolean; message: string } | null>(null)
+
+/** 把解析后的配置写进 AI 表单（同时刷新「密钥已保存」标记） */
+function applyAI(cfg: AISettingForm): void {
+  aiForm.value = { ...cfg }
+  aiKeySaved.value = cfg.apiKey === AI_API_KEY_MASK
+}
+
+/** 密钥仍是「后端已保存」状态：显示 ****** 或留空（留空提交 ******，由后端保留原值） */
+const aiKeyUntouched = computed(
+  () =>
+    aiKeySaved.value &&
+    (aiForm.value.apiKey === '' || aiForm.value.apiKey === AI_API_KEY_MASK),
+)
+
+/** 编辑任一 AI 字段：标记为待保存 */
+function markAIDirty(): void {
+  aiDirty.value = true
+}
+
+/** 提交给后端的 API Key：未改动 / 留空时提交 ******，由后端保留原值 */
+function aiKeyForSubmit(): string {
+  const key = (aiForm.value.apiKey || '').trim()
+  if (!key && aiKeySaved.value) return AI_API_KEY_MASK
+  return key
+}
+
+/** 保存 AI 配置：逐项 PUT /api/settings（一个 key 一个值） */
+async function saveAI(): Promise<void> {
+  if (aiForm.value.enabled && !(aiForm.value.baseUrl || '').trim()) {
+    ElMessage.warning('启用 AI 应答前请先填写 Base URL')
+    return
+  }
+  aiSaving.value = true
+  try {
+    const items = serializeAISetting({ ...aiForm.value, apiKey: aiKeyForSubmit() })
+    for (const item of items) {
+      await saveSetting(item.key, item.value)
+    }
+    aiDirty.value = false
+    ElMessage.success('AI 应答配置已保存')
+    // 重新拉取：后端回显的 api_key 是脱敏值，落回表单后即为 ******
+    await load()
+  } catch {
+    ElMessage.error('保存失败')
+  } finally {
+    aiSaving.value = false
+  }
+}
+
+/** 测试连接：只验证「地址 + 鉴权 + 模型名」，不会保存任何配置 */
+async function testAI(): Promise<void> {
+  if (!(aiForm.value.baseUrl || '').trim() || !(aiForm.value.model || '').trim()) {
+    ElMessage.warning('请先填写 Base URL 与模型名')
+    return
+  }
+  aiTesting.value = true
+  try {
+    const res = await testAISetting({
+      base_url: (aiForm.value.baseUrl || '').trim(),
+      api_key: aiKeyForSubmit(),
+      model: (aiForm.value.model || '').trim(),
+      timeout_seconds: Number(aiForm.value.timeoutSeconds) || 20,
+    })
+    const message = (res && res.message) || (res && res.ok ? '连接成功' : '连接失败')
+    const ok = !!(res && res.ok)
+    aiTestResult.value = { ok, message }
+    if (ok) {
+      ElMessage.success(message)
+    } else {
+      ElMessage.error(message)
+    }
+  } catch (err) {
+    const msg = err instanceof Error && err.message ? err.message.trim() : ''
+    const message = msg || '接口暂不可用，请确认后端服务已就绪'
+    aiTestResult.value = { ok: false, message }
+    if (!msg) {
+      ElMessage.error(`测试连接失败：${message}`)
+    }
+  } finally {
+    aiTesting.value = false
+  }
+}
+
 /** 上传默认图片 */
 const fileRef = ref<HTMLInputElement | null>(null)
-
 function pickImage(): void {
   fileRef.value?.click()
 }
@@ -772,6 +883,217 @@ onMounted(load)
         密钥已保存时页面只显示 <b>******</b>，留空提交表示保留原密钥。
       </el-alert>
     </div>
+
+    <!-- ---------------- AI 应答（可选，默认关闭） ---------------- -->
+    <div v-loading="loading" class="admin-card ai-card" data-test="ai-card">
+      <div class="toolbar">
+        <span class="toolbar__title">
+          AI 应答（可选）
+          <span class="toolbar__sub">知识库检索 + 大模型生成，默认关闭</span>
+        </span>
+        <div>
+          <el-button
+            size="small"
+            :loading="aiTesting"
+            data-test="ai-test"
+            @click="testAI"
+          >
+            测试连接
+          </el-button>
+          <el-button
+            size="small"
+            type="primary"
+            :loading="aiSaving"
+            data-test="ai-save"
+            @click="saveAI"
+          >
+            保存
+          </el-button>
+        </div>
+      </div>
+
+      <div :class="['ai-form', isMobile ? 'ai-form--mobile' : '']">
+        <!-- 启用开关 -->
+        <div class="setting-item">
+          <div class="setting-item__label">
+            <div class="setting-item__name">启用 AI 应答</div>
+            <div class="setting-item__remark">
+              未命中自动回复规则时，先查知识库再让大模型生成回复；失败自动降级为兜底话术
+            </div>
+          </div>
+          <div class="setting-item__control">
+            <div class="storage-switch">
+              <el-switch
+                v-model="aiForm.enabled"
+                :size="isMobile ? 'default' : 'small'"
+                data-test="ai-enabled"
+                @change="markAIDirty"
+              />
+              <span class="storage-switch__state">
+                {{ aiForm.enabled ? '已启用' : '未启用（只走规则 + 兜底话术）' }}
+              </span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Base URL -->
+        <div class="setting-item">
+          <div class="setting-item__label">
+            <div class="setting-item__name">Base URL</div>
+            <div class="setting-item__remark">OpenAI 兼容接口根地址</div>
+          </div>
+          <div class="setting-item__control">
+            <el-input
+              v-model="aiForm.baseUrl"
+              size="small"
+              class="setting-input setting-input--wide"
+              placeholder="https://api.deepseek.com/v1"
+              data-test="ai-base-url"
+              @input="markAIDirty"
+            />
+            <div class="storage-hint">不要带 /chat/completions，后端会自行拼接</div>
+          </div>
+        </div>
+
+        <!-- API Key -->
+        <div class="setting-item">
+          <div class="setting-item__label">
+            <div class="setting-item__name">API Key</div>
+            <div class="setting-item__remark">大模型接口密钥</div>
+          </div>
+          <div class="setting-item__control">
+            <el-input
+              v-model="aiForm.apiKey"
+              type="password"
+              show-password
+              size="small"
+              class="setting-input setting-input--wide"
+              placeholder="sk-..."
+              data-test="ai-api-key"
+              @input="markAIDirty"
+            />
+            <div v-if="aiKeyUntouched" class="storage-hint" data-test="ai-api-key-hint">
+              已保存，留空表示不修改
+            </div>
+            <div v-else-if="aiKeySaved" class="storage-hint">将保存新的 Key，留空则保留原 Key</div>
+            <div v-else class="storage-hint">只保存在服务端，页面只显示 ******</div>
+          </div>
+        </div>
+
+        <!-- 模型名 -->
+        <div class="setting-item">
+          <div class="setting-item__label">
+            <div class="setting-item__name">模型名</div>
+            <div class="setting-item__remark">以服务商文档为准</div>
+          </div>
+          <div class="setting-item__control">
+            <el-input
+              v-model="aiForm.model"
+              size="small"
+              class="setting-input"
+              placeholder="deepseek-chat"
+              data-test="ai-model"
+              @input="markAIDirty"
+            />
+            <div class="storage-hint">例如 deepseek-chat / gpt-4o-mini / qwen-plus</div>
+          </div>
+        </div>
+
+        <!-- 系统提示词 -->
+        <div class="setting-item">
+          <div class="setting-item__label">
+            <div class="setting-item__name">系统提示词</div>
+            <div class="setting-item__remark">约束模型只依据知识库回答，不确定就转人工</div>
+          </div>
+          <div class="setting-item__control">
+            <el-input
+              v-model="aiForm.systemPrompt"
+              type="textarea"
+              :rows="4"
+              size="small"
+              class="setting-input setting-input--wide"
+              maxlength="1000"
+              show-word-limit
+              data-test="ai-system-prompt"
+              @input="markAIDirty"
+            />
+          </div>
+        </div>
+
+        <!-- 超时 -->
+        <div class="setting-item">
+          <div class="setting-item__label">
+            <div class="setting-item__name">超时（秒）</div>
+            <div class="setting-item__remark">超时即降级为兜底话术，客户不会等不到回复</div>
+          </div>
+          <div class="setting-item__control">
+            <el-input-number
+              v-model="aiForm.timeoutSeconds"
+              :min="1"
+              :max="120"
+              :step="1"
+              size="small"
+              data-test="ai-timeout"
+              @change="markAIDirty"
+            />
+          </div>
+        </div>
+
+        <!-- 检索条数 -->
+        <div class="setting-item">
+          <div class="setting-item__label">
+            <div class="setting-item__name">检索条数 rag.top_k</div>
+            <div class="setting-item__remark">拼进提示词的知识片段数量</div>
+          </div>
+          <div class="setting-item__control">
+            <el-input-number
+              v-model="aiForm.topK"
+              :min="1"
+              :max="10"
+              :step="1"
+              size="small"
+              data-test="ai-top-k"
+              @change="markAIDirty"
+            />
+          </div>
+        </div>
+
+        <!-- 最低相关度 -->
+        <div class="setting-item">
+          <div class="setting-item__label">
+            <div class="setting-item__name">最低相关度 rag.min_score</div>
+            <div class="setting-item__remark">0~1；低于该值视为知识库无命中，直接回兜底话术</div>
+          </div>
+          <div class="setting-item__control">
+            <el-input-number
+              v-model="aiForm.minScore"
+              :min="0"
+              :max="1"
+              :step="0.05"
+              :precision="2"
+              size="small"
+              data-test="ai-min-score"
+              @change="markAIDirty"
+            />
+          </div>
+        </div>
+      </div>
+
+      <div
+        v-if="aiTestResult"
+        class="storage-test-result"
+        :class="aiTestResult.ok ? 'is-ok' : 'is-fail'"
+        data-test="ai-test-result"
+      >
+        上次测试：{{ aiTestResult.message }}
+      </div>
+
+      <el-alert type="info" :closable="false" class="tip">
+        说明：AI 应答只在「未命中自动回复规则 + 渠道已开启机器人」时才触发，
+        链路为 <b>知识库检索 → 大模型 → 兜底话术</b>；检索无命中不会去猜，直接回兜底话术。
+        知识条目在「知识库」页维护。Key 已保存时页面只显示 <b>******</b>，留空提交表示保留原 Key。
+      </el-alert>
+    </div>
   </div>
 </template>
 
@@ -955,6 +1277,38 @@ onMounted(load)
   }
 }
 
+/* ---------------- AI 应答卡片 ---------------- */
+.ai-card {
+  /* 右上角操作按钮：窄屏自动换行，避免撑出横向滚动 */
+  .toolbar > div {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+  }
+}
+
+/* JS 判定为移动端时上下堆叠（与 storage-form--mobile 同一口径） */
+.ai-form--mobile {
+  .setting-item {
+    flex-direction: column;
+    gap: 8px;
+    padding: 12px 0;
+
+    &__label {
+      width: auto;
+    }
+
+    &__control {
+      width: 100%;
+    }
+  }
+
+  .setting-input,
+  .setting-input--wide {
+    width: 100%;
+  }
+}
+
 /* ---------------- 移动端（≤768px） ---------------- */
 @media (max-width: 768px) {
   .toolbar {
@@ -1027,6 +1381,30 @@ onMounted(load)
 
     > div {
       justify-content: flex-start;
+    }
+  }
+
+  /* AI 应答卡片同理 */
+  .ai-card .toolbar {
+    flex-direction: column;
+    row-gap: 8px;
+
+    > div {
+      justify-content: flex-start;
+    }
+  }
+
+  .ai-form .setting-item {
+    flex-direction: column;
+    gap: 8px;
+    padding: 12px 0;
+
+    .setting-item__label {
+      width: auto;
+    }
+
+    .setting-item__control {
+      width: 100%;
     }
   }
 

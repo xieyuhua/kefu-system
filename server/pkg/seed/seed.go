@@ -6,6 +6,7 @@ import (
 	"math/rand"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"kefu-server/internal/common/model"
@@ -20,6 +21,9 @@ func Run() error {
 	// 快捷回复的演示数据独立于「首次建库」流程：
 	// 老库升级上来时 Tenant 已经存在，同样需要几条示例话术，因此放在提前返回之前。
 	seedQuickReplies()
+	// 关键词话术（原 robotAnswer 里硬编码的 4 组）同样独立于首次建库：
+	// 已上线的库也要补成可编辑的自动回复规则，因此同样放在提前返回之前。
+	seedAutoReplyRules()
 
 	var cnt int64
 	db.DB.Model(&model.Tenant{}).Count(&cnt)
@@ -237,6 +241,8 @@ func Run() error {
 	// ---- 快捷回复（公共 + 私有示例） ----
 	// 首次建库时演示租户与客服账号刚建好，这里再灌一次；函数自身幂等，重复调用无副作用。
 	seedQuickReplies()
+	// 关键词话术规则同理：首次建库这里再灌一次（函数自身幂等，已存在的组不会重复插入）。
+	seedAutoReplyRules()
 
 	log.Println("[seed] 演示数据初始化完成")
 	log.Println("[seed] 账号：admin/admin123（管理员）、kf01/123456、kf02/123456")
@@ -301,7 +307,155 @@ func seedQuickReplies() {
 	log.Printf("[seed] 快捷回复示例 %d 条（公共 %d 条）", len(rows), 3)
 }
 
-// appIDExists 返回「该租户内 app_id 是否已被占用」的判定闭包。// pkg/idgen 是可复用 SDK、不认识 channels 表，唯一性校验由调用方注入；
+// ---------------- 关键词话术 → 自动回复规则 ----------------
+//
+// 历史背景：这 4 组关键词话术原本硬编码在 common/service/match.go 的 robotAnswer() 里
+// （发货/物流、退款/退货、价格/优惠、你好/在吗），代码里改一个字都要发版。
+// 现在把它们灌成租户的自动回复规则：管理员 / 客服可以在后台「自动回复」页直接编辑，改完立即生效。
+//
+// 落库口径（与后台手工建的公共规则一致）：
+//   - match_type = contain（包含匹配，最宽松，符合原来的 strings.Contains 语义）；
+//   - channel_id = 0 且 channel_ids 为空 → 全渠道生效；
+//   - user_id = 0 → 公共规则（客服只读、管理员可改）；
+//   - enabled = true。
+//
+// 幂等口径（关键）：同一租户内只要已经存在一条**全渠道**规则且关键词与本组有交集，就整组跳过。
+// 原因：老库 / 演示库里可能早就有等价规则（例如「发货咨询」= 发货,物流,快递,什么时候到），
+// 再插一条只会出现两条规则抢同一个关键词，甚至把客户看到的文案改掉 ——
+// 而 A 部分的硬性要求是「改造后客户收到的回复与改造前逐字一致」。
+
+// autoReplySeed 一条内置关键词话术的定义。
+type autoReplySeed struct {
+	// Name 规则名（后台列表展示，可编辑）
+	Name string
+	// Keywords 逗号分隔的关键词（与后台输入框同一口径）
+	Keywords string
+	// Reply 机器人回复正文
+	Reply string
+	// Priority 优先级（数值大的先匹配；转人工规则是 100，仍排在所有话术规则之前）
+	Priority int
+}
+
+// autoReplySeeds 内置的 4 组关键词话术（原 robotAnswer 的分支，逐字搬过来）。
+func autoReplySeeds() []*autoReplySeed {
+	return []*autoReplySeed{
+		{
+			Name: "你好问候", Keywords: "你好,在吗", Priority: 10,
+			Reply: "您好，我是智能客服助手，很高兴为您服务。请问有什么可以帮您？",
+		},
+		{
+			Name: "发货物流", Keywords: "发货,物流", Priority: 20,
+			Reply: "您好，订单会在付款后 48 小时内发出，物流单号可在「我的订单」中查看哦～",
+		},
+		{
+			Name: "退款退货", Keywords: "退款,退货", Priority: 30,
+			Reply: "支持 7 天无理由退货，请在订单详情页点击「申请退款」，我们会尽快为您处理。",
+		},
+		{
+			Name: "价格优惠", Keywords: "价格,优惠", Priority: 40,
+			Reply: "当前商品正在参与春季促销，满 199 减 30，欢迎选购～",
+		},
+	}
+}
+
+// seedAutoReplyRules 给所有租户补齐内置关键词话术规则（幂等，重复启动不会重复插入）。
+// 覆盖「首次建库」与「老库升级」两条路径：管理员的既有规则一律不动。
+func seedAutoReplyRules() {
+	var tenants []*model.Tenant
+	if err := db.DB.Order("id asc").Find(&tenants).Error; err != nil {
+		return
+	}
+	inserted := 0
+	for _, t := range tenants {
+		inserted += seedAutoReplyRulesFor(t.ID)
+	}
+	if inserted > 0 {
+		log.Printf("[seed] 内置关键词话术已落为自动回复规则 %d 条（后台可编辑）", inserted)
+	}
+}
+
+// seedAutoReplyRulesFor 给单个租户补齐缺失的关键词话术组，返回本次插入的条数。
+func seedAutoReplyRulesFor(tenantID uint) int {
+	var existing []*model.AutoReply
+	if err := db.DB.Where("tenant_id = ?", tenantID).Find(&existing).Error; err != nil {
+		return 0
+	}
+	inserted := 0
+	for _, s := range autoReplySeeds() {
+		if autoReplyKeywordsCovered(existing, s.Keywords) {
+			continue
+		}
+		row := &model.AutoReply{
+			TenantID: tenantID, UserID: 0, ChannelID: 0, ChannelIDs: "",
+			Name: s.Name, MatchType: "contain", Keywords: s.Keywords,
+			Reply: s.Reply, ReplyType: "text", Enabled: true, Priority: s.Priority,
+		}
+		if err := db.DB.Create(row).Error; err != nil {
+			continue
+		}
+		inserted++
+		// 同一轮里后续的组也要看见这条新规则（防止两组关键词互相包含时插出重复规则）
+		existing = append(existing, row)
+	}
+	return inserted
+}
+
+// autoReplyKeywordsCovered 判断「是否已有全渠道规则覆盖了这组关键词」：
+// 任一条全渠道规则与本组存在关键词交集即视为已覆盖（见上方幂等口径说明）。
+func autoReplyKeywordsCovered(rules []*model.AutoReply, keywords string) bool {
+	want := seedKeywordSet(keywords)
+	if len(want) == 0 {
+		return true
+	}
+	for _, r := range rules {
+		if r == nil || !seedGlobalChannelRule(r) {
+			continue
+		}
+		for kw := range seedKeywordSet(r.Keywords) {
+			if want[kw] {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// seedGlobalChannelRule 规则是否全渠道生效：
+// channel_ids 非空 → 只看该列表；为空 → 回退旧语义（channel_id = 0 即全渠道）。
+func seedGlobalChannelRule(r *model.AutoReply) bool {
+	for _, seg := range splitSeedSegments(r.ChannelIDs) {
+		if seg != "" && seg != "0" {
+			return false
+		}
+	}
+	return r.ChannelID == 0
+}
+
+// seedKeywordSet 把逗号分隔的关键词切成小写集合。
+// 分隔符与后台输入框一致：半角/全角逗号、半角/全角分号与换行（中文输入法打出来的是全角）。
+func seedKeywordSet(raw string) map[string]bool {
+	out := make(map[string]bool, 8)
+	for _, kw := range splitSeedSegments(raw) {
+		if kw != "" {
+			out[kw] = true
+		}
+	}
+	return out
+}
+
+// splitSeedSegments 按多种分隔符切分并做 TrimSpace + ToLower。
+func splitSeedSegments(raw string) []string {
+	return strings.FieldsFunc(strings.ToLower(raw), func(r rune) bool {
+		switch r {
+		case ',', '，', ';', '；', '\n', '\r':
+			return true
+		}
+		return false
+	})
+}
+
+// appIDExists 返回「该租户内 app_id 是否已被占用」的判定闭包。
+// pkg/idgen 是可复用 SDK、不认识 channels 表，唯一性校验由调用方注入；
 // 查询失败按「未被占用」处理，与原逻辑一致。
 func appIDExists(tenantID uint) func(id string) bool {
 	return func(id string) bool {

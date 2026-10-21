@@ -359,6 +359,164 @@ export function testStorageObject(cfg: StorageObjectConfig): Promise<StorageTest
 }
 
 /* ------------------------------------------------------------------ *
+ * AI 应答（OpenAI 兼容接口）+ RAG 知识库检索 —— 设置项
+ *
+ * 存储方式：settings 表逐项存储（一个 key 一个值），因此这里用「key → 值」的
+ * 映射还原成一份表单，保存时逐项 PUT /api/settings。
+ * ai.api_key 由后端脱敏为 ******，原样回写表示沿用已存密钥。
+ * ------------------------------------------------------------------ */
+
+/** AI 设置项 key（与后端 pkg/setting 的常量逐字一致） */
+export const AI_SETTING_KEYS = {
+  enabled: 'ai.enabled',
+  baseUrl: 'ai.base_url',
+  apiKey: 'ai.api_key',
+  model: 'ai.model',
+  systemPrompt: 'ai.system_prompt',
+  timeoutSeconds: 'ai.timeout_seconds',
+  topK: 'rag.top_k',
+  minScore: 'rag.min_score',
+} as const
+
+/** ai.api_key 的脱敏占位符：提交该值表示「保留后端已存密钥」 */
+export const AI_API_KEY_MASK = '******'
+
+/** AI 应答配置（表单模型，字段与后端设置项一一对应） */
+export interface AISettingForm {
+  /** 是否启用 AI 应答（默认关闭：关闭时机器人只走规则 + 兜底话术） */
+  enabled: boolean
+  /** OpenAI 兼容接口根地址，如 https://api.deepseek.com/v1 */
+  baseUrl: string
+  /** 接口密钥；后端返回时已脱敏为 ****** */
+  apiKey: string
+  /** 模型名，如 deepseek-chat */
+  model: string
+  /** 系统提示词 */
+  systemPrompt: string
+  /** 请求超时（秒） */
+  timeoutSeconds: number
+  /** 知识库检索条数 */
+  topK: number
+  /** 最低相关度 0~1 */
+  minScore: number
+}
+
+/** AI 默认系统提示词（与后端 setting.DefaultAISystemPrompt 同义，仅用于首屏回显兜底） */
+export const AI_DEFAULT_SYSTEM_PROMPT =
+  '你是企业在线客服助手。只能依据下面提供的「知识库片段」回答客户问题；' +
+  '知识库没有覆盖的内容不要猜测或编造，直接回复：这个问题我需要转接人工客服为您确认。' +
+  '回答使用简体中文，语气礼貌、简洁，不要输出标题、编号列表或 Markdown 标记。'
+
+/** 表单缺省值：读取失败 / 字段缺失时兜底，保证页面不白屏 */
+export const AI_SETTING_DEFAULTS: AISettingForm = {
+  enabled: false,
+  baseUrl: '',
+  apiKey: '',
+  model: '',
+  systemPrompt: AI_DEFAULT_SYSTEM_PROMPT,
+  timeoutSeconds: 20,
+  topK: 3,
+  minScore: 0.15,
+}
+
+/** 从 GET /api/settings 的原始结果里解析出 AI 表单（缺项一律落默认值，绝不抛错） */
+export function parseAISetting(values: Record<string, string>): AISettingForm {
+  const num = (raw: string | undefined, def: number): number => {
+    const v = Number((raw ?? '').trim())
+    return Number.isFinite(v) && v > 0 ? v : def
+  }
+  const score = Number((values[AI_SETTING_KEYS.minScore] ?? '').trim())
+  return {
+    enabled: (values[AI_SETTING_KEYS.enabled] ?? '').trim().toLowerCase() === 'true',
+    baseUrl: (values[AI_SETTING_KEYS.baseUrl] ?? '').trim(),
+    apiKey: (values[AI_SETTING_KEYS.apiKey] ?? '').trim(),
+    model: (values[AI_SETTING_KEYS.model] ?? '').trim(),
+    systemPrompt: (values[AI_SETTING_KEYS.systemPrompt] ?? '').trim() || AI_DEFAULT_SYSTEM_PROMPT,
+    timeoutSeconds: num(values[AI_SETTING_KEYS.timeoutSeconds], AI_SETTING_DEFAULTS.timeoutSeconds),
+    topK: num(values[AI_SETTING_KEYS.topK], AI_SETTING_DEFAULTS.topK),
+    minScore: Number.isFinite(score) && score >= 0 && score <= 1 ? score : AI_SETTING_DEFAULTS.minScore,
+  }
+}
+
+/** 表单 → 逐项 PUT /api/settings 的 (key, value) 列表 */
+export function serializeAISetting(form: AISettingForm): { key: string; value: string }[] {
+  return [
+    { key: AI_SETTING_KEYS.enabled, value: form.enabled ? 'true' : 'false' },
+    { key: AI_SETTING_KEYS.baseUrl, value: (form.baseUrl || '').trim() },
+    { key: AI_SETTING_KEYS.apiKey, value: (form.apiKey || '').trim() },
+    { key: AI_SETTING_KEYS.model, value: (form.model || '').trim() },
+    { key: AI_SETTING_KEYS.systemPrompt, value: (form.systemPrompt || '').trim() },
+    { key: AI_SETTING_KEYS.timeoutSeconds, value: String(form.timeoutSeconds || AI_SETTING_DEFAULTS.timeoutSeconds) },
+    { key: AI_SETTING_KEYS.topK, value: String(form.topK || AI_SETTING_DEFAULTS.topK) },
+    { key: AI_SETTING_KEYS.minScore, value: String(form.minScore) },
+  ]
+}
+
+/** 「测试连接」提交体：api_key 传 ****** 或留空表示沿用已保存的密钥 */
+export interface AITestPayload {
+  base_url: string
+  api_key: string
+  model: string
+  timeout_seconds: number
+}
+
+/** POST /api/settings/ai/test —— 用当前表单值实测一次「地址 + 鉴权 + 模型名」 */
+export function testAISetting(payload: AITestPayload): Promise<StorageTestResult> {
+  return http.post<StorageTestResult>('/settings/ai/test', payload)
+}
+
+/* ------------------------------------------------------------------ *
+ * 知识库（AI / RAG 应答的资料来源）—— 仅管理员
+ * ------------------------------------------------------------------ */
+
+/** 知识条目 */
+export interface KnowledgeDoc {
+  id: number
+  title: string
+  content: string
+  /** 逗号分隔的标签，检索时参与加权 */
+  tags: string
+  enabled: boolean
+  created_at: string
+  updated_at: string
+}
+
+/** 新增 / 修改请求体；enabled 不传表示保留原值（新增默认启用） */
+export interface KnowledgePayload {
+  title: string
+  content: string
+  tags: string
+  enabled?: boolean
+}
+
+/** 知识库查询参数 */
+export interface KnowledgeQuery {
+  keyword?: string
+  page?: number
+  page_size?: number
+}
+
+/** GET /api/admin/knowledge?keyword=&page=&page_size= */
+export function listKnowledge(params?: KnowledgeQuery): Promise<Paged<KnowledgeDoc>> {
+  return http.get<Paged<KnowledgeDoc>>('/admin/knowledge', { params })
+}
+
+/** POST /api/admin/knowledge */
+export function createKnowledge(payload: KnowledgePayload): Promise<KnowledgeDoc> {
+  return http.post<KnowledgeDoc>('/admin/knowledge', payload)
+}
+
+/** PUT /api/admin/knowledge/:id */
+export function updateKnowledge(id: number, payload: KnowledgePayload): Promise<boolean> {
+  return http.put<boolean>(`/admin/knowledge/${id}`, payload)
+}
+
+/** DELETE /api/admin/knowledge/:id */
+export function deleteKnowledge(id: number): Promise<boolean> {
+  return http.del<boolean>(`/admin/knowledge/${id}`)
+}
+
+/* ------------------------------------------------------------------ *
  * 渠道类型库（可自定义，不限制枚举）—— §3 扩展
  * ------------------------------------------------------------------ */
 

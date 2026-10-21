@@ -166,20 +166,18 @@ func orDefaultStr(s, d string) string {
 	return s
 }
 
-// robotAnswer 按关键词返回示例话术（演示用）；未命中任何关键词时返回空串，
-// 原实现在 service/demo.go，只有 ReplyNow 使用，因此随判定逻辑一起落在本模块。
-func robotAnswer(q string) string {
-	switch {
-	case strings.Contains(q, "发货") || strings.Contains(q, "物流"):
-		return "您好，订单会在付款后 48 小时内发出，物流单号可在「我的订单」中查看哦～"
-	case strings.Contains(q, "退款") || strings.Contains(q, "退货"):
-		return "支持 7 天无理由退货，请在订单详情页点击「申请退款」，我们会尽快为您处理。"
-	case strings.Contains(q, "价格") || strings.Contains(q, "优惠"):
-		return "当前商品正在参与春季促销，满 199 减 30，欢迎选购～"
-	case strings.Contains(q, "你好") || strings.Contains(q, "在吗"):
-		return "您好，我是智能客服助手，很高兴为您服务。请问有什么可以帮您？"
-	default:
-		// 兜底话术由后台设置 robot.fallback_reply 决定，这里返回空串交给调用方
-		return ""
-	}
-}
+// ---------------- 关键词话术：已迁出代码 ----------------
+//
+// 历史背景：这里曾有一个 robotAnswer(q) 函数，用 if-else 写死 4 组关键词话术
+// （发货/物流、退款/退货、价格/优惠、你好/在吗），未命中时返回空串交给兜底话术。
+//
+// 现在这些内置话术已经「从代码搬到数据」：pkg/seed 把它们灌成租户的自动回复规则
+// （match_type = contain、channel_id = 0 全渠道、user_id = 0 公共规则、enabled = true），
+// 管理员 / 客服可以直接在后台「自动回复」页编辑，改完立即生效。
+//
+// 因此本文件只保留判定用的纯函数契约：
+//   - 命中规则 → 用规则里的 reply（MatchRule 负责）；
+//   - 未命中 → 交给「AI 应答（可选）→ 兜底话术 robot.fallback_reply」这条链路（ReplyNow 负责）。
+//
+// 这里刻意不再保留「未命中返回空串」的占位函数：留下一个永远返回空串的函数，
+// 只会给人「关键词话术还在代码里」的错觉。

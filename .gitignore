@@ -38,3 +38,5 @@ web/.pwtest/
 # 验收脚本产物（浏览器 profile、临时配置等）
 .acceptance/
 *.acceptance.yaml
+# 本地验收脚本与截图（AI 调用链 / 390px UI 实测，本地验证用，不入库）
+.verify/

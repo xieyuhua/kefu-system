@@ -702,6 +702,97 @@ http(s)://<host>/kefu/?channel=web&uid=o_abc123&nickname=王小明&avatar=&order
 
 ---
 
+## 16. AI 应答与知识库（可选，默认关闭）
+
+未命中自动回复规则的客户消息，按 **命中规则 → AI（知识库检索 + 大模型）→ 兜底话术** 的顺序应答。
+AI 相关配置全部存在 `settings` 表（一个 key 一个值），读写复用下面的通用设置接口；
+知识条目由后台「知识库」页维护。配置说明见 [AI知识库.md](./AI知识库.md)。
+
+### 16.1 设置项（`GET /api/settings` / `PUT /api/settings`）
+
+| key | 说明 | 默认值 |
+|---|---|---|
+| `ai.enabled` | 是否启用 AI 应答 | `false` |
+| `ai.base_url` | OpenAI 兼容接口根地址（不含 `/chat/completions`），如 `https://api.deepseek.com/v1` | 空 |
+| `ai.api_key` | 接口密钥；读取时脱敏为 `******`，回写 `******` 表示沿用原值 | 空 |
+| `ai.model` | 模型名，如 `deepseek-chat` | 空 |
+| `ai.system_prompt` | 系统提示词（默认要求「只依据知识库回答，不确定就转人工」） | 见下 |
+| `ai.timeout_seconds` | 单次请求超时（秒） | `20` |
+| `rag.top_k` | 检索返回条数（拼进提示词的片段数） | `3` |
+| `rag.min_score` | 最低相关度（0~1），低于该值视为无命中 | `0.15` |
+
+```json
+// GET /api/settings 片段（密钥已脱敏）
+[
+  { "key": "ai.enabled", "value": "true", "remark": "是否启用 AI 应答：……" },
+  { "key": "ai.api_key", "value": "******", "remark": "大模型接口的 API Key；……" },
+  { "key": "rag.min_score", "value": "0.15", "remark": "最低相关度（0~1）：……" }
+]
+```
+
+> `ai.api_key` 与对象存储的 `secret_key` 同一套脱敏口径：接口只下发 `******`，
+> 保存时提交 `******`（或留空）表示保留库中原密钥，因此后台表单不需要回显真实 Key。
+
+### 16.2 `POST /api/settings/ai/test`（admin）
+
+用后台表单里的值做一次极短实调，验证「地址 + 鉴权 + 模型名」是否可用（不保存配置）。
+
+```json
+{ "base_url": "https://api.deepseek.com/v1", "api_key": "******", "model": "deepseek-chat", "timeout_seconds": 10 }
+```
+```json
+{ "code": 0, "message": "ok", "data": { "ok": true, "message": "连接成功，模型可用" } }
+```
+
+> 与 `/api/settings/storage/test` 同一约定：成功失败都返回 `code: 0`，结果看 `data.ok` / `data.message`。
+> `api_key` 传 `******` 或留空时沿用库中已保存的密钥；未传 `base_url` / `model` 时同样回退到已保存值。
+> 非管理员返回 `code: 403` + `仅管理员可测试 AI 接口配置`。
+
+### 16.3 知识库（admin）
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| GET | `/api/admin/knowledge?keyword=&page=&page_size=` | 分页列表，`keyword` 匹配标题 / 正文 / 标签 |
+| POST | `/api/admin/knowledge` | 新增 |
+| PUT | `/api/admin/knowledge/:id` | 修改（全量覆盖标题/正文/标签，`enabled` 不传则保留原值） |
+| DELETE | `/api/admin/knowledge/:id` | 删除 |
+
+```json
+// GET /api/admin/knowledge?page=1&page_size=20
+{
+  "code": 0, "message": "ok",
+  "data": {
+    "list": [{
+      "id": 1, "title": "退货政策", "tags": "退货,退款",
+      "content": "7 天无理由退货：签收后 7 天内可申请退货……",
+      "enabled": true, "created_at": "2026-10-21 10:17:08", "updated_at": "2026-10-21 10:17:08"
+    }],
+    "total": 1, "page": 1, "page_size": 20
+  }
+}
+```
+
+```json
+// POST /api/admin/knowledge
+{ "title": "蓝牙耳机质保", "tags": "质保,保修", "content": "蓝牙耳机保修期为一年，非人为损坏可免费换新，需提供订单号。", "enabled": true }
+```
+
+> 全部接口仅管理员可调用，非管理员返回 `code: 403` + `仅管理员可操作`。
+> 错误文案：`标题不能为空` / `知识内容不能为空` / `标题过长（最多 128 个字符）` / `知识内容过长（最多 5000 个字符）` / `知识条目不存在`。
+
+### 16.4 应答优先级与降级（对客户端无感知）
+
+1. **命中自动回复规则** → 用规则里的 `reply`（原行为，`hit_count` 照常累加）；
+2. **AI 应答**（`ai.enabled=true` 且 `base_url`/`api_key`/`model` 齐全）→ 检索知识库：
+   - 有命中（分数 ≥ `rag.min_score`）→ 拼提示词调模型，成功则用模型文本回复；
+   - 无命中 / 调用失败（超时、401、5xx、解析失败）→ **降级**；
+3. **兜底话术** `robot.fallback_reply`。
+
+> 降级只会影响「这一条回复由谁生成」，客户端始终能收到一条回复（最差情况是兜底话术）。
+> 渠道未开启机器人时整段不回复，与改造前一致。AI 回复同样以 `sender_role=robot` 落库、广播，文案不加任何「AI 生成」前缀。
+
+---
+
 ## 12. 演示账号
 
 | 账号 | 密码 | 角色 |

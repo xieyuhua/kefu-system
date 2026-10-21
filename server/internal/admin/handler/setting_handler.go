@@ -18,18 +18,26 @@ import (
 
 // ListSettingsHandler 读取全部配置项
 func (h *Handler) ListSettingsHandler(c *gin.Context) {
-	list, err := setting.ListSettings(authctx.TenantID(c))
+	tenantID := authctx.TenantID(c)
+	list, err := setting.ListSettings(tenantID)
 	if err != nil {
 		response.Default().Server(c, err.Error())
 		return
 	}
-	// 对象存储的密钥必须脱敏后再返回：后端只下发 ******，回写该值表示沿用库中原密钥。
+	// 密钥类设置项必须脱敏后再返回：后端只下发 ******，回写该值表示沿用库中原密钥。
+	//   - storage.object：整段 JSON 里的 secret_key；
+	//   - ai.api_key：单值密钥（与对象存储同一套 ****** 口径）。
 	for _, item := range list {
-		if key, _ := item["key"].(string); key != setting.SettingObjectStorage {
-			continue
-		}
-		if value, ok := item["value"].(string); ok {
-			item["value"] = h.svc.Storage.MaskObjectStorageSecret(value)
+		key, _ := item["key"].(string)
+		switch key {
+		case setting.SettingObjectStorage:
+			if value, ok := item["value"].(string); ok {
+				item["value"] = h.svc.Storage.MaskObjectStorageSecret(value)
+			}
+		case setting.SettingAIAPIKey:
+			if value, ok := item["value"].(string); ok {
+				item["value"] = h.svc.AI.MaskAPIKey(value)
+			}
 		}
 	}
 	response.Default().OK(c, list)
@@ -54,6 +62,10 @@ func (h *Handler) SaveSettingHandler(c *gin.Context) {
 			return
 		}
 		value = v
+	}
+	// AI 密钥：传 ****** 时回填库中原值（后台表单不回显真实 Key，留空提交也不会把 Key 抹掉）。
+	if strings.TrimSpace(req.Key) == setting.SettingAIAPIKey {
+		value = h.svc.AI.PrepareAPIKeyValue(tenantID, value)
 	}
 	if err := setting.SaveSetting(tenantID, req.Key, value); err != nil {
 		response.Default().Param(c, err.Error())
@@ -80,4 +92,25 @@ func (h *Handler) TestStorageSettingHandler(c *gin.Context) {
 		return
 	}
 	response.Default().OK(c, gin.H{"ok": true, "message": "连接成功"})
+}
+
+// TestAISettingHandler 测试 AI 接口配置是否可用（POST /api/settings/ai/test）。
+// 请求体是后台表单里的 ai.* 字段（api_key 传 ****** 表示沿用已保存的密钥）；
+// 行为是构造客户端 → Ping（发一条极短对话请求，验证地址 / 鉴权 / 模型名）。
+// 与对象存储的测试接口同一约定：无论成功失败都返回 code=0，
+// 由 data.ok / data.message 表达结果，便于后台直接弹提示。
+func (h *Handler) TestAISettingHandler(c *gin.Context) {
+	if !authctx.IsAdmin(c) {
+		response.Default().Forbid(c, "仅管理员可测试 AI 接口配置")
+		return
+	}
+	var req service.AITestConfig
+	if !httpx.Default().BindJSON(c, &req) {
+		return
+	}
+	if err := h.svc.TestAI(c.Request.Context(), authctx.TenantID(c), &req); err != nil {
+		response.Default().OK(c, gin.H{"ok": false, "message": err.Error()})
+		return
+	}
+	response.Default().OK(c, gin.H{"ok": true, "message": "连接成功，模型可用"})
 }

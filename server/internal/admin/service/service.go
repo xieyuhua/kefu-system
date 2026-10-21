@@ -27,6 +27,10 @@ type Service struct {
 	QuickReply *commonsvc.QuickReplyService
 	Stats      *commonsvc.StatsService
 	Storage    *commonsvc.ObjectStorageService
+	// AI AI 应答配置（密钥脱敏 / 回填 / 连通性测试）
+	AI *commonsvc.AIService
+	// Knowledge 知识库（AI / RAG 应答的资料来源）
+	Knowledge *commonsvc.KnowledgeService
 }
 
 // NewService 创建端内业务层实例（自带各公共业务依赖）。
@@ -40,6 +44,8 @@ func NewService() *Service {
 		QuickReply: commonsvc.NewQuickReplyService(),
 		Stats:      commonsvc.NewStatsService(),
 		Storage:    commonsvc.NewObjectStorageService(),
+		AI:         commonsvc.NewAIService(),
+		Knowledge:  commonsvc.NewKnowledgeService(),
 	}
 }
 
@@ -59,4 +65,15 @@ type ObjectStorageConfig = commonsvc.ObjectStorage
 // TestObjectStorage 用给定配置测试对象存储连通性：构造客户端并上传 / 删除一个探针对象。
 func (s *Service) TestObjectStorage(ctx context.Context, tenantID uint, cfg *ObjectStorageConfig) error {
 	return s.Storage.TestObjectStorage(ctx, tenantID, cfg)
+}
+
+// ---------------- AI 应答配置（OpenAI 兼容接口） ----------------
+
+// AITestConfig 「测试连接」按钮的入参类型（handler 绑定请求体用）。
+// api_key 允许传 ****** 表示沿用已保存的密钥。
+type AITestConfig = commonsvc.AITestRequest
+
+// TestAI 用给定（或库中）配置做一次极短实调，验证地址 / 鉴权 / 模型名是否可用。
+func (s *Service) TestAI(ctx context.Context, tenantID uint, req *AITestConfig) error {
+	return s.AI.TestAI(ctx, tenantID, req)
 }

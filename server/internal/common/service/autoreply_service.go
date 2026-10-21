@@ -5,7 +5,8 @@ package service
 // 跨域调用全部走 ConversationService 的方法，不直接读写对方的表。
 //
 // 形态约定：业务编排都是 AutomationService 的方法（指针接收者），跨域依赖在构造时建好；
-// 只有无状态的纯函数（matchKeywords / splitKeywords / defaultMatchType / orDefaultStr / robotAnswer）保留为包级函数。
+// 只有无状态的纯函数（matchKeywords / splitKeywords / defaultMatchType / orDefaultStr）保留为包级函数。
+// 关键词话术不再写死在代码里：内置的那几组话术由 pkg/seed 灌成自动回复规则，后台可编辑。
 import (
 	"errors"
 	"fmt"
@@ -27,6 +28,8 @@ type AutomationService struct {
 	conv    *ConversationService
 	users   *repository.UserRepository
 	account *AccountService
+	// ai AI 应答内核：未命中关键词规则时按「知识库检索 → 大模型 → 兜底话术」逐级降级
+	ai *AIService
 }
 
 // NewAutomationService 创建业务层实例（自带数据访问层与会话内核依赖）。
@@ -36,6 +39,7 @@ func NewAutomationService() *AutomationService {
 		conv:    NewConversationService(),
 		users:   repository.NewUserRepository(),
 		account: NewAccountService(),
+		ai:      NewAIService(),
 	}
 }
 
@@ -421,8 +425,12 @@ func (s *AutomationService) ReplyNow(tenantID, convID, customerID, channelID uin
 		reply = rule.Reply
 	} else {
 		if ch, err := s.repo.FindAutoReplyChannel(channelID); err == nil && ch.RobotEnabled {
-			// 关键词示例话术只在「命中演示关键词」时使用；其余情况一律走后台可配置的兜底话术
-			reply = robotAnswer(question)
+			// 未命中关键词规则时的兜底链路（渠道未开启机器人则整段跳过，保持「不回复」）：
+			//   ① AI 应答：ai.enabled 且配置齐全 → 知识库检索 + 大模型生成；
+			//   ② 兜底话术：AI 未启用 / 配置不全 / 检索无命中 / 调用失败 → 后台可配的 robot.fallback_reply。
+			// 关键词话术不再写死在代码里（已由 pkg/seed 灌成自动回复规则，命中规则走上面的分支）。
+			// AI 内部任何失败都返回空串并打日志，这里不会因此漏回复。
+			reply = s.ai.Answer(tenantID, question)
 			if reply == "" {
 				reply = setting.RobotFallback(tenantID)
 			}
