@@ -1,7 +1,7 @@
 package service
 
 // 本文件是 AI 应答的业务层：把 settings 表里的 ai.* / rag.* 翻译成 pkg/ai 的客户端，
-// 并在「未命中自动回复规则」时按「知识库检索 → 大模型 → 失败降级」的顺序生成一条回复。
+// 并在「未命中自动回复规则」时按「检索该渠道自动回复规则 → 大模型 → 失败降级」的顺序生成回复。
 //
 // 设置项契约（settings 表逐项存储，后台设置页可维护，默认全部关闭）：
 //
@@ -9,7 +9,7 @@ package service
 //	ai.base_url         OpenAI 兼容根地址，如 https://api.deepseek.com/v1
 //	ai.api_key          接口密钥（GET /api/settings 脱敏为 ******，回写 ****** 表示沿用原值）
 //	ai.model            模型名，如 deepseek-chat
-//	ai.system_prompt    系统提示词（默认要求「只依据知识库回答，不确定就转人工」）
+//	ai.system_prompt    系统提示词（默认要求「只依据自动回复内容回答，不确定就转人工」）
 //	ai.timeout_seconds  请求超时（默认 20 秒）
 //	rag.top_k           检索条数（默认 3）
 //	rag.min_score       最低相关度 0~1（默认 0.15，低于该值视为无命中）
@@ -127,9 +127,9 @@ func (s *AIService) TestAI(ctx context.Context, tenantID uint, req *AITestReques
 
 // Answer 生成一条 AI 回复；返回空串表示「不要用 AI 回复」，调用方必须回退到兜底话术。
 //
-// 链路：配置就绪 → 知识库检索 → 拼提示词 → 调模型 → 返回文本。
+// 链路：配置就绪 → 检索该渠道的自动回复规则 → 拼提示词 → 调模型 → 返回文本。
 // 任一环节不满足都直接返回空串（并打日志说明原因），不做「没有知识依据的猜测」。
-func (s *AIService) Answer(tenantID uint, question string) string {
+func (s *AIService) Answer(tenantID, channelID uint, question string) string {
 	question = strings.TrimSpace(question)
 	if question == "" {
 		return ""
@@ -155,23 +155,23 @@ func (s *AIService) Answer(tenantID uint, question string) string {
 		return ""
 	}
 
-	docs, scores, err := s.rag.Retrieve(tenantID, question, cfg.TopK, cfg.MinScore)
+	rules, scores, err := s.rag.Retrieve(tenantID, channelID, question, cfg.TopK, cfg.MinScore)
 	if err != nil {
-		log.Printf("[ai] 租户 %d 知识库检索失败，降级为兜底话术: %v", tenantID, err)
+		log.Printf("[ai] 租户 %d 自动回复规则检索失败，降级为兜底话术: %v", tenantID, err)
 		return ""
 	}
-	if len(docs) == 0 {
+	if len(rules) == 0 {
 		// 检索无命中：不猜，直接走兜底话术（也不会产生一次模型调用费用）
-		log.Printf("[ai] 租户 %d 知识库无命中（阈值 %.2f，问题：%s），降级为兜底话术",
+		log.Printf("[ai] 租户 %d 自动回复规则无命中（阈值 %.2f，问题：%s），降级为兜底话术",
 			tenantID, cfg.MinScore, clipLog(question))
 		return ""
 	}
 
-	prompt := BuildRagPrompt(question, docs, scores)
+	prompt := BuildRagPrompt(question, rules, scores)
 	reply, err := client.Chat(context.Background(), prompt)
 	if err != nil {
-		log.Printf("[ai] 租户 %d 调用模型失败（命中 %d 条知识），降级为兜底话术: %v",
-			tenantID, len(docs), err)
+		log.Printf("[ai] 租户 %d 调用模型失败（命中 %d 条规则），降级为兜底话术: %v",
+			tenantID, len(rules), err)
 		return ""
 	}
 	reply = strings.TrimSpace(reply)
@@ -179,23 +179,23 @@ func (s *AIService) Answer(tenantID uint, question string) string {
 		log.Printf("[ai] 租户 %d 模型返回空文本，降级为兜底话术", tenantID)
 		return ""
 	}
-	log.Printf("[ai] 租户 %d AI 应答成功（命中知识：%s）", tenantID, knowledgeTitles(docs))
+	log.Printf("[ai] 租户 %d AI 应答成功（命中规则：%s）", tenantID, autoReplyTitles(rules))
 	return reply
 }
 
-// knowledgeTitles 把命中的知识标题拼成一行，用于成功日志（便于复核回答依据）。
-func knowledgeTitles(docs []*model.KnowledgeDoc) string {
-	titles := make([]string, 0, len(docs))
-	for _, doc := range docs {
-		if doc == nil {
+// autoReplyTitles 把命中的规则名拼成一行，用于成功日志（便于复核回答依据）。
+func autoReplyTitles(rules []*model.AutoReply) string {
+	titles := make([]string, 0, len(rules))
+	for _, r := range rules {
+		if r == nil {
 			continue
 		}
-		if t := strings.TrimSpace(doc.Title); t != "" {
+		if t := strings.TrimSpace(r.Name); t != "" {
 			titles = append(titles, t)
 		}
 	}
 	if len(titles) == 0 {
-		return "（无标题）"
+		return "（未命名规则）"
 	}
 	return strings.Join(titles, " / ")
 }

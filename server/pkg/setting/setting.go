@@ -35,11 +35,12 @@ const (
 	SettingAssistantAvatar = "assistant.avatar"
 )
 
-// ---------------- AI 应答 + RAG 知识库设置项 ----------------
+// ---------------- AI 应答 + RAG 检索设置项 ----------------
 //
 // 与对象存储不同，这些配置逐项存在 settings 表里（一个 key 一个值），后台设置页逐项编辑：
 // 管理员只改超时 / top_k 这类小参数时不会因为整段 JSON 回写而覆盖别的字段。
 // 全部默认关闭：未配置时机器人保持「关键词规则 + 兜底话术」的原有行为。
+// 检索语料 = 渠道的自动回复规则，无独立知识库。
 const (
 	// SettingAIEnabled 是否启用 AI 应答（true 时才可能调用外部大模型）
 	SettingAIEnabled = "ai.enabled"
@@ -49,7 +50,7 @@ const (
 	SettingAIAPIKey = "ai.api_key"
 	// SettingAIModel 模型名，如 deepseek-chat
 	SettingAIModel = "ai.model"
-	// SettingAISystemPrompt 系统提示词（约束模型只依据知识库回答）
+	// SettingAISystemPrompt 系统提示词（约束模型只依据自动回复内容回答）
 	SettingAISystemPrompt = "ai.system_prompt"
 	// SettingAITimeoutSeconds 单次请求超时（秒）
 	SettingAITimeoutSeconds = "ai.timeout_seconds"
@@ -60,9 +61,9 @@ const (
 )
 
 // DefaultAISystemPrompt AI 系统提示词的默认值：
-// 只依据知识库回答，不确定就转人工（避免模型凭空编造售后政策）。
+// 只依据自动回复内容回答，不确定就转人工（避免模型凭空编造售后政策）。
 const DefaultAISystemPrompt = "你是企业在线客服助手。只能依据下面提供的「知识库片段」回答客户问题；" +
-	"知识库没有覆盖的内容不要猜测或编造，直接回复：这个问题我需要转接人工客服为您确认。" +
+	"片段没有覆盖的内容不要猜测或编造，直接回复：这个问题我需要转接人工客服为您确认。" +
 	"回答使用简体中文，语气礼貌、简洁，不要输出标题、编号列表或 Markdown 标记。"
 
 // AI 设置项的默认值（与 settingDefaults 同源，供后台表单与解析共用）。
@@ -114,7 +115,7 @@ var settingDefaults = map[string]struct {
 	// ---------------- AI 应答（默认关闭） ----------------
 	SettingAIEnabled: {
 		Value:  "false",
-		Remark: "是否启用 AI 应答：true 时未命中自动回复规则的消息会走「知识库检索 + 大模型」生成回复",
+		Remark: "是否启用 AI 应答：true 时未命中自动回复规则的消息会走「检索渠道自动回复内容 + 大模型」生成回复",
 	},
 	SettingAIBaseURL: {
 		Value:  "",
@@ -130,7 +131,7 @@ var settingDefaults = map[string]struct {
 	},
 	SettingAISystemPrompt: {
 		Value:  DefaultAISystemPrompt,
-		Remark: "系统提示词：要求模型只依据知识库回答，不确定就转人工",
+		Remark: "系统提示词：要求模型只依据自动回复内容回答，不确定就转人工",
 	},
 	SettingAITimeoutSeconds: {
 		Value:  "20",
@@ -138,11 +139,11 @@ var settingDefaults = map[string]struct {
 	},
 	SettingRagTopK: {
 		Value:  "3",
-		Remark: "知识库检索返回的条数（拼进提示词的知识片段数量）",
+		Remark: "检索返回的条数（拼进提示词的片段数量）",
 	},
 	SettingRagMinScore: {
 		Value:  "0.15",
-		Remark: "最低相关度（0~1）：低于该值的知识片段视为未命中，不猜测、直接回兜底话术",
+		Remark: "最低相关度（0~1）：低于该值的片段视为未命中，不猜测、直接回兜底话术",
 	},
 }
 
@@ -288,7 +289,7 @@ func RobotFallback(tenantID uint) string {
 
 // ---------------- AI 应答 / RAG 设置 ----------------
 
-// AISetting AI 应答与知识库检索的租户配置（全部来自 settings 表，默认关闭）。
+// AISetting AI 应答与检索的租户配置（全部来自 settings 表，默认关闭）。
 // 这里只是数据载体：连接参数怎么用（鉴权、超时、请求体）由 pkg/ai 决定，
 // 「什么时候该调 AI」的判定在 common/service 的 AI 应答内核里。
 type AISetting struct {
@@ -304,7 +305,7 @@ type AISetting struct {
 	SystemPrompt string
 	// TimeoutSeconds 单次请求超时（秒）。
 	TimeoutSeconds int
-	// TopK 知识库检索条数。
+	// TopK 检索返回条数。
 	TopK int
 	// MinScore 最低相关度（0~1）。
 	MinScore float64

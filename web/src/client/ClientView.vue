@@ -122,7 +122,8 @@
             <div class="row__col">
               <div class="row__name">{{ greetingName }}</div>
               <div class="bubble">
-                <span class="bubble__text">{{ greeting }}</span>
+                <!-- 机器人欢迎语同样是文本消息：支持同一套 Markdown 子集（无标记时样式不变） -->
+                <RichText :content="greeting" />
               </div>
               <div class="row__time">{{ greetingTime }}</div>
             </div>
@@ -174,6 +175,11 @@
                   }"
                 >
                   <MediaBubble v-if="item.media" :payload="item.media" :failed="item.failed" />
+                  <!-- 机器人 / 客服的文本消息：安全最小 Markdown 子集（无标记时走原纯文本渲染） -->
+                  <RichText
+                    v-else-if="item.type === 'text' && item.kind === 'service'"
+                    :content="item.text"
+                  />
                   <span v-else class="bubble__text">{{ item.text }}</span>
                 </div>
 
@@ -308,6 +314,7 @@ import { channelIcon, channelLabel, formatMessageTime, parseCardContent } from '
 import { useSocket } from '@/shared/composables/useSocket'
 import OrderCard from '@/shared/components/OrderCard.vue'
 import ProductCard from '@/shared/components/ProductCard.vue'
+import RichText from '@/shared/components/RichText.vue'
 
 /**
  * 用户端 URL 上允许出现的参数（与 docs/API.md §13.1 一致）

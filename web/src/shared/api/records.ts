@@ -55,7 +55,41 @@ export function fetchConversationRecords(query: RecordQuery = {}): Promise<Paged
   return http.get<Paged<ConversationRecord>>('/conversation-records', { params })
 }
 
-/** GET /api/conversation-records/:id/messages —— 查看某个会话的完整消息 */
-export function fetchRecordMessages(id: number, limit = 200): Promise<unknown[]> {
-  return http.get<unknown[]>(`/conversation-records/${id}/messages`, { params: { limit } })
+/** 对话记录抽屉里的单条消息（与 GET /api/conversations/:id/messages 的 MessageVO 同构） */
+export interface RecordMessage {
+  id: number
+  conversation_id?: number
+  type?: string
+  direction?: string
+  content?: string
+  sender?: { id?: number; name?: string; avatar?: string; role?: string }
+  created_at?: string
+  created_ts?: number
+}
+
+/**
+ * 对话记录抽屉的一页消息。
+ * - total：该会话的消息总数（DB 实际条数，与分页无关），用于显示「共 X 条」；
+ * - has_more：本页最早一条之前还有更早的消息，为 true 时继续用 list[0].id 作为 before_id 拉取。
+ */
+export interface RecordMessagePage {
+  list: RecordMessage[]
+  total: number
+  has_more: boolean
+}
+
+/** 抽屉单页条数：与后端缺省值一致（后端上限 200） */
+export const RECORD_MESSAGE_PAGE_SIZE = 50
+
+/**
+ * GET /api/conversation-records/:id/messages?before_id=&limit=
+ * 向前翻页取某会话的消息（id 升序返回）；before_id 缺省表示取最新一页。
+ */
+export function fetchRecordMessages(
+  id: number,
+  params: { before_id?: number; limit?: number } = {},
+): Promise<RecordMessagePage> {
+  const query: Record<string, string | number> = { limit: params.limit ?? RECORD_MESSAGE_PAGE_SIZE }
+  if (params.before_id) query.before_id = params.before_id
+  return http.get<RecordMessagePage>(`/conversation-records/${id}/messages`, { params: query })
 }

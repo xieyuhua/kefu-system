@@ -73,13 +73,6 @@ func Register(g *gin.RouterGroup, authed *gin.RouterGroup) {
 	authed.PUT("/admin/quick-replies/:id", h.UpdateTenantQuickReplyHandler)
 	authed.DELETE("/admin/quick-replies/:id", h.DeleteTenantQuickReplyHandler)
 
-	// 知识库（AI / RAG 应答的资料来源，仅管理员）
-	// 与 /admin/quick-replies 同风格挂在 /admin/ 前缀下：与知识条目一样属于「对外话术」级内容。
-	authed.GET("/admin/knowledge", h.ListKnowledgeHandler)
-	authed.POST("/admin/knowledge", h.CreateKnowledgeHandler)
-	authed.PUT("/admin/knowledge/:id", h.UpdateKnowledgeHandler)
-	authed.DELETE("/admin/knowledge/:id", h.DeleteKnowledgeHandler)
-
 	// 数据统计
 	authed.GET("/stats/overview", h.StatsOverviewHandler)
 

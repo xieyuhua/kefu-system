@@ -4,8 +4,26 @@ import (
 	"time"
 
 	"kefu-server/internal/common/repository"
+	"kefu-server/pkg/dto"
 	"kefu-server/pkg/util"
 )
+
+// 管理后台「对话记录」抽屉的消息分页边界：
+// 每页默认 50 条（与工作台一致），单页最多 200 条 —— 抽屉靠 before_id 游标向上翻页，
+// 直到 has_more 为 false，从而保证完整回放整个会话（不会像旧实现那样被固定上限截断）。
+const (
+	RecordMessagePageDefault = 50
+	RecordMessagePageMax     = 200
+)
+
+// ConversationMessagePage 对话记录抽屉的一页消息（管理后台只读回放）。
+// Total 是该会话的消息总数（不受分页影响，供前端显示「共 X 条」），
+// HasMore 表示在本次返回的最早一条之前还有更早的消息。
+type ConversationMessagePage struct {
+	List    []dto.MessageVO `json:"list"`
+	Total   int64           `json:"total"`
+	HasMore bool            `json:"has_more"`
+}
 
 // ---------------- 全局对话记录查询（管理后台） ----------------
 
@@ -122,6 +140,42 @@ func (s *ConversationService) SearchConversations(tenantID uint, q ConversationR
 		out = append(out, rec)
 	}
 	return out, total, nil
+}
+
+// ---------------- 对话记录回放：消息分页 ----------------
+
+// ListConversationMessagesPage 管理后台只读回放：按 before_id 游标向前翻页取某会话的消息。
+//
+// 语义与 GET /api/conversations/:id/messages 的列表部分保持一致（id < before_id，升序返回），
+// 但额外返回 total（会话消息总数）与 has_more（是否还有更早）。
+// 前端首屏用 before_id=0 取最近一页，之后把「当前首条的 id」当 before_id 反复拉取直到 has_more=false，
+// 即能完整回放整个会话（旧实现固定取 200 条、且无视 before_id，超过 200 条的会话必然看不到开头）。
+func (s *ConversationService) ListConversationMessagesPage(tenantID, convID, beforeID uint, limit int) (*ConversationMessagePage, error) {
+	if limit <= 0 {
+		limit = RecordMessagePageDefault
+	}
+	if limit > RecordMessagePageMax {
+		limit = RecordMessagePageMax
+	}
+	// 多取一条做探测：仓库按 id 倒序取 limit 条后整体反转为升序，
+	// 传 limit+1 时升序结果的第 0 条就是「更早的一条」，据此判断 has_more，避免额外计数查询。
+	rows, err := s.messages.ListMessagesBefore(tenantID, convID, beforeID, limit+1)
+	if err != nil {
+		return nil, err
+	}
+	hasMore := len(rows) > limit
+	if hasMore {
+		rows = rows[1:]
+	}
+	out := make([]dto.MessageVO, 0, len(rows))
+	for _, m := range rows {
+		out = append(out, s.buildMessageVO(m))
+	}
+	total, err := s.messages.CountMessagesOfConversation(tenantID, convID)
+	if err != nil {
+		return nil, err
+	}
+	return &ConversationMessagePage{List: out, Total: total, HasMore: hasMore}, nil
 }
 
 func (s *ConversationService) agentName(id uint) string {

@@ -82,7 +82,7 @@ func TestChatSuccess(t *testing.T) {
 
 	c, err := NewClient(Config{
 		BaseURL: srv.URL + "/v1", APIKey: "sk-test", Model: "deepseek-chat",
-		SystemPrompt: "只依据知识库回答", TimeoutSeconds: 5,
+		SystemPrompt: "只依据参考资料回答", TimeoutSeconds: 5,
 	})
 	if err != nil {
 		t.Fatalf("NewClient 失败: %v", err)

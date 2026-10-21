@@ -29,8 +29,6 @@ type Service struct {
 	Storage    *commonsvc.ObjectStorageService
 	// AI AI 应答配置（密钥脱敏 / 回填 / 连通性测试）
 	AI *commonsvc.AIService
-	// Knowledge 知识库（AI / RAG 应答的资料来源）
-	Knowledge *commonsvc.KnowledgeService
 }
 
 // NewService 创建端内业务层实例（自带各公共业务依赖）。
@@ -45,7 +43,6 @@ func NewService() *Service {
 		Stats:      commonsvc.NewStatsService(),
 		Storage:    commonsvc.NewObjectStorageService(),
 		AI:         commonsvc.NewAIService(),
-		Knowledge:  commonsvc.NewKnowledgeService(),
 	}
 }
 

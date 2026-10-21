@@ -2,16 +2,14 @@ package service
 
 // 本文件是 AI 应答的检索内核（RAG 的 R）：纯 Go 打分，不引入向量库 / 外部检索服务。
 //
-// 为什么不用向量检索：本项目的知识库是「几十到几百条售后/产品说明」，语料小且高度口语化，
-// 引入 embedding 服务意味着多一个外部依赖、多一份密钥和多一次网络往返（还会拖慢首字回复）。
-// 这里用「关键词命中 + 中文 2-gram 重叠」打分，效果足够把「退货怎么弄」稳定打到「退货政策」，
-// 而且完全可解释：后台调低 rag.min_score 就能放宽命中范围。
+// 检索语料 = 「渠道的自动回复规则」。不再维护独立知识库表：客服/管理员在后台「自动回复」
+// 里维护的关键词 + 回复内容，既是精确命中规则，也是 AI 应答时的检索片段，一处维护、两处生效。
 //
 // 打分口径（归一化到 0~1，便于和后台的 rag.min_score 直接比较）：
 //   1. 中文按 2-gram 切分（退货怎么弄 → 退货 / 货怎 / 怎么 / 么弄），英文/数字按词切分；
 //   2. 另算一份单字覆盖率：中文口语里同义改写很多（退货/退款/退换），单字层面仍能对上；
-//   3. 两个覆盖率都按「字段权重」折算：命中标题/标签比只命中正文更相关；
-//   4. 标签命中额外加权：后台用 tags 标出来的就是「这条知识解决什么问题」的人工标注。
+//   3. 覆盖率按「字段权重」折算：命中规则名/关键词比只命中回复正文更相关；
+//   4. 关键词命中额外加权：规则的关键词就是「这条规则解决什么问题」的人工标注。
 //
 // 形态约定：检索能力是 RagService 的方法（指针接收者）；打分纯函数单独抽出来便于单测。
 
@@ -26,10 +24,10 @@ import (
 )
 
 const (
-	// ragScanLimit 单租户参与打分的知识条目上限：知识库是人工维护的小表，
+	// ragScanLimit 单租户参与打分的规则上限：自动回复规则是人工维护的小表，
 	// 500 条已远超正常规模，加上限只是防止误导入上万条数据后把同步回复拖慢。
 	ragScanLimit = 500
-	// 字段权重：同样的词命中标题 / 标签 / 正文，可信度不同。
+	// 字段权重：同样的词命中规则名 / 关键词 / 回复正文，可信度不同。
 	ragWeightTitle   = 1.0
 	ragWeightTags    = 1.0
 	ragWeightContent = 0.85
@@ -41,32 +39,27 @@ const (
 	ragMinTokenLen = 2
 )
 
-// RagService 知识库检索的业务内核，持有本域仓储。
+// RagService AI 应答检索内核，持有自动回复仓储。
 type RagService struct {
-	repo *repository.KnowledgeRepository
+	repo *repository.AutoReplyRepository
 }
 
 // NewRagService 创建检索实例（自带数据访问层依赖）。
 func NewRagService() *RagService {
-	return &RagService{repo: repository.NewKnowledgeRepository()}
+	return &RagService{repo: repository.NewAutoReplyRepository()}
 }
 
-// Retrieve 检索与问题最相关的知识条目，返回命中的条目与各自分数（同序、按分数降序）。
+// Retrieve 检索与问题最相关的「该渠道自动回复规则」，返回命中的规则与各自分数（同序、按分数降序）。
 //
 // 契约：
-//   - 只看 enabled = true 的条目（停用的知识不参与回答）；
-//   - 分数低于 minScore 的条目一律丢弃：宁可「无命中」走兜底话术，也不拿弱相关内容去猜；
+//   - 只检索启用中的规则，且规则适用于 channelID（含全渠道规则）；
+//   - 分数低于 minScore 的规则一律丢弃：宁可「无命中」走兜底话术，也不拿弱相关内容去猜；
 //   - topK <= 0 时按 1 处理，超过 ragScanLimit 时按上限夹取；
 //   - 无命中返回 (空切片, 空切片, nil)，不返回 error（无命中不是错误）。
-func (s *RagService) Retrieve(tenantID uint, question string, topK int, minScore float64) ([]*model.KnowledgeDoc, []float64, error) {
-	return s.RetrieveFrom(tenantID, question, topK, minScore)
-}
-
-// RetrieveFrom 与 Retrieve 等价，保留独立入口便于上层按需注入其它候选集（当前直连仓储）。
-func (s *RagService) RetrieveFrom(tenantID uint, question string, topK int, minScore float64) ([]*model.KnowledgeDoc, []float64, error) {
+func (s *RagService) Retrieve(tenantID, channelID uint, question string, topK int, minScore float64) ([]*model.AutoReply, []float64, error) {
 	q := strings.TrimSpace(question)
 	if q == "" {
-		return []*model.KnowledgeDoc{}, []float64{}, nil
+		return []*model.AutoReply{}, []float64{}, nil
 	}
 	if topK <= 0 {
 		topK = 1
@@ -81,22 +74,25 @@ func (s *RagService) RetrieveFrom(tenantID uint, question string, topK int, minS
 		minScore = 1
 	}
 
-	docs, err := s.repo.ListEnabledKnowledge(tenantID, ragScanLimit)
+	rules, err := s.repo.ListEnabledAutoReplies(tenantID)
 	if err != nil {
 		return nil, nil, err
 	}
-	if len(docs) == 0 {
-		return []*model.KnowledgeDoc{}, []float64{}, nil
-	}
 
 	type hit struct {
-		doc   *model.KnowledgeDoc
+		rule  *model.AutoReply
 		score float64
 	}
-	hits := make([]hit, 0, len(docs))
-	for _, doc := range docs {
-		if score := ScoreKnowledgeDoc(q, doc); score >= minScore && score > 0 {
-			hits = append(hits, hit{doc: doc, score: score})
+	hits := make([]hit, 0, len(rules))
+	for _, r := range rules {
+		if r == nil || r.TransferToHuman {
+			continue // 转人工规则不参与 AI 检索
+		}
+		if !MatchChannel(r, channelID) {
+			continue // 只检索适用于该渠道的规则
+		}
+		if score := scoreAutoReply(q, r); score >= minScore && score > 0 {
+			hits = append(hits, hit{rule: r, score: score})
 		}
 	}
 	// 分数降序；同分按 id 升序（结果稳定，便于后台复现与单测）
@@ -104,37 +100,47 @@ func (s *RagService) RetrieveFrom(tenantID uint, question string, topK int, minS
 		if hits[i].score != hits[j].score {
 			return hits[i].score > hits[j].score
 		}
-		return hits[i].doc.ID < hits[j].doc.ID
+		return hits[i].rule.ID < hits[j].rule.ID
 	})
 	if len(hits) > topK {
 		hits = hits[:topK]
 	}
 
-	outDocs := make([]*model.KnowledgeDoc, 0, len(hits))
+	outRules := make([]*model.AutoReply, 0, len(hits))
 	outScores := make([]float64, 0, len(hits))
 	for _, h := range hits {
-		outDocs = append(outDocs, h.doc)
+		outRules = append(outRules, h.rule)
 		outScores = append(outScores, h.score)
 	}
-	return outDocs, outScores, nil
+	return outRules, outScores, nil
 }
 
 // ---------------- 打分（纯函数，便于单测） ----------------
 
-// ScoreKnowledgeDoc 计算一条知识与问题的相关度（0~1）。
+// scoreAutoReply 计算一条自动回复规则与问题的相关度（0~1）。
 // 纯函数：不碰数据库、不读设置，同样的入参永远得到同样的分数。
-func ScoreKnowledgeDoc(question string, doc *model.KnowledgeDoc) float64 {
-	if doc == nil {
+//
+// 字段映射：
+//   - title   = 规则名 + 关键词（命中权重最高）；
+//   - tags    = 关键词（后台用关键词标出来的就是「这条规则解决什么问题」）；
+//   - content = 回复正文。
+func scoreAutoReply(question string, rule *model.AutoReply) float64 {
+	if rule == nil {
 		return 0
 	}
 	bigrams, unigrams := splitQueryTokens(question)
 	if len(bigrams) == 0 && len(unigrams) == 0 {
 		return 0
 	}
-	// 候选条目的三份字段索引（标题 / 标签 / 正文各建一份，命中权重不同）
-	titleBigram, titleUnigram := indexText(doc.Title)
-	tagBigram, tagUnigram := indexText(doc.Tags)
-	bodyBigram, bodyUnigram := indexText(doc.Content)
+	title := strings.TrimSpace(rule.Name)
+	if title == "" {
+		title = strings.TrimSpace(rule.Keywords)
+	}
+	tags := strings.TrimSpace(rule.Keywords)
+
+	titleBigram, titleUnigram := indexText(title)
+	tagBigram, tagUnigram := indexText(tags)
+	bodyBigram, bodyUnigram := indexText(rule.Reply)
 
 	bigramCov := coverage(bigrams, []fieldIndex{
 		{set: titleBigram, weight: ragWeightTitle},
@@ -148,7 +154,7 @@ func ScoreKnowledgeDoc(question string, doc *model.KnowledgeDoc) float64 {
 	})
 
 	score := ragWeightBigram*bigramCov + ragWeightUnigram*unigramCov +
-		ragWeightTagBonus*tagHitRatio(question, doc.Tags)
+		ragWeightTagBonus*tagHitRatio(question, tags)
 
 	return clamp01(score)
 }
@@ -178,8 +184,8 @@ func coverage(tokens []string, fields []fieldIndex) float64 {
 	return clamp01(sum / float64(len(tokens)))
 }
 
-// tagHitRatio 标签命中率：后台用 tags 标注的「这条知识解决什么问题」，
-// 问题里直接出现该标签时说明指向性很强（如标签「退货」+ 问题「退货怎么弄」）。
+// tagHitRatio 关键词命中率：问题里直接出现该关键词时说明指向性很强
+// （如关键词「退货」+ 问题「退货怎么弄」）。
 func tagHitRatio(question, tags string) float64 {
 	tagList := splitTagList(tags)
 	if len(tagList) == 0 {
@@ -195,7 +201,7 @@ func tagHitRatio(question, tags string) float64 {
 	return clamp01(float64(hit) / float64(len(tagList)))
 }
 
-// splitTagList 把逗号分隔的标签切成小写片段（兼容中文逗号 / 分号，与关键词配置同一口径）。
+// splitTagList 把逗号分隔的关键词切成小写片段（兼容中文逗号 / 分号，与关键词配置同一口径）。
 func splitTagList(tags string) []string {
 	out := make([]string, 0, 4)
 	seen := make(map[string]bool, 4)
@@ -269,7 +275,7 @@ func isASCIIWordRune(r rune) bool {
 	return r < unicode.MaxASCII && (unicode.IsLetter(r) || unicode.IsDigit(r))
 }
 
-// isCJK 判断是否为中日韩统一表意文字（中文知识库的全部正文都在这个区间内）。
+// isCJK 判断是否为中日韩统一表意文字。
 func isCJK(r rune) bool {
 	return unicode.Is(unicode.Han, r)
 }
@@ -306,10 +312,10 @@ func clamp01(v float64) float64 {
 
 // ---------------- 提示词拼装 ----------------
 
-// BuildRagPrompt 把命中的知识片段拼进提示词，附带来源标题，便于模型引用与人工核对。
+// BuildRagPrompt 把命中的自动回复规则拼进提示词，附带来源标题，便于模型引用与人工核对。
 // 输出形如：
 //
-//	【知识库片段】
+//	【参考资料】
 //	[1] 退货政策（相关度 0.42）
 //	7 天无理由退货：...
 //
@@ -317,12 +323,12 @@ func clamp01(v float64) float64 {
 //	退货怎么弄
 //
 //	【回答要求】
-//	只依据上面的知识库片段回答；片段没有覆盖的信息不要编造，直接说明需要转接人工客服。
-func BuildRagPrompt(question string, docs []*model.KnowledgeDoc, scores []float64) string {
+//	只依据上面的参考资料回答；资料没有覆盖的信息不要编造，直接说明需要转接人工客服。
+func BuildRagPrompt(question string, rules []*model.AutoReply, scores []float64) string {
 	var b strings.Builder
-	b.WriteString("【知识库片段】\n")
-	for i, doc := range docs {
-		if doc == nil {
+	b.WriteString("【参考资料】\n")
+	for i, rule := range rules {
+		if rule == nil {
 			continue
 		}
 		score := 0.0
@@ -332,21 +338,34 @@ func BuildRagPrompt(question string, docs []*model.KnowledgeDoc, scores []float6
 		b.WriteString("[")
 		b.WriteString(itoa(i + 1))
 		b.WriteString("] ")
-		title := strings.TrimSpace(doc.Title)
+		title := strings.TrimSpace(rule.Name)
 		if title == "" {
-			title = "未命名知识"
+			title = firstKeyword(rule.Keywords)
+		}
+		if title == "" {
+			title = "自动回复规则"
 		}
 		b.WriteString(title)
 		b.WriteString("（相关度 ")
 		b.WriteString(formatScore(score))
 		b.WriteString("）\n")
-		b.WriteString(strings.TrimSpace(doc.Content))
+		b.WriteString(strings.TrimSpace(rule.Reply))
 		b.WriteString("\n\n")
 	}
 	b.WriteString("【客户问题】\n")
 	b.WriteString(strings.TrimSpace(question))
-	b.WriteString("\n\n【回答要求】\n只依据上面的知识库片段回答；片段没有覆盖的信息不要编造，直接说明需要转接人工客服。\n")
+	b.WriteString("\n\n【回答要求】\n只依据上面的参考资料回答；资料没有覆盖的信息不要编造，直接说明需要转接人工客服。\n")
 	return b.String()
+}
+
+// firstKeyword 取规则关键词里的第一个（用于没有规则名时的标题兜底）。
+func firstKeyword(keywords string) string {
+	for _, kw := range splitKeywords(keywords) {
+		if kw = strings.TrimSpace(kw); kw != "" {
+			return kw
+		}
+	}
+	return ""
 }
 
 // itoa 提示词里的序号（避免为一个数字引入 fmt 依赖）。

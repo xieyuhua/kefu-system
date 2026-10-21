@@ -4,11 +4,17 @@
  * 全局检索历史会话：支持按客户昵称 / 消息内容 / 渠道 / 客服 / 日期范围 / 状态筛选，
  * 点击可查看该会话的完整聊天记录。
  */
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, nextTick, onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Refresh, Search } from '@element-plus/icons-vue'
 import { listChannels as fetchChannels, listAgents, type Agent } from '@/shared/api/admin'
-import { fetchConversationRecords, fetchRecordMessages, type ConversationRecord } from '@/shared/api/records'
+import {
+  RECORD_MESSAGE_PAGE_SIZE,
+  fetchConversationRecords,
+  fetchRecordMessages,
+  type ConversationRecord,
+  type RecordMessage,
+} from '@/shared/api/records'
 import { useIsMobile } from '@/shared/composables/useIsMobile'
 import { formatMessageTime, parseCardContent } from '@/shared/utils/format'
 import ThumbImage from '@/shared/components/ThumbImage.vue'
@@ -76,31 +82,114 @@ function onPage(p: number): void {
   void load()
 }
 
-/* ---------------- 查看完整聊天记录 ---------------- */
+/* ---------------- 查看完整聊天记录 ----------------
+ * 会话可能很长（数百上千条），一次性取全会拖慢抽屉，因此分页：
+ *   首屏取最近 RECORD_MESSAGE_PAGE_SIZE 条 → 顶部「加载更早消息」用 before_id 游标继续向前翻页，
+ *   直到 has_more=false 为止。接口同时返回 total，抽屉里显示「共 N 条」。
+ * 翻页只影响本抽屉，工作台（/chat/）的消息分页链路完全独立、未改动。
+ */
 const drawerVisible = ref(false)
 const detailLoading = ref(false)
 const detail = ref<ConversationRecord | null>(null)
-const messages = ref<Record<string, unknown>[]>([])
+const messages = ref<RecordMessage[]>([])
+/** 该会话消息总数（接口返回的 DB 实际条数，不是「已加载条数」） */
+const msgTotal = ref(0)
+/** 还有更早的消息可加载 */
+const hasMore = ref(false)
+/** 正在加载更早的消息（按钮 loading + 防重复点击） */
+const loadingMore = ref(false)
+/** 抽屉内的消息滚动容器（翻页后据此补偿滚动高度，保证视口不跳动） */
+const bodyRef = ref<HTMLElement | null>(null)
 
 const currentRecord = computed(() => detail.value)
+/** 抽屉标题上的已加载进度 */
+const shownCount = computed(() => messages.value.length)
+
+/** 记录首屏/翻页的请求序号，抽屉快速切换时丢弃过期响应 */
+let fetchSeq = 0
 
 async function openRecord(row: ConversationRecord): Promise<void> {
+  const seq = ++fetchSeq
   drawerVisible.value = true
   detailLoading.value = true
   detail.value = row
   messages.value = []
+  msgTotal.value = 0
+  hasMore.value = false
+  loadingMore.value = false
   try {
-    const list = await fetchRecordMessages(row.id)
-    messages.value = list as unknown as Record<string, unknown>[]
+    const page = await fetchRecordMessages(row.id, { limit: RECORD_MESSAGE_PAGE_SIZE })
+    if (seq !== fetchSeq) return
+    messages.value = page.list || []
+    msgTotal.value = page.total ?? messages.value.length
+    hasMore.value = Boolean(page.has_more)
   } catch {
-    ElMessage.error('聊天记录加载失败')
+    if (seq === fetchSeq) ElMessage.error('聊天记录加载失败')
   } finally {
-    detailLoading.value = false
+    if (seq === fetchSeq) detailLoading.value = false
   }
 }
 
-/** 消息内容预览：卡片类消息展示摘要，纯文本直接展示 */
-const msgText = (m: Record<string, unknown>): string => {
+/**
+ * 加载更早的消息：用当前首条消息的 id 作为 before_id 向前翻一页，追加到列表顶部。
+ * 追加后补齐 scrollHeight 增量，让原本可见的那条消息停在原处（视口不跳动）。
+ */
+async function loadEarlier(): Promise<void> {
+  if (!hasMore.value || loadingMore.value || detailLoading.value) return
+  const firstID = messages.value[0]?.id
+  if (!firstID) return
+
+  const body = bodyRef.value
+  const prevHeight = body?.scrollHeight ?? 0
+  const prevTop = body?.scrollTop ?? 0
+
+  loadingMore.value = true
+  try {
+    const recordID = Number(currentRecord.value?.id || 0)
+    if (!recordID) return
+    // before_id = 当前首条消息 id：接口返回 id < before_id 的上一页，保证与已有数据无缝相接
+    const page = await fetchRecordMessages(recordID, { before_id: Number(firstID) })
+    const older = page.list || []
+    if (!older.length) {
+      // 后端已无更早数据：收敛按钮状态，避免用户反复点击
+      hasMore.value = false
+      msgTotal.value = Math.max(msgTotal.value, messages.value.length)
+      return
+    }
+    messages.value = [...older, ...messages.value]
+    if (typeof page.total === 'number') msgTotal.value = page.total
+    hasMore.value = Boolean(page.has_more)
+    await nextTick()
+    // 补偿新增高度：原本可见的消息位置不变，避免「加载更早」后内容整体下跳
+    const el = bodyRef.value
+    if (el) el.scrollTop = prevTop + (el.scrollHeight - prevHeight)
+  } catch {
+    ElMessage.error('更早的聊天记录加载失败')
+  } finally {
+    loadingMore.value = false
+  }
+}
+
+/** 消息角色：客户 / 客服 / 智能助手（机器人）/ 系统 —— 决定气泡的排布与配色 */
+type MsgRole = 'customer' | 'agent' | 'robot' | 'system'
+
+/**
+ * 归类消息角色。优先看 sender.role（后端 buildMessageVO 已按 sender_role 归一：
+ * 客服→agent、客户→user、机器人→robot、系统→system），缺失时再退回 direction。
+ */
+function roleOf(m: RecordMessage): MsgRole {
+  const role = m.sender?.role
+  if (role === 'robot') return 'robot'
+  if (role === 'agent') return 'agent'
+  if (role === 'system') return 'system'
+  if (role === 'user' || role === 'customer') return 'customer'
+  if (m.direction === 'in') return 'customer'
+  if (m.direction === 'out') return 'agent'
+  return 'system'
+}
+
+/** 消息内容预览：卡片类消息展示摘要，纯文本直接展示（渲染口径保持原样） */
+const msgText = (m: RecordMessage): string => {
   const type = String(m.type || 'text')
   const content = String(m.content || '')
   if (type === 'order') {
@@ -117,12 +206,19 @@ const msgText = (m: Record<string, unknown>): string => {
   return content
 }
 
-function senderName(m: Record<string, unknown>): string {
-  const s = m.sender as { name?: string; role?: string } | null
-  if (!s) return ''
-  if (s.role === 'agent') return s.name || '客服'
-  if (s.role === 'user') return s.name || '客户'
-  return '系统'
+/** 发送者名称：保留原有「名称 + 时间」格式，仅给机器人补一个 🤖 标识 */
+function senderName(m: RecordMessage): string {
+  const s = m.sender
+  switch (roleOf(m)) {
+    case 'agent':
+      return s?.name || '客服'
+    case 'customer':
+      return s?.name || '客户'
+    case 'robot':
+      return '🤖 ' + (s?.name || '智能助手')
+    default:
+      return s?.name || '系统'
+  }
 }
 
 function statusTag(status: string): 'success' | 'warning' | 'info' {
@@ -319,18 +415,31 @@ onMounted(async () => {
           <span class="rec__muted">接待：{{ currentRecord.agent_name }}</span>
         </div>
         <div class="rec__muted rec__muted--sub">
-          共 {{ currentRecord.message_count }} 条 ·
+          共 {{ msgTotal }} 条消息 · 已加载 {{ shownCount }} 条 ·
           {{ currentRecord.first_message_at }} ~ {{ currentRecord.last_message_at }}
         </div>
       </div>
 
-      <div v-loading="detailLoading" class="rec-body kf-scroll">
-        <div v-for="m in messages" :key="String(m.id)" class="msg">
+      <div ref="bodyRef" v-loading="detailLoading" class="rec-body kf-scroll">
+        <!-- 还有更早的消息时，列表顶部给出「加载更早消息」入口；加载完成后收敛为一条提示 -->
+        <div v-if="hasMore" class="rec-more">
+          <el-button size="small" plain :loading="loadingMore" @click="loadEarlier">
+            加载更早消息
+          </el-button>
+        </div>
+        <div v-else-if="messages.length" class="rec-more rec-more--done">已经是最早的一条消息</div>
+
+        <div
+          v-for="m in messages"
+          :key="String(m.id)"
+          class="msg"
+          :class="`msg--${roleOf(m)}`"
+        >
           <div class="msg__meta">
             <span class="msg__who">{{ senderName(m) }}</span>
             <span class="msg__time">{{ formatMessageTime(String(m.created_at || '')) }}</span>
           </div>
-          <div class="msg__text">{{ msgText(m) }}</div>
+          <div class="msg__bubble">{{ msgText(m) }}</div>
         </div>
         <el-empty v-if="!detailLoading && !messages.length" description="暂无消息" :image-size="60" />
       </div>
@@ -555,19 +664,55 @@ onMounted(async () => {
   max-height: calc(100vh - 240px);
 }
 
-.msg {
+/* 「加载更早消息」入口：吸附在消息列表顶部，滚到任何位置都能直接点，不用先滚回开头 */
+.rec-more {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  display: flex;
+  justify-content: center;
   padding: 8px 0;
-  border-bottom: 1px dashed #f5f5f5;
+  margin-bottom: 4px;
+  background: #fff;
+  border-bottom: 1px solid #f5f5f5;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.03);
+
+  /* 已到最早一条时只是说明文案：留在列表顶部即可，不再吸附，避免遮挡上一条消息 */
+  &--done {
+    position: static;
+    padding: 6px 0;
+    border-bottom: 0;
+    box-shadow: none;
+    font-size: 12px;
+    color: #a8adb3;
+  }
+}
+
+/**
+ * 消息气泡：按角色区分排布与配色（一眼看出谁说的）。
+ * 配色原则：底色一律是低饱和度淡色（rgba 透明度 ≤ 0.12），正文都是深色（各自带一点色相），
+ * 保证「区分明显」的同时文字与背景对比度 ≥ 4.5:1（实测 客户 13.8:1 / 客服 11.6:1 /
+ * 机器人 13.4:1 / 系统 7.4:1，均满足 WCAG AA；不用白字配浅底、也不用浅灰字）。
+ * 四类的底色与正文色均互不相同，系统消息额外用居中 pill（圆角 999px）作区分。
+ */
+.msg {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+  min-width: 0;
+  margin-bottom: 10px;
 
   &__meta {
     display: flex;
     align-items: baseline;
     gap: 8px;
-    margin-bottom: 3px;
+    max-width: 100%;
+    font-size: 12px;
+    color: #7f7f7f;
   }
 
   &__who {
-    font-size: 12px;
     font-weight: 600;
     color: #4a6fa5;
   }
@@ -577,13 +722,77 @@ onMounted(async () => {
     color: #b2b2b2;
   }
 
-  &__text {
-    max-width: 100%;
+  &__bubble {
+    max-width: min(84%, 520px);
+    padding: 8px 10px;
+    border-radius: 8px;
+    background: rgba(0, 0, 0, 0.06);
     font-size: 13px;
     line-height: 1.6;
-    color: #191919;
+    color: #1f2329;
     word-break: break-word;
     overflow-wrap: anywhere;
+  }
+
+  /* 客户：靠左，浅灰底 */
+  &--customer {
+    align-items: flex-start;
+
+    .msg__who {
+      color: #4a6fa5;
+    }
+
+    .msg__bubble {
+      background: rgba(0, 0, 0, 0.06);
+      color: #1f2329;
+    }
+  }
+
+  /* 客服：靠右，浅绿底 */
+  &--agent {
+    align-items: flex-end;
+
+    .msg__who {
+      color: #0a7a3f;
+    }
+
+    .msg__bubble {
+      background: rgba(7, 193, 96, 0.1);
+      color: #0d3a24;
+    }
+  }
+
+  /* 智能助手 / 机器人：靠左，浅蓝底 */
+  &--robot {
+    align-items: flex-start;
+
+    .msg__who {
+      color: #2a5fbf;
+    }
+
+    .msg__bubble {
+      background: rgba(64, 128, 255, 0.1);
+      color: #10254f;
+    }
+  }
+
+  /* 系统提示：居中灰色 pill */
+  &--system {
+    align-items: center;
+
+    .msg__who {
+      color: #5a6068;
+    }
+
+    .msg__bubble {
+      max-width: 100%;
+      padding: 4px 12px;
+      border-radius: 999px;
+      background: rgba(0, 0, 0, 0.05);
+      font-size: 12px;
+      color: #4a4f57;
+      text-align: center;
+    }
   }
 }
 
@@ -661,12 +870,17 @@ onMounted(async () => {
 
   .msg {
     min-width: 0;
-    padding: 8px 0;
 
-    &__text {
-      max-width: 100%;
+    /* 窄屏气泡不顶满：留出对侧留白，仍能看出左右区分，且绝不横向溢出 */
+    &__bubble {
+      max-width: 88%;
       font-size: 14px;
       line-height: 1.6;
+    }
+
+    &--system .msg__bubble {
+      max-width: 100%;
+      font-size: 12px;
     }
   }
 }

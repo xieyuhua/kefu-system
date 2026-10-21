@@ -22,9 +22,9 @@
       </div>
 
       <div class="bubble" :class="{ pending: message.pending, failed: message.failed }">
-        <!-- 文本 -->
+        <!-- 文本：安全最小 Markdown 子集（无标记时内部仍走原纯文本渲染） -->
         <template v-if="message.type === 'text'">
-          <span class="bubble-text">{{ text }}</span>
+          <RichText :content="text" />
         </template>
 
         <!-- 图片 / 视频 / 文件（mediaPayload 已兼容历史 URL 写法） -->
@@ -62,6 +62,7 @@ import { formatMessageTime, parseCardContent } from '@/shared/utils/format'
 import MediaBubble, { type MediaPayload } from '@/shared/components/MediaBubble.vue'
 import OrderCard from '@/shared/components/OrderCard.vue'
 import ProductCard from '@/shared/components/ProductCard.vue'
+import RichText from '@/shared/components/RichText.vue'
 
 const props = defineProps<{
   message: Message
@@ -228,6 +229,20 @@ onBeforeUnmount(() => {
 .is-out .bubble {
   background: var(--kf-primary);
   color: #fff;
+}
+
+/* 绿色（自己发出）气泡里的富文本对比度修正：链接/行内代码/引用 */
+
+.is-out .bubble :deep(.md-a) {
+  color: #fff;
+}
+
+.is-out .bubble :deep(.md-code) {
+  background: rgba(255, 255, 255, 0.32);
+}
+
+.is-out .bubble :deep(.md-quote) {
+  border-left-color: rgba(255, 255, 255, 0.5);
 }
 
 /* 媒体消息（图片/视频/文件）：去掉气泡底色与阴影 */

@@ -176,7 +176,7 @@ async function testStorage(): Promise<void> {
 }
 
 /* ---------------- AI 应答（ai.* / rag.*） ---------------- *
- * 未命中关键词规则时的兜底链路：知识库检索 → 大模型 → 兜底话术。
+ * 未命中关键词规则时的兜底链路：检索渠道自动回复内容 → 大模型 → 兜底话术。
  * 默认关闭：不填不启用时，机器人行为与改造前完全一致。
  * api_key 由后端脱敏成 ******，未改动时提交 ****** 即表示沿用已保存的 Key。
  */
@@ -884,7 +884,7 @@ onMounted(load)
         <el-tab-pane label="AI 应答" name="ai" data-test="tab-ai">
           <!-- 该选项卡自己的操作区：测试连接 + 保存（只作用于本选项卡） -->
           <div class="pane-actions">
-            <span class="pane-actions__hint">知识库检索 + 大模型生成，默认关闭</span>
+            <span class="pane-actions__hint">检索渠道自动回复内容 + 大模型生成，默认关闭</span>
             <div class="pane-actions__btns">
               <el-button
                 size="small"
@@ -912,7 +912,7 @@ onMounted(load)
               <div class="setting-item__label">
                 <div class="setting-item__name">启用 AI 应答</div>
                 <div class="setting-item__remark">
-                  未命中自动回复规则时，先查知识库再让大模型生成回复；失败自动降级为兜底话术
+                  未命中自动回复规则时，先检索该渠道的自动回复内容再让大模型生成回复；失败自动降级为兜底话术
                 </div>
               </div>
               <div class="setting-item__control">
@@ -997,7 +997,7 @@ onMounted(load)
             <div class="setting-item">
               <div class="setting-item__label">
                 <div class="setting-item__name">系统提示词</div>
-                <div class="setting-item__remark">约束模型只依据知识库回答，不确定就转人工</div>
+                <div class="setting-item__remark">约束模型只依据自动回复内容回答，不确定就转人工</div>
               </div>
               <div class="setting-item__control">
                 <el-input
@@ -1056,7 +1056,7 @@ onMounted(load)
             <div class="setting-item">
               <div class="setting-item__label">
                 <div class="setting-item__name">最低相关度 rag.min_score</div>
-                <div class="setting-item__remark">0~1；低于该值视为知识库无命中，直接回兜底话术</div>
+                <div class="setting-item__remark">0~1；低于该值视为检索无命中，直接回兜底话术</div>
               </div>
               <div class="setting-item__control">
                 <el-input-number
@@ -1084,8 +1084,8 @@ onMounted(load)
 
           <el-alert type="info" :closable="false" class="tip">
             说明：AI 应答只在「未命中自动回复规则 + 渠道已开启机器人」时才触发，
-            链路为 <b>知识库检索 → 大模型 → 兜底话术</b>；检索无命中不会去猜，直接回兜底话术。
-            知识条目在「知识库」页维护。Key 已保存时页面只显示 <b>******</b>，留空提交表示保留原 Key。
+            链路为 <b>检索渠道自动回复内容 → 大模型 → 兜底话术</b>；检索无命中不会去猜，直接回兜底话术。
+            自动回复内容在「自动回复」页维护。Key 已保存时页面只显示 <b>******</b>，留空提交表示保留原 Key。
           </el-alert>
         </el-tab-pane>
       </el-tabs>
