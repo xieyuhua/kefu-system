@@ -66,9 +66,8 @@
             v-for="o in orders"
             :key="o.id"
             class="order-item"
-            :class="{ disabled: !canSend || !orderCardEnabled }"
-            :title="orderCardEnabled ? '' : orderCardHint"
-            @click="sendOrder(o)"
+            :class="{ disabled: !canSend }"
+            @click="orderCardEnabled && sendOrder(o)"
           >
             <div class="order-thumb">
               <img v-if="o.image" :src="o.image" alt="" />
@@ -82,10 +81,7 @@
               </div>
               <div class="order-no">{{ o.order_no }}</div>
             </div>
-            <el-tooltip
-              :content="orderCardEnabled ? '发送给客户' : orderCardHint"
-              placement="left"
-            >
+            <el-tooltip v-if="orderCardEnabled" content="发送给客户" placement="left">
               <span class="send-icon">➤</span>
             </el-tooltip>
           </div>
@@ -551,6 +547,43 @@ watch(
   &__hint {
     font-size: 11px;
     color: var(--kf-text-weak);
+  }
+}
+
+
+/* 标签选择：Element Plus 的 el-check-tag 选中态是「亮绿底 + 白字」，对比度太低、刺眼又看不清，
+   这里改成「浅底 + 深绿描边 + 深绿加粗字 + 勾选标记」，清晰不刺眼。 */
+:deep(.tag-editor__item) {
+  margin: 0 8px 8px 0;
+  padding: 4px 10px;
+  font-size: 12px;
+  line-height: 1.5;
+  border-radius: 12px;
+  border: 1px solid var(--el-border-color);
+  background: #f5f6f7;
+  color: #3d4450;
+  transition: all 0.15s;
+
+  &:hover {
+    border-color: var(--kf-primary);
+    color: var(--kf-primary-dark);
+  }
+
+  &.is-checked {
+    background: rgba(7, 193, 96, 0.12);
+    border-color: var(--kf-primary-dark);
+    color: #06692f;
+    font-weight: 600;
+
+    &::before {
+      content: '✓ ';
+      font-weight: 700;
+    }
+
+    &:hover {
+      background: rgba(7, 193, 96, 0.2);
+      color: #05572a;
+    }
   }
 }
 

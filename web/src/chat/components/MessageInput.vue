@@ -21,32 +21,13 @@
       <!-- PC 端：订单 / 商品 / 快捷回复 / 搜索 平铺展示。
            渠道关闭了对应卡片能力时按钮置灰，并用 tooltip 说明原因。 -->
       <template v-if="!compact">
-        <el-tooltip :content="orderCardHint" placement="top" :disabled="orderCardEnabled">
-          <span class="toolbar-btn">
-            <el-button
-              text
-              size="small"
-              :title="orderCardEnabled ? '订单' : orderCardHint"
-              :disabled="!orderCardEnabled"
-              @click="emit('pick-order')"
-            >
-              🧾 订单
-            </el-button>
-          </span>
-        </el-tooltip>
-        <el-tooltip :content="productCardHint" placement="top" :disabled="productCardEnabled">
-          <span class="toolbar-btn">
-            <el-button
-              text
-              size="small"
-              :title="productCardEnabled ? '商品' : productCardHint"
-              :disabled="!productCardEnabled"
-              @click="emit('pick-product')"
-            >
-              🛍 商品
-            </el-button>
-          </span>
-        </el-tooltip>
+        <!-- 渠道关闭了对应卡片能力时，入口直接隐藏（不占用位置，也不给用户「点了没反应」的困惑） -->
+        <span v-if="orderCardEnabled" class="toolbar-btn">
+          <el-button text size="small" title="订单" @click="emit('pick-order')">🧾 订单</el-button>
+        </span>
+        <span v-if="productCardEnabled" class="toolbar-btn">
+          <el-button text size="small" title="商品" @click="emit('pick-product')">🛍 商品</el-button>
+        </span>
 
         <!-- 快捷回复：数据来自 /api/quick-replies（我的私有 + 租户共享），
              点条目插入输入框；「管理」打开自己的话术管理对话框。 -->
@@ -105,20 +86,8 @@
         <el-button text size="small" title="更多" :icon="MoreFilled" />
         <template #dropdown>
           <el-dropdown-menu>
-            <el-dropdown-item
-              command="order"
-              :disabled="!orderCardEnabled"
-              :title="orderCardEnabled ? '发送订单卡片' : orderCardHint"
-            >
-              🧾 发送订单<template v-if="!orderCardEnabled">（{{ orderCardHint }}）</template>
-            </el-dropdown-item>
-            <el-dropdown-item
-              command="product"
-              :disabled="!productCardEnabled"
-              :title="productCardEnabled ? '发送商品卡片' : productCardHint"
-            >
-              🛍 发送商品<template v-if="!productCardEnabled">（{{ productCardHint }}）</template>
-            </el-dropdown-item>
+            <el-dropdown-item v-if="orderCardEnabled" command="order">🧾 发送订单</el-dropdown-item>
+            <el-dropdown-item v-if="productCardEnabled" command="product">🛍 发送商品</el-dropdown-item>
             <el-dropdown-item command="quick">⚡ 快捷回复</el-dropdown-item>
             <el-dropdown-item command="search">🔍 搜索聊天记录</el-dropdown-item>
           </el-dropdown-menu>
