@@ -18,6 +18,7 @@
     "dayjs": "^1.11.23",
     "element-plus": "2.9.0",
     "pinia": "^4.0.3",
+    "playwright": "1.64.0",
     "vue": "^3.5.42",
     "vue-router": "^4.6.4"
   },

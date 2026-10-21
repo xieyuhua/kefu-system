@@ -36,12 +36,6 @@ export const adminRoutes: RouteRecordRaw[] = [
     meta: { title: '快捷回复' },
   },
   {
-    path: '/knowledge',
-    name: 'admin-knowledge',
-    component: () => import('./views/KnowledgeView.vue'),
-    meta: { title: '知识库' },
-  },
-  {
     path: '/agents',
     name: 'admin-agents',
     component: () => import('./views/AgentsView.vue'),

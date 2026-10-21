@@ -786,12 +786,21 @@ function connectSocket(): void {
     socket.on<Message>('message.new', (m) => {
       removeLocal(m.id)
       upsertById(m)
+      // 客服（真人）已经发过消息 = 已接管，本地「正在为您转接人工客服」要撤掉；
+      // 服务端接管时也会落一条「×× 已接入会话」的系统消息，一并作为清理信号。
+      const fromAgent = m.direction === 'out' && m.sender?.role !== 'robot'
+      const takeoverNotice = m.type === 'system' && /已接入|已为您接入|人工客服已接入/.test(m.content || '')
+      if (fromAgent || takeoverNotice) clearTransferNotice()
       void scrollToBottom()
     }),
     socket.on('conversation.updated', (payload) => {
       const p = payload as { status?: string; transferred?: boolean }
-      if (p?.status) convStatus.value = p.status
-      if (p?.transferred) appendNotice('正在为您转接人工客服')
+      if (p?.status) {
+        convStatus.value = p.status
+        // 客服已接入：本地「正在为您转接人工客服」必须撤掉，否则会一直挂在聊天区
+        if (p.status === 'open') clearTransferNotice()
+      }
+      if (p?.transferred) appendNotice(TRANSFER_NOTICE)
     }),
   )
 
@@ -970,7 +979,7 @@ async function send(): Promise<void> {
     upsertById({ ...res.message })
     if (res.reply) appendMany([res.reply])
     if (res.transferred) {
-      appendNotice('正在为您转接人工客服')
+      appendNotice(TRANSFER_NOTICE)
     }
     messages.value = sortMessages(messages.value)
     await scrollToBottom()
@@ -1055,8 +1064,20 @@ function upsertById(m: Message): void {
   messages.value = sortMessages(messages.value)
 }
 
+/** 转接中的本地提示文案（服务端也会落一条系统消息，本地这条只用于即时反馈，接管后要清掉） */
+const TRANSFER_NOTICE = '正在为您转接人工客服'
+
+/** 清掉本地的「转接中」提示：客服已接入 / 会话状态变化后不应再挂着 */
+function clearTransferNotice(): void {
+  const before = messages.value.length
+  messages.value = messages.value.filter((m) => !(m.local && m.content === TRANSFER_NOTICE))
+  if (messages.value.length !== before) void scrollToBottom()
+}
+
 /** 插入一条本地系统提示（居中灰色 pill），不参与轮询游标 */
 function appendNotice(text: string): void {
+  // 同一条提示只留一条：服务端转发 + 发送响应可能同时触发，避免出现两条一样的橙色/灰色提示
+  if (messages.value.some((m) => m.local && m.content === text)) return
   messages.value.push({
     id: -Date.now(),
     conversation_id: conversationId.value ?? 0,

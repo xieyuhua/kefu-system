@@ -466,57 +466,6 @@ export function testAISetting(payload: AITestPayload): Promise<StorageTestResult
 }
 
 /* ------------------------------------------------------------------ *
- * 知识库（AI / RAG 应答的资料来源）—— 仅管理员
- * ------------------------------------------------------------------ */
-
-/** 知识条目 */
-export interface KnowledgeDoc {
-  id: number
-  title: string
-  content: string
-  /** 逗号分隔的标签，检索时参与加权 */
-  tags: string
-  enabled: boolean
-  created_at: string
-  updated_at: string
-}
-
-/** 新增 / 修改请求体；enabled 不传表示保留原值（新增默认启用） */
-export interface KnowledgePayload {
-  title: string
-  content: string
-  tags: string
-  enabled?: boolean
-}
-
-/** 知识库查询参数 */
-export interface KnowledgeQuery {
-  keyword?: string
-  page?: number
-  page_size?: number
-}
-
-/** GET /api/admin/knowledge?keyword=&page=&page_size= */
-export function listKnowledge(params?: KnowledgeQuery): Promise<Paged<KnowledgeDoc>> {
-  return http.get<Paged<KnowledgeDoc>>('/admin/knowledge', { params })
-}
-
-/** POST /api/admin/knowledge */
-export function createKnowledge(payload: KnowledgePayload): Promise<KnowledgeDoc> {
-  return http.post<KnowledgeDoc>('/admin/knowledge', payload)
-}
-
-/** PUT /api/admin/knowledge/:id */
-export function updateKnowledge(id: number, payload: KnowledgePayload): Promise<boolean> {
-  return http.put<boolean>(`/admin/knowledge/${id}`, payload)
-}
-
-/** DELETE /api/admin/knowledge/:id */
-export function deleteKnowledge(id: number): Promise<boolean> {
-  return http.del<boolean>(`/admin/knowledge/${id}`)
-}
-
-/* ------------------------------------------------------------------ *
  * 渠道类型库（可自定义，不限制枚举）—— §3 扩展
  * ------------------------------------------------------------------ */
 
