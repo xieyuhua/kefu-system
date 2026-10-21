@@ -4,7 +4,8 @@
  * 客服端与用户端共用本组件。
  */
 import { computed, nextTick, ref, watch } from 'vue'
-import { Download, Document, VideoPlay } from '@element-plus/icons-vue'
+import { Download, Document, Loading, VideoPlay, WarningFilled } from '@element-plus/icons-vue'
+import ImagePreview from '@/shared/components/ImagePreview.vue'
 
 /** 图片 / 视频 / 文件 的载荷（由后端 upload 接口返回后随消息 content 下发） */
 export interface MediaPayload {
@@ -20,6 +21,15 @@ export interface MediaPayload {
 const props = defineProps<{
   payload: MediaPayload
   failed?: boolean
+  /** 上传中：本地占位气泡（url 尚未回填） */
+  uploading?: boolean
+  /** 上传进度 0~100（上传中时展示进度条） */
+  progress?: number
+}>()
+
+const emit = defineEmits<{
+  /** 上传失败后点击重试 */
+  retry: []
 }>()
 
 const imageViewerVisible = ref(false)
@@ -32,9 +42,23 @@ const isImage = computed(() => props.payload.kind === 'image')
 const isVideo = computed(() => props.payload.kind === 'video')
 const isFile = computed(() => props.payload.kind === 'file')
 
-const fileName = computed(() => props.payload.name || decodeURI(props.payload.url.split('/').pop() || '文件'))
+/** 上传中 / 失败时展示的名称：优先用文件名，没有则按类型兜底 */
+const fileName = computed(() => {
+  const n = props.payload.name
+  if (n && n.trim()) return n
+  if (isImage.value) return '图片'
+  if (isVideo.value) return '视频'
+  return '文件'
+})
 const fileSize = computed(() => formatSize(props.payload.size))
 const fileExt = computed(() => (props.payload.ext || '').replace('.', '').toUpperCase())
+
+/** 上传进度夹到 0~100，避免回调给越界值撑破进度条 */
+const clampProgress = computed(() => {
+  const p = Math.round(props.progress ?? 0)
+  if (!Number.isFinite(p)) return 0
+  return Math.min(100, Math.max(0, p))
+})
 
 function formatSize(size?: number): string {
   if (!size || size <= 0) return ''
@@ -93,8 +117,31 @@ watch(
 </script>
 
 <template>
-  <!-- 图片：点击放大 -->
-  <div v-if="isImage" class="media media--image">
+  <!-- 上传中：本地占位气泡（url 尚未回填），转圈 + 文件名 + 进度条 -->
+  <div v-if="uploading" class="media media--status">
+    <el-icon class="media__spin"><Loading /></el-icon>
+    <div class="media__status-info">
+      <div class="media__status-name kf-ellipsis" :title="fileName">{{ fileName }}</div>
+      <div class="media__progress">
+        <div class="media__progress-bar" :style="{ width: `${clampProgress}%` }"></div>
+      </div>
+      <div class="media__status-hint">
+        上传中{{ clampProgress > 0 ? ` ${clampProgress}%` : '…' }}{{ fileSize ? `（${fileSize}）` : '' }}
+      </div>
+    </div>
+  </div>
+
+  <!-- 上传失败：微信式红色感叹号 + 点击重试 -->
+  <div v-else-if="failed" class="media media--status media--failed" role="button" @click="emit('retry')">
+    <el-icon class="media__warn"><WarningFilled /></el-icon>
+    <div class="media__status-info">
+      <div class="media__status-name kf-ellipsis" :title="fileName">{{ fileName }}</div>
+      <div class="media__status-hint media__status-hint--fail">上传失败，点击重试</div>
+    </div>
+  </div>
+
+  <!-- 图片：点击放大（移动端支持双指捏合缩放 / 双击还原） -->
+  <div v-else-if="isImage" class="media media--image">
     <img
       class="media__img"
       :src="payload.url"
@@ -103,11 +150,10 @@ watch(
       @click="imageViewerVisible = true"
     />
     <div class="media__zoom-hint">点击查看大图</div>
-    <el-image-viewer
-      v-if="imageViewerVisible"
-      :url-list="[payload.url]"
-      hide-on-click-modal
-      teleported
+    <ImagePreview
+      :visible="imageViewerVisible"
+      :url="payload.url"
+      :alt="payload.name"
       @close="imageViewerVisible = false"
     />
   </div>
@@ -208,6 +254,83 @@ watch(
       opacity: 1;
     }
   }
+}
+
+/* ---------------- 上传中 / 失败状态（微信式） ---------------- */
+.media--status {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 180px;
+  max-width: 260px;
+  padding: 10px 12px;
+  border-radius: 6px;
+  background: #f7f7f7;
+  line-height: 1.4;
+}
+
+.media--failed {
+  cursor: pointer;
+  background: #fdf2f2;
+
+  &:hover {
+    background: #fbe9e9;
+  }
+}
+
+.media__spin {
+  flex-shrink: 0;
+  color: #9f9f9f;
+  animation: media-spin 0.9s linear infinite;
+}
+
+.media__warn {
+  flex-shrink: 0;
+  color: #f56c6c;
+  font-size: 18px;
+}
+
+@keyframes media-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.media__status-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.media__status-name {
+  font-size: 13px;
+  color: #191919;
+}
+
+.media__status-hint {
+  font-size: 11px;
+  color: #9f9f9f;
+
+  &--fail {
+    color: #f56c6c;
+  }
+}
+
+.media__progress {
+  height: 3px;
+  margin: 6px 0 3px;
+  border-radius: 2px;
+  background: #e6e6e6;
+  overflow: hidden;
+}
+
+.media__progress-bar {
+  height: 100%;
+  border-radius: 2px;
+  background: var(--kf-primary, #07c160);
+  transition: width 0.2s ease;
 }
 
 /* 视频右上角的全屏按钮 */

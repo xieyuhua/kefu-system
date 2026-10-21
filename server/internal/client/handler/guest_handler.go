@@ -24,6 +24,7 @@ import (
 	"kefu-server/pkg/httpx"
 	"kefu-server/pkg/realtime"
 	"kefu-server/pkg/response"
+	"kefu-server/pkg/setting"
 	"kefu-server/pkg/util"
 
 	"github.com/gin-gonic/gin"
@@ -117,9 +118,11 @@ func (h *Handler) GuestInitHandler(c *gin.Context) {
 		"greeting":     "您好，我是智能客服助手，请问有什么可以帮您？",
 		// 助手（机器人）头像：后台「助手头像」设置项，未配置时为空串，由前端回退到内置头像
 		"assistant_avatar": h.svc.AssistantAvatar(tenantID),
-		"order":            orderCard,
-		"product":          productCard,
-		"history":          history,
+		// 上传大小上限（字节）：用户端上传前校验用，与后端 upload.max_size 同一配置
+		"upload_max_size": setting.UploadMaxSizeBytes(tenantID),
+		"order":           orderCard,
+		"product":         productCard,
+		"history":         history,
 	})
 }
 

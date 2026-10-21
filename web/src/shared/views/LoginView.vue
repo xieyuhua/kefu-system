@@ -41,22 +41,6 @@
           登 录
         </el-button>
       </el-form>
-
-      <div class="login-tip">
-        <div class="login-tip-title">演示账号</div>
-        <div class="login-tip-row">
-          <span><b>admin</b> / admin123</span>
-          <el-tag size="small" type="success" effect="plain">管理员</el-tag>
-        </div>
-        <div class="login-tip-row">
-          <span><b>kf01</b> / 123456</span>
-          <el-tag size="small" effect="plain">客服小李</el-tag>
-        </div>
-        <div class="login-tip-row">
-          <span><b>kf02</b> / 123456</span>
-          <el-tag size="small" effect="plain">客服小王</el-tag>
-        </div>
-      </div>
     </div>
   </div>
 </template>
@@ -74,7 +58,7 @@ const router = useRouter()
 const route = useRoute()
 
 const formRef = ref<FormInstance>()
-const form = reactive({ account: 'admin', password: 'admin123' })
+const form = reactive({ account: '', password: '' })
 
 const rules: FormRules<typeof form> = {
   account: [{ required: true, message: '请输入账号', trigger: 'blur' }],
@@ -186,33 +170,6 @@ async function submit(): Promise<void> {
   &:focus {
     background: var(--kf-primary-dark);
     border-color: var(--kf-primary-dark);
-  }
-}
-
-.login-tip {
-  margin-top: 20px;
-  padding: 12px 14px;
-  background: var(--kf-bg);
-  border-radius: var(--kf-radius);
-  font-size: 12px;
-  color: var(--kf-text-sub);
-}
-
-.login-tip-title {
-  margin-bottom: 8px;
-  font-weight: 600;
-  color: var(--kf-text);
-}
-
-.login-tip-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 3px 0;
-
-  b {
-    color: var(--kf-text);
-    font-family: ui-monospace, Consolas, monospace;
   }
 }
 </style>

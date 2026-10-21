@@ -33,6 +33,10 @@ const (
 	SettingObjectStorage = "storage.object"
 	// SettingAssistantAvatar 智能助手（机器人）回复时展示的头像 URL，留空用内置头像
 	SettingAssistantAvatar = "assistant.avatar"
+	// SettingUploadMaxSize 单文件上传大小上限（MB，整数；默认 50）
+	SettingUploadMaxSize = "upload.max_size"
+	// DefaultUploadMaxSizeMB 上传大小上限默认值（MB）
+	DefaultUploadMaxSizeMB = 50
 )
 
 // ---------------- AI 应答 + RAG 检索设置项 ----------------
@@ -112,6 +116,10 @@ var settingDefaults = map[string]struct {
 		Value:  defaultRobotFallback,
 		Remark: "渠道开启机器人但未命中任何自动回复规则时的兜底回复；留空则使用默认话术",
 	},
+	SettingUploadMaxSize: {
+		Value:  "50",
+		Remark: "单文件上传大小上限（MB，整数）；超出会拒绝上传",
+	},
 	// ---------------- AI 应答（默认关闭） ----------------
 	SettingAIEnabled: {
 		Value:  "false",
@@ -161,6 +169,15 @@ func GetSetting(tenantID uint, key string) string {
 		return d.Value
 	}
 	return ""
+}
+
+// UploadMaxSizeBytes 上传大小上限（字节）。解析失败 / <=0 时回退默认 50MB。
+func UploadMaxSizeBytes(tenantID uint) int64 {
+	mb, err := strconv.ParseInt(strings.TrimSpace(GetSetting(tenantID, SettingUploadMaxSize)), 10, 64)
+	if err != nil || mb <= 0 {
+		mb = DefaultUploadMaxSizeMB
+	}
+	return mb << 20
 }
 
 // ListSettings 返回全部配置项（含默认值，便于后台渲染表单）

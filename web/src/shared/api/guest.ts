@@ -64,6 +64,8 @@ export interface GuestInitResult {
    * 未配置时是空串，由前端回退到内置头像（🤖）。
    */
   assistant_avatar: string
+  /** 上传大小上限（字节）：后台设置 upload.max_size，前端上传前校验用 */
+  upload_max_size?: number
   order: OrderCardPayload | null
   product: ProductCardPayload | null
   /** 最近 20 条历史消息 */

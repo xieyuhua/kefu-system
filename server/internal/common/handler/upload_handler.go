@@ -18,6 +18,7 @@ package handler
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -32,6 +33,7 @@ import (
 	"kefu-server/pkg/config"
 	"kefu-server/pkg/httpx"
 	"kefu-server/pkg/response"
+	"kefu-server/pkg/setting"
 
 	"github.com/gin-gonic/gin"
 	"kefu-server/internal/common/service"
@@ -116,8 +118,10 @@ func (h *UploadHandler) UploadHandler(c *gin.Context) {
 		response.Default().Param(c, "文件内容为空")
 		return
 	}
-	if fileHeader.Size > maxUploadSize {
-		response.Default().Param(c, fmt.Sprintf("文件超过 %d MB 限制", maxUploadSize>>20))
+	// 大小上限来自后台设置 upload.max_size（MB，默认 50）
+	maxSize := setting.UploadMaxSizeBytes(tenantID)
+	if fileHeader.Size > maxSize {
+		response.Default().Param(c, fmt.Sprintf("文件超过 %d MB 限制", maxSize>>20))
 		return
 	}
 
@@ -203,7 +207,8 @@ func (h *UploadHandler) UploadHandler(c *gin.Context) {
 	response.Default().OK(c, resp)
 }
 
-// maxUploadSize 单文件最大 50MB（视频场景）
+// maxUploadSize 单文件最大 50MB（视频场景）。注意：实际校验已改为后台设置 upload.max_size，
+// 此常量仅作为兜底与提示文案的历史参照，不再参与上传校验。
 const maxUploadSize = 50 << 20
 
 // randomName 生成随机文件名，避免覆盖与路径穿越
@@ -213,4 +218,267 @@ func randomName(ext string) string {
 		return fmt.Sprintf("%d%s", time.Now().UnixNano(), ext)
 	}
 	return fmt.Sprintf("%d_%s%s", time.Now().Unix(), hex.EncodeToString(buf), ext)
+}
+
+// ---------------- 分片上传（断点续传） ----------------
+//
+// 前端把大文件切成固定大小的分片逐片上传；任一片失败只需重传该片，
+// 已成功的分片落盘在 .chunks/<upload_id>/ 下，重试时跳过。全部传完后调 merge 合并。
+// 合并后走与普通上传完全相同的存储分支（对象存储优先，否则本地磁盘）。
+
+// safeUploadID 校验上传会话 ID：只允许十六进制与连字符（前端生成 UUID），防路径穿越。
+func safeUploadID(raw string) bool {
+	if len(raw) < 8 || len(raw) > 64 {
+		return false
+	}
+	for _, r := range raw {
+		if !(r >= '0' && r <= '9') && !(r >= 'a' && r <= 'f') && !(r >= 'A' && r <= 'F') && r != '-' {
+			return false
+		}
+	}
+	return true
+}
+
+// chunkDirOf 分片临时目录（按 upload_id 隔离）
+func chunkDirOf(uploadID string) string {
+	return filepath.Join(config.C.Upload.Dir, ".chunks", uploadID)
+}
+
+// UploadChunkHandler 上传单个分片（multipart file 字段：file；query：upload_id / index）。
+// 每个分片独立落盘，客户端失败重试时跳过已存在的分片。
+func (h *UploadHandler) UploadChunkHandler(c *gin.Context) {
+	tenantID := h.tenantIDOf(c)
+	uploadID := strings.TrimSpace(c.Query("upload_id"))
+	if !safeUploadID(uploadID) {
+		response.Default().Param(c, "上传会话 ID 不合法")
+		return
+	}
+	index := httpx.Default().QueryUint(c, "index")
+	if index < 0 || index > 10000 {
+		response.Default().Param(c, "分片序号不合法")
+		return
+	}
+
+	fileHeader, err := c.FormFile("file")
+	if err != nil {
+		response.Default().Param(c, "缺少分片内容")
+		return
+	}
+	if fileHeader.Size <= 0 {
+		response.Default().Param(c, "分片内容为空")
+		return
+	}
+
+	dir := chunkDirOf(uploadID)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		response.Default().Server(c, "创建分片目录失败")
+		return
+	}
+
+	src, err := fileHeader.Open()
+	if err != nil {
+		response.Default().Server(c, "读取分片失败")
+		return
+	}
+	defer src.Close()
+
+	dst := filepath.Join(dir, fmt.Sprintf("%d.part", index))
+	out, err := os.Create(dst)
+	if err != nil {
+		response.Default().Server(c, "保存分片失败")
+		return
+	}
+	if _, err := io.Copy(out, src); err != nil {
+		out.Close()
+		response.Default().Server(c, "写入分片失败")
+		return
+	}
+	if err := out.Close(); err != nil {
+		response.Default().Server(c, "写入分片失败")
+		return
+	}
+
+	response.Default().OK(c, gin.H{"upload_id": uploadID, "index": index, "received": true, "tenant_id": tenantID})
+}
+
+// MergeChunksRequest 合并分片请求体
+type MergeChunksRequest struct {
+	UploadID string `json:"upload_id"`
+	Filename string `json:"filename"`
+	Ext      string `json:"ext"`
+	Size     int64  `json:"size"`
+	Total    int    `json:"total"`
+}
+
+// MergeChunksHandler 合并已上传的分片，生成最终文件并返回与普通上传一致的载荷。
+func (h *UploadHandler) MergeChunksHandler(c *gin.Context) {
+	tenantID := h.tenantIDOf(c)
+	var req MergeChunksRequest
+	if !httpx.Default().BindJSON(c, &req) {
+		return
+	}
+	if !safeUploadID(req.UploadID) {
+		response.Default().Param(c, "上传会话 ID 不合法")
+		return
+	}
+	if req.Size <= 0 {
+		response.Default().Param(c, "文件大小不合法")
+		return
+	}
+	maxSize := setting.UploadMaxSizeBytes(tenantID)
+	if req.Size > maxSize {
+		response.Default().Param(c, fmt.Sprintf("文件超过 %d MB 限制", maxSize>>20))
+		return
+	}
+	if req.Total <= 0 || req.Total > 10000 {
+		response.Default().Param(c, "分片数量不合法")
+		return
+	}
+	if strings.TrimSpace(req.Filename) == "" {
+		response.Default().Param(c, "文件名不能为空")
+		return
+	}
+
+	dir := chunkDirOf(req.UploadID)
+	// 校验所有分片齐全
+	var totalBytes int64
+	for i := 0; i < req.Total; i++ {
+		part := filepath.Join(dir, fmt.Sprintf("%d.part", i))
+		st, err := os.Stat(part)
+		if err != nil {
+			response.Default().Param(c, fmt.Sprintf("缺少第 %d 个分片，请重传", i+1))
+			return
+		}
+		totalBytes += st.Size()
+	}
+	if totalBytes != req.Size {
+		response.Default().Param(c, "分片大小与文件大小不一致，请重新上传")
+		return
+	}
+
+	original := filepath.Base(req.Filename)
+	ext := strings.ToLower(filepath.Ext(original))
+	if req.Ext != "" {
+		ext = strings.ToLower(req.Ext)
+	}
+	kind := uploadKind(ext)
+	if kind == "" {
+		response.Default().Param(c, "不支持的文件类型："+ext)
+		return
+	}
+
+	day := time.Now().Format("20060102")
+	stored := randomName(ext)
+
+	resp := map[string]interface{}{
+		"url":       "",
+		"kind":      kind,
+		"name":      original,
+		"size":      req.Size,
+		"ext":       ext,
+		"tenant_id": tenantID,
+	}
+
+	// 对象存储优先：合并到临时文件后上传
+	client, ossCfg, ossErr := h.svc.ObjectStorageClient(tenantID)
+	if ossErr != nil {
+		response.Default().Server(c, "对象存储配置不可用："+ossErr.Error())
+		return
+	}
+
+	if client != nil {
+		merged, cleanup, err := mergePartsToTemp(dir, req.Total)
+		if err != nil {
+			response.Default().Server(c, err.Error())
+			return
+		}
+		defer cleanup()
+
+		f, err := os.Open(merged)
+		if err != nil {
+			response.Default().Server(c, "读取合并文件失败")
+			return
+		}
+		defer f.Close()
+
+		key := ossCfg.ObjectKey(day + "/" + stored)
+		url, upErr := client.Upload(c.Request.Context(), key, f, req.Size, contentTypeOf(nil, ext))
+		if upErr != nil {
+			response.Default().Server(c, "上传到对象存储失败："+upErr.Error())
+			return
+		}
+		_ = os.RemoveAll(dir)
+		log.Printf("[upload] 分片合并后上传到对象存储: %s", key)
+		resp["url"] = url
+		response.Default().OK(c, resp)
+		return
+	}
+
+	// 本地磁盘：分片直接拼到最终文件
+	finalDir := filepath.Join(config.C.Upload.Dir, day)
+	if err := os.MkdirAll(finalDir, 0755); err != nil {
+		response.Default().Server(c, "创建上传目录失败")
+		return
+	}
+	dst := filepath.Join(finalDir, stored)
+	out, err := os.Create(dst)
+	if err != nil {
+		response.Default().Server(c, "保存文件失败")
+		return
+	}
+	for i := 0; i < req.Total; i++ {
+		part := filepath.Join(dir, fmt.Sprintf("%d.part", i))
+		f, err := os.Open(part)
+		if err != nil {
+			out.Close()
+			response.Default().Server(c, "读取分片失败")
+			return
+		}
+		if _, err := io.Copy(out, f); err != nil {
+			f.Close()
+			out.Close()
+			response.Default().Server(c, "合并分片失败")
+			return
+		}
+		f.Close()
+	}
+	if err := out.Close(); err != nil {
+		response.Default().Server(c, "保存文件失败")
+		return
+	}
+	_ = os.RemoveAll(dir)
+
+	resp["url"] = "/uploads/" + day + "/" + stored
+	response.Default().OK(c, resp)
+}
+
+// mergePartsToTemp 把分片拼成一个临时文件，返回路径与清理函数。
+func mergePartsToTemp(dir string, total int) (string, func(), error) {
+	tmp, err := os.CreateTemp(dir, "merged-*")
+	if err != nil {
+		return "", nil, errors.New("创建临时文件失败")
+	}
+	cleanup := func() {
+		tmp.Close()
+		os.Remove(tmp.Name())
+	}
+	for i := 0; i < total; i++ {
+		part := filepath.Join(dir, fmt.Sprintf("%d.part", i))
+		f, err := os.Open(part)
+		if err != nil {
+			cleanup()
+			return "", nil, errors.New("读取分片失败")
+		}
+		if _, err := io.Copy(tmp, f); err != nil {
+			f.Close()
+			cleanup()
+			return "", nil, errors.New("合并分片失败")
+		}
+		f.Close()
+	}
+	if err := tmp.Close(); err != nil {
+		cleanup()
+		return "", nil, errors.New("合并分片失败")
+	}
+	return tmp.Name(), cleanup, nil
 }

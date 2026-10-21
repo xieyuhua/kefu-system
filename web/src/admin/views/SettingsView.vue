@@ -111,10 +111,10 @@ async function load(): Promise<void> {
   }
 }
 
-async function save(key: string): Promise<void> {
+async function save(key: string, value?: string): Promise<void> {
   saving.value[key] = true
   try {
-    await saveSetting(key, settings.value[key] || '')
+    await saveSetting(key, value !== undefined ? value : settings.value[key] || '')
     ElMessage.success('已保存')
     await load()
     // 系统名称改完要立刻反映到顶栏 / 页面标题，所以顺手刷新一次登录态
@@ -318,6 +318,17 @@ async function resetDefault(): Promise<void> {
 
 const defaultImage = computed(() => settings.value.default_image || '')
 
+/** 上传大小上限（MB）：后台设置项 upload.max_size，输入框用数字形式编辑 */
+const uploadMaxSizeMb = computed<number>({
+  get: () => {
+    const v = parseInt(settings.value['upload.max_size'] || '50', 10)
+    return Number.isFinite(v) && v > 0 ? v : 50
+  },
+  set: (v: number) => {
+    settings.value['upload.max_size'] = String(v)
+  },
+})
+
 /* ---------------- 助手头像（assistant.avatar） ---------------- *
  * 智能助手（机器人）回复时展示的头像：用户端 /kefu/ 与客服工作台 /chat/ 共用同一个值。
  * 留空（或点「恢复内置」）时两端各自回退到内置头像。
@@ -452,6 +463,39 @@ onMounted(load)
             </div>
           </div>
 
+          <!-- 上传文件大小上限 -->
+          <div class="setting-item">
+            <div class="setting-item__label">
+              <div class="setting-item__name">上传文件大小上限（MB）</div>
+              <div class="setting-item__remark">
+                {{ remarks['upload.max_size'] || '单个附件最大可上传大小（MB，整数）；超过会被拒绝，大文件自动分片续传' }}
+              </div>
+            </div>
+            <div class="setting-item__control">
+              <el-input-number
+                v-model="uploadMaxSizeMb"
+                :min="1"
+                :max="2048"
+                :step="10"
+                size="small"
+                controls-position="right"
+                data-test="upload-max-size"
+              />
+              <div class="setting-item__actions">
+                <el-button
+                  size="small"
+                  type="primary"
+                  plain
+                  :loading="saving['upload.max_size']"
+                  data-test="upload-max-size-save"
+                  @click="save('upload.max_size', String(uploadMaxSizeMb))"
+                >
+                  保存
+                </el-button>
+              </div>
+            </div>
+          </div>
+
           <!-- 机器人兜底话术 -->
           <div class="setting-item">
             <div class="setting-item__label">
@@ -471,8 +515,7 @@ onMounted(load)
                 show-word-limit
                 placeholder="例如：您的问题我已记录，稍后将由人工客服为您详细解答～"
                 data-test="robot-fallback-reply"
-              />
-              <div class="setting-item__actions">
+              />              <div class="setting-item__actions">
                 <el-button
                   size="small"
                   type="primary"

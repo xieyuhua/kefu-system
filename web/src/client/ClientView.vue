@@ -174,7 +174,14 @@
                     'is-failed': item.failed,
                   }"
                 >
-                  <MediaBubble v-if="item.media" :payload="item.media" :failed="item.failed" />
+                  <MediaBubble
+                    v-if="item.media"
+                    :payload="item.media"
+                    :uploading="item.pending"
+                    :failed="item.failed"
+                    :progress="item.progress"
+                    @retry="retryUpload(item.id)"
+                  />
                   <!-- 机器人 / 客服的文本消息：安全最小 Markdown 子集（无标记时走原纯文本渲染） -->
                   <RichText
                     v-else-if="item.type === 'text' && item.kind === 'service'"
@@ -183,7 +190,8 @@
                   <span v-else class="bubble__text">{{ item.text }}</span>
                 </div>
 
-                <div v-if="item.failed" class="row__error">发送失败，请重试</div>
+                <!-- 文本发送失败提示；媒体失败提示已在气泡内展示（避免双重提示） -->
+                <div v-if="item.failed && !item.media" class="row__error">发送失败，请重试</div>
 
                 <div class="row__time">{{ item.time }}</div>
               </div>
@@ -301,7 +309,13 @@ import {
 } from '@element-plus/icons-vue'
 import dayjs from 'dayjs'
 import { guestInit, guestMessages, guestSend, type GuestParams } from '@/shared/api/guest'
-import { kindOfFile, uploadAttachment, validateFile } from '@/shared/api/upload'
+import {
+  CHUNK_THRESHOLD,
+  kindOfFile,
+  uploadAttachment,
+  uploadChunked,
+  validateFile,
+} from '@/shared/api/upload'
 import MediaBubble, { type MediaPayload } from '@/shared/components/MediaBubble.vue'
 import type {
   ChannelBasic,
@@ -360,6 +374,8 @@ interface StreamItem {
   time: string
   pending: boolean
   failed: boolean
+  /** 上传进度（0~100，仅上传中的媒体消息有意义） */
+  progress: number
 }
 
 const route = useRoute()
@@ -369,6 +385,10 @@ const router = useRouter()
 const uploading = ref(false)
 /** 附件选择框 */
 const fileRef = ref<HTMLInputElement | null>(null)
+/** 上传中的文件引用：tempId → File（失败重试时复用，避免用户重新选文件） */
+const pendingFiles = new Map<number, File>()
+/** 上传大小上限（字节）：由 guest/init 下发，后端后台设置 upload.max_size 同一配置 */
+const uploadMaxSize = ref(0)
 
 const loading = ref(true)
 const ready = ref(false)
@@ -571,7 +591,9 @@ function parseMedia(m: Message): MediaPayload | null {
   if (!raw) return null
   if (raw.startsWith('{')) {
     const p = parseCardContent<MediaPayload>(raw)
-    return p && p.url ? p : null
+    // url 可以为空：上传中的本地占位气泡 url 尚未回填，但 kind/name/size 已就绪，
+    // 需要交给 MediaBubble 渲染「上传中」转圈效果，而不是当成纯文本 JSON 展示。
+    return p && p.kind ? p : null
   }
   return {
     url: raw,
@@ -609,17 +631,34 @@ function toItem(m: Message): StreamItem {
     time: formatMessageTime(m.created_at),
     pending: !!m.pending,
     failed: !!m.failed,
+    progress: m.progress ?? 0,
   }
 }
 
 /**
- * 本地临时消息（乐观气泡 / 转人工提示）用负 id：
- * 用 id 升序排序会让它们跑到最前面，渲染时统一按「服务端 id 升序 + 本地消息按负 id 排在其后」处理。
+ * 排序键：统一按消息发生时间排序（本地临时消息与真实消息混排）。
+ *
+ * 之前本地消息用 Number.MAX_SAFE_INTEGER + 负数 id 强制排到最后，导致
+ * 「上传失败的消息」被永远压在底部，之后发送的新消息反而显示在它前面。
+ * 现在本地消息携带 created_ts（发送时刻毫秒），真实消息也有后端下发的 created_ts，
+ * 二者同量级，直接比较即可；同一毫秒内再按 id 兜底（本地负数 id 排在真实 id 前 = 先发在前）。
  */
-const sortKey = (m: Message): number => (m.local ? Number.MAX_SAFE_INTEGER + m.id : m.id)
+const sortKey = (m: Message): number => {
+  if (m.created_ts && m.created_ts > 0) return m.created_ts
+  if (m.created_at) {
+    const t = new Date(m.created_at.replace(' ', 'T')).getTime()
+    if (Number.isFinite(t) && t > 0) return t
+  }
+  return m.local ? -m.id : m.id
+}
 
 function sortMessages(list: Message[]): Message[] {
-  return list.slice().sort((a, b) => sortKey(a) - sortKey(b))
+  return list.slice().sort((a, b) => {
+    const ka = sortKey(a)
+    const kb = sortKey(b)
+    if (ka !== kb) return ka - kb
+    return a.id - b.id
+  })
 }
 
 const stream = computed<StreamItem[]>(() => sortMessages(messages.value).map(toItem))
@@ -732,6 +771,10 @@ function appendMany(list: Message[] | null | undefined): void {
   const known = new Set(messages.value.map((m) => m.id))
   const fresh = list.filter((m) => !known.has(m.id))
   if (!fresh.length) return
+  // 轮询兜底路径：用户自己发的消息回推时，同样要清掉对应的乐观气泡，避免重复
+  fresh.forEach((m) => {
+    if (m.direction === 'in') removeOptimisticFor(m)
+  })
   messages.value = sortMessages(messages.value.concat(fresh))
   updateSince()
 }
@@ -856,6 +899,8 @@ async function init(): Promise<void> {
     customerAvatar.value = res.customer?.avatar || params.value.avatar || ''
     // 助手头像由后台设置决定；留空则模板回退到内置 emoji（BOT_AVATAR）
     serviceAvatar.value = res.assistant_avatar || ''
+    // 上传大小上限（字节）：后台设置 upload.max_size，用户端上传前校验与后端一致
+    uploadMaxSize.value = typeof res.upload_max_size === 'number' ? res.upload_max_size : 0
 
     // 关键：链接没带 uid 时服务端会生成一个游客 ID，必须回写到 params。
     // 否则后续 WebSocket（/ws/guest 要求 uid）与轮询都会带空 uid，导致连接被拒。
@@ -894,39 +939,69 @@ async function onPickFile(): Promise<void> {
   const file = el?.files?.[0]
   if (!el || !file) return
 
-  const err = validateFile(file)
+  const err = validateFile(file, uploadMaxSize.value || undefined)
   if (err) {
     ElMessage.error(err)
     el.value = ''
     return
   }
+  await doUpload(file, -Date.now())
+}
 
+/**
+ * 上传附件并发送为媒体消息。
+ * tempId 为本地占位气泡的负数 id：新上传与失败重试共用同一条占位气泡，
+ * 成功后移除占位、回填真实消息；失败则把占位标记为 failed（微信式可点击重试）。
+ */
+async function doUpload(file: File, tempId: number): Promise<void> {
   uploading.value = true
-  const tempId = -Date.now()
-  // 先插入本地占位（乐观显示文件名），上传成功后回填真实载荷
-  messages.value.push({
+  pendingFiles.set(tempId, file)
+  const kind = kindOfFile(file)
+
+  // 插入/重置本地占位（上传中：转圈 + 文件名）
+  const existing = messages.value.findIndex((m) => m.id === tempId)
+  const optimistic: Message = {
     id: tempId,
     conversation_id: conversationId.value ?? 0,
-    type: kindOfFile(file),
+    type: kind,
     direction: 'in',
-    content: JSON.stringify({ url: '', kind: kindOfFile(file), name: file.name, size: file.size }),
+    content: JSON.stringify({ url: '', kind, name: file.name, size: file.size }),
     sender: null,
     created_at: dayjs().format('YYYY-MM-DD HH:mm:ss'),
+    created_ts: Date.now(),
     pending: true,
+    failed: false,
+    progress: 0,
     local: true,
-  })
+  }
+  if (existing >= 0) messages.value[existing] = optimistic
+  else messages.value.push(optimistic)
+  messages.value = sortMessages(messages.value)
   void scrollToBottom()
 
   try {
-    const payload = await uploadAttachment(file, {
+    const uploadOpts = {
       guest: true,
       params: {
         channel: params.value.channel || '',
         uid: params.value.uid || '',
         tenant: params.value.tenant || '',
       },
-    })
+      onProgress: (pct: number) => {
+        // 实时回填上传进度：占位气泡转圈下方显示「xx%」进度条
+        const idx = messages.value.findIndex((m) => m.id === tempId)
+        if (idx >= 0 && messages.value[idx].pending) {
+          messages.value[idx] = { ...messages.value[idx], progress: pct }
+        }
+      },
+    }
+    // 大文件走分片上传（断点续传），小文件单次直传
+    const payload =
+      file.size > CHUNK_THRESHOLD
+        ? await uploadChunked(file, uploadOpts)
+        : await uploadAttachment(file, uploadOpts)
     removeLocal(tempId)
+    pendingFiles.delete(tempId)
     const content = JSON.stringify(payload)
     const res = await guestSend(
       { channel: params.value.channel, uid: params.value.uid, tenant: params.value.tenant },
@@ -936,16 +1011,29 @@ async function onPickFile(): Promise<void> {
     if (res.reply) appendMany([res.reply])
     await scrollToBottom()
   } catch {
-    ElMessage.error('上传失败，请重试')
+    pendingFiles.delete(tempId)
     const idx = messages.value.findIndex((m) => m.id === tempId)
     if (idx >= 0) {
       messages.value[idx] = { ...messages.value[idx], pending: false, failed: true }
-      messages.value = messages.value.slice()
+      messages.value = sortMessages(messages.value)
     }
   } finally {
     uploading.value = false
-    el.value = ''
+    if (fileRef.value) fileRef.value.value = ''
   }
+}
+
+/** 上传失败后点击气泡重试：复用之前选中的文件，微信式交互 */
+async function retryUpload(id: number): Promise<void> {
+  const file = pendingFiles.get(id)
+  const msg = messages.value.find((m) => m.id === id)
+  if (!file) {
+    // 文件引用已丢失（如刷新页面）→ 退化为重新选择文件
+    fileRef.value?.click()
+    return
+  }
+  if (!msg || msg.failed !== true) return
+  await doUpload(file, id)
 }
 
 async function send(): Promise<void> {
@@ -961,6 +1049,7 @@ async function send(): Promise<void> {
     content,
     sender: null,
     created_at: dayjs().format('YYYY-MM-DD HH:mm:ss'),
+    created_ts: Date.now(),
     pending: true,
     local: true,
   })
@@ -1055,6 +1144,8 @@ function dismissCard(): void {
 
 /** 按 id 插入或替换消息：已存在则原地替换，杜绝重复气泡 */
 function upsertById(m: Message): void {
+  // 用户自己发的消息回推时，先清掉对应的 pending 乐观气泡（见 removeOptimisticFor）
+  if (m.direction === 'in') removeOptimisticFor(m)
   const idx = messages.value.findIndex((x) => x.id === m.id)
   if (idx >= 0) {
     messages.value[idx] = m
@@ -1062,6 +1153,28 @@ function upsertById(m: Message): void {
   }
   messages.value.push(m)
   messages.value = sortMessages(messages.value)
+}
+
+/**
+ * 移除与某条「用户发出的消息」对应的本地乐观气泡。
+ *
+ * 发送流程里，前端先插一条 pending 淡化气泡（id 为负数 tempId），等服务端落库后
+ * 通过 HTTP 响应 / WebSocket 广播两条路回推真实消息（id 为正数）。两条路的到达顺序
+ * 不固定：WebSocket 先到时，负数 tempId 无法被 removeLocal(正数 id) 命中，乐观气泡
+ * 就会与真实消息短暂共存，表现为「一条淡化的重复消息，过一会又消失」。
+ * 这里按「同方向 + 同类型 + 同内容」把尚未替换的乐观气泡清掉，保证任何到达顺序都只有一条。
+ */
+function removeOptimisticFor(m: Message): void {
+  if (!m || m.direction !== 'in') return
+  const idx = messages.value.findIndex(
+    (x) =>
+      !!x.local &&
+      !!x.pending &&
+      x.direction === 'in' &&
+      x.type === m.type &&
+      (x.content || '') === (m.content || ''),
+  )
+  if (idx >= 0) messages.value.splice(idx, 1)
 }
 
 /** 转接中的本地提示文案（服务端也会落一条系统消息，本地这条只用于即时反馈，接管后要清掉） */
@@ -1086,6 +1199,7 @@ function appendNotice(text: string): void {
     content: text,
     sender: null,
     created_at: dayjs().format('YYYY-MM-DD HH:mm:ss'),
+    created_ts: Date.now(),
     local: true,
   })
 }

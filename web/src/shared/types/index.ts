@@ -230,6 +230,8 @@ export interface Message {
   /** 乐观更新临时标记 */
   pending?: boolean
   failed?: boolean
+  /** 本地上传中消息的上传进度（0~100，仅前端运行时使用） */
+  progress?: number
   /**
    * 前端本地生成的消息（乐观气泡、转人工提示等），服务端无对应 id。
    * 用户端用它排除在 since_id 游标之外，避免把本地临时 id 当作轮询起点。

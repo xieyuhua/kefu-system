@@ -30,9 +30,15 @@ func Register(g *gin.RouterGroup, authed *gin.RouterGroup) {
 
 	// 用户端上传附件（图片/视频/文件）
 	g.POST("/guest/upload", upH.UploadHandler)
+	// 用户端分片上传（断点续传）
+	g.POST("/guest/upload/chunk", upH.UploadChunkHandler)
+	g.POST("/guest/upload/merge", upH.MergeChunksHandler)
 
 	// 上传附件（图片 / 视频 / 文件）
 	authed.POST("/upload", upH.UploadHandler)
+	// 客服端分片上传（断点续传）
+	authed.POST("/upload/chunk", upH.UploadChunkHandler)
+	authed.POST("/upload/merge", upH.MergeChunksHandler)
 
 	// 订单 / 商品
 	authed.GET("/orders", custH.ListOrdersHandler)
