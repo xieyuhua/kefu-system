@@ -1,6 +1,10 @@
 <script setup lang="ts">
 /**
  * 系统设置：默认图片等租户级配置。
+ *
+ * 页面按「系统设置 / 对象存储 / AI 应答」三个分区用 el-tabs 承载。
+ * 三个面板都不启用 lazy（Element Plus 默认即为 false），切换只做 v-show，
+ * 不会重建面板 DOM，因此切换选项卡不会丢未保存的编辑内容。
  */
 import { computed, onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
@@ -8,7 +12,6 @@ import { Refresh, Upload } from '@element-plus/icons-vue'
 import {
   AI_API_KEY_MASK,
   AI_SETTING_DEFAULTS,
-  AI_SETTING_KEYS,
   STORAGE_OBJECT_DEFAULTS,
   STORAGE_OBJECT_KEY,
   STORAGE_SECRET_MASK,
@@ -33,6 +36,9 @@ import ThumbImage from '@/shared/components/ThumbImage.vue'
 const { isMobile } = useIsMobile()
 const auth = useAuthStore()
 
+/** 当前选项卡：切换只做显隐，不影响任何表单状态 */
+const activeTab = ref<'system' | 'storage' | 'ai'>('system')
+
 const loading = ref(false)
 const saving = ref<Record<string, boolean>>({})
 const uploading = ref(false)
@@ -41,12 +47,9 @@ const uploadingAvatar = ref(false)
 const settings = ref<Record<string, string>>({})
 const remarks = ref<Record<string, string>>({})
 
-/** 变更过的项（用于显示"保存"按钮） */
-const dirty = computed(() => Object.keys(settings.value).length > 0)
-
 /* ---------------- 对象存储（storage.object） ---------------- *
  * 该配置以整份 JSON 字符串存在 settings 表里，字段较多，
- * 因此单独维护一份表单状态，不塞进 settings（避免污染「保存全部」的逐项逻辑）。
+ * 因此单独维护一份表单状态，不塞进 settings（避免污染逐项保存逻辑）。
  */
 const storage = ref<StorageObjectConfig>({ ...STORAGE_OBJECT_DEFAULTS })
 /** 后端已保存过密钥（返回 ******）：未改动时提交 ******，由后端保留原值 */
@@ -123,25 +126,6 @@ async function save(key: string): Promise<void> {
     ElMessage.error('保存失败')
   } finally {
     saving.value[key] = false
-  }
-}
-
-async function saveAll(): Promise<void> {
-  // 对象存储由下方 saveStorage 统一序列化提交，这里跳过它的原始 JSON，避免重复写入；
-  // AI 应答卡片同理（有自己的「保存」按钮，且 api_key 需要按密钥口径回写）。
-  const aiKeys = new Set<string>(Object.values(AI_SETTING_KEYS))
-  const keys = Object.keys(settings.value).filter(
-    (k) => k !== STORAGE_OBJECT_KEY && !aiKeys.has(k),
-  )
-  for (const k of keys) {
-    await save(k)
-  }
-  // 对象存储改动一并落库（未改动则不打扰后端）
-  if (storageDirty.value) {
-    await saveStorage()
-  }
-  if (aiDirty.value) {
-    await saveAI()
   }
 }
 
@@ -416,683 +400,695 @@ onMounted(load)
 </script>
 
 <template>
-  <div class="admin">
-    <div v-loading="loading" class="admin-card">
-      <div class="toolbar">
-        <span class="toolbar__title">
-          系统设置
-          <span class="toolbar__sub">租户级配置，保存后立即对全站生效</span>
-        </span>
-        <div>
-          <el-button size="small" :icon="Refresh" @click="load">刷新</el-button>
-          <el-button
-            v-if="dirty"
-            size="small"
-            type="primary"
-            @click="saveAll"
-          >
-            保存全部
-          </el-button>
-        </div>
+  <div class="admin settings-page">
+    <!-- 顶部工具条：只保留全局「刷新」；保存按钮下放到各选项卡，避免跨块误保存 -->
+    <div class="toolbar settings-toolbar">
+      <span class="toolbar__title">
+        设置
+        <span class="toolbar__sub">租户级配置，保存后立即对全站生效</span>
+      </span>
+      <div class="toolbar__actions">
+        <el-button size="small" :icon="Refresh" data-test="settings-refresh" @click="load">
+          刷新
+        </el-button>
       </div>
+    </div>
 
-      <!-- 系统名称 -->
-      <div class="setting-item">
-        <div class="setting-item__label">
-          <div class="setting-item__name">系统名称</div>
-          <div class="setting-item__remark">
-            {{ remarks['system.name'] || '展示在后台顶栏与浏览器标题；留空则使用租户名称' }}
-          </div>
-        </div>
-        <div class="setting-item__control">
-          <el-input
-            v-model="settings['system.name']"
-            size="small"
-            class="setting-input"
-            placeholder="例如：云跳跳客服 / 某某科技客服"
-            maxlength="32"
-            show-word-limit
-          />
-          <div class="setting-item__actions">
-            <el-button size="small" type="primary" plain :loading="saving['system.name']" @click="save('system.name')">
-              保存
-            </el-button>
-          </div>
-        </div>
-      </div>
-
-      <!-- 机器人兜底话术 -->
-      <div class="setting-item">
-        <div class="setting-item__label">
-          <div class="setting-item__name">机器人兜底话术</div>
-          <div class="setting-item__remark">
-            {{ remarks['robot.fallback_reply'] || '渠道开启机器人但未命中任何规则时的回复；留空则机器人不回复' }}
-          </div>
-        </div>
-        <div class="setting-item__control">
-          <el-input
-            v-model="settings['robot.fallback_reply']"
-            type="textarea"
-            :rows="3"
-            size="small"
-            class="setting-input"
-            maxlength="300"
-            show-word-limit
-            placeholder="例如：您的问题我已记录，稍后将由人工客服为您详细解答～"
-          />
-          <div class="setting-item__actions">
-            <el-button
-              size="small"
-              type="primary"
-              plain
-              :loading="saving['robot.fallback_reply']"
-              @click="save('robot.fallback_reply')"
-            >
-              保存
-            </el-button>
-          </div>
-        </div>
-      </div>
-
-      <!-- 默认图片 -->
-      <div class="setting-item">
-        <div class="setting-item__label">
-          <div class="setting-item__name">默认图片</div>
-          <div class="setting-item__remark">
-            {{ remarks.default_image || '客户 / 商品 / 订单没有图片时展示该图片' }}
-          </div>
-        </div>
-
-        <div class="setting-item__control">
-          <div class="default-image">
-            <ThumbImage :src="defaultImage" :size="88" :radius="6" alt="默认图片" />
-            <div class="default-image__info">
+    <!-- 三个分区用选项卡承载：面板不启用 lazy，切换只做 v-show，未保存的编辑不会丢 -->
+    <div v-loading="loading" class="settings-tabs">
+      <el-tabs v-model="activeTab" type="border-card" :lazy="false">
+        <!-- ---------------- 系统设置 ---------------- -->
+        <el-tab-pane label="系统设置" name="system" data-test="tab-system">
+          <!-- 系统名称 -->
+          <div class="setting-item">
+            <div class="setting-item__label">
+              <div class="setting-item__name">系统名称</div>
+              <div class="setting-item__remark">
+                {{ remarks['system.name'] || '展示在后台顶栏与浏览器标题；留空则使用租户名称' }}
+              </div>
+            </div>
+            <div class="setting-item__control">
               <el-input
-                v-model="settings.default_image"
+                v-model="settings['system.name']"
                 size="small"
                 class="setting-input"
-                placeholder="图片地址，如 /uploads/20260101/xxx.png"
+                placeholder="例如：云跳跳客服 / 某某科技客服"
+                maxlength="32"
+                show-word-limit
+                data-test="system-name"
               />
-              <div class="default-image__actions">
+              <div class="setting-item__actions">
                 <el-button
                   size="small"
                   type="primary"
                   plain
-                  :icon="Upload"
-                  :loading="uploading"
-                  @click="pickImage"
-                >
-                  上传图片
-                </el-button>
-                <el-button
-                  size="small"
-                  text
-                  :loading="saving.default_image"
-                  @click="save('default_image')"
+                  :loading="saving['system.name']"
+                  data-test="system-name-save"
+                  @click="save('system.name')"
                 >
                   保存
                 </el-button>
-                <el-button size="small" text @click="resetDefault">恢复内置</el-button>
               </div>
             </div>
           </div>
-        </div>
-      </div>
 
-      <input
-        ref="fileRef"
-        type="file"
-        hidden
-        accept="image/*"
-        @change="onPickFile"
-      />
-
-      <!-- 助手头像：智能助手（机器人）回复时展示，用户端与客服工作台共用 -->
-      <div class="setting-item" data-test="assistant-avatar">
-        <div class="setting-item__label">
-          <div class="setting-item__name">助手头像</div>
-          <div class="setting-item__remark">
-            {{ remarks['assistant.avatar'] || '智能助手（机器人）回复时展示的头像；留空使用内置头像' }}
-          </div>
-        </div>
-
-        <div class="setting-item__control">
-          <div class="default-image">
-            <ThumbImage
-              :src="assistantAvatar"
-              :size="88"
-              :radius="6"
-              kind="avatar"
-              alt="助手头像"
-            />
-            <div class="default-image__info">
+          <!-- 机器人兜底话术 -->
+          <div class="setting-item">
+            <div class="setting-item__label">
+              <div class="setting-item__name">机器人兜底话术</div>
+              <div class="setting-item__remark">
+                {{ remarks['robot.fallback_reply'] || '渠道开启机器人但未命中任何规则时的回复；留空则机器人不回复' }}
+              </div>
+            </div>
+            <div class="setting-item__control">
               <el-input
-                v-model="settings['assistant.avatar']"
+                v-model="settings['robot.fallback_reply']"
+                type="textarea"
+                :rows="3"
                 size="small"
                 class="setting-input"
-                placeholder="图片地址，如 /uploads/20260101/xxx.png"
-                data-test="assistant-avatar-url"
+                maxlength="300"
+                show-word-limit
+                placeholder="例如：您的问题我已记录，稍后将由人工客服为您详细解答～"
+                data-test="robot-fallback-reply"
               />
-              <div class="default-image__actions">
+              <div class="setting-item__actions">
                 <el-button
                   size="small"
                   type="primary"
                   plain
-                  :icon="Upload"
-                  :loading="uploadingAvatar"
-                  data-test="assistant-avatar-upload"
-                  @click="pickAssistantAvatar"
-                >
-                  上传图片
-                </el-button>
-                <el-button
-                  size="small"
-                  text
-                  :loading="saving['assistant.avatar']"
-                  data-test="assistant-avatar-save"
-                  @click="save('assistant.avatar')"
+                  :loading="saving['robot.fallback_reply']"
+                  data-test="robot-fallback-reply-save"
+                  @click="save('robot.fallback_reply')"
                 >
                   保存
-                </el-button>
-                <el-button
-                  size="small"
-                  text
-                  data-test="assistant-avatar-reset"
-                  @click="resetAssistantAvatar"
-                >
-                  恢复内置
                 </el-button>
               </div>
             </div>
           </div>
-        </div>
-      </div>
 
-      <input
-        ref="avatarFileRef"
-        type="file"
-        hidden
-        accept="image/*"
-        data-test="assistant-avatar-file"
-        @change="onPickAssistantAvatar"
-      />
+          <!-- 默认图片 -->
+          <div class="setting-item">
+            <div class="setting-item__label">
+              <div class="setting-item__name">默认图片</div>
+              <div class="setting-item__remark">
+                {{ remarks.default_image || '客户 / 商品 / 订单没有图片时展示该图片' }}
+              </div>
+            </div>
 
-      <!-- 消息提示音 -->
-      <div class="setting-item">
-        <div class="setting-item__label">
-          <div class="setting-item__name">消息提示音</div>
-          <div class="setting-item__remark">
-            客服工作台收到新消息时播放提示音（客户发来的消息，自己发出的不播）
+            <div class="setting-item__control">
+              <div class="default-image">
+                <ThumbImage :src="defaultImage" :size="88" :radius="6" alt="默认图片" />
+                <div class="default-image__info">
+                  <el-input
+                    v-model="settings.default_image"
+                    size="small"
+                    class="setting-input"
+                    placeholder="图片地址，如 /uploads/20260101/xxx.png"
+                    data-test="default-image-url"
+                  />
+                  <div class="default-image__actions">
+                    <el-button
+                      size="small"
+                      type="primary"
+                      plain
+                      :icon="Upload"
+                      :loading="uploading"
+                      data-test="default-image-upload"
+                      @click="pickImage"
+                    >
+                      上传图片
+                    </el-button>
+                    <el-button
+                      size="small"
+                      text
+                      :loading="saving.default_image"
+                      data-test="default-image-save"
+                      @click="save('default_image')"
+                    >
+                      保存
+                    </el-button>
+                    <el-button size="small" text @click="resetDefault">恢复内置</el-button>
+                  </div>
+                </div>
+              </div>
+            </div>
           </div>
-        </div>
 
-        <div class="setting-item__control">
-          <div class="sound-row">
-            <el-radio-group v-model="soundMode" size="small">
-              <el-radio value="on">内置提示音</el-radio>
-              <el-radio value="off">静音</el-radio>
-              <el-radio value="custom">自定义</el-radio>
-            </el-radio-group>
-            <el-button size="small" text type="primary" @click="previewSound">试听</el-button>
+          <input
+            ref="fileRef"
+            type="file"
+            hidden
+            accept="image/*"
+            @change="onPickFile"
+          />
+
+          <!-- 助手头像：智能助手（机器人）回复时展示，用户端与客服工作台共用 -->
+          <div class="setting-item" data-test="assistant-avatar">
+            <div class="setting-item__label">
+              <div class="setting-item__name">助手头像</div>
+              <div class="setting-item__remark">
+                {{ remarks['assistant.avatar'] || '智能助手（机器人）回复时展示的头像；留空使用内置头像' }}
+              </div>
+            </div>
+
+            <div class="setting-item__control">
+              <div class="default-image">
+                <ThumbImage
+                  :src="assistantAvatar"
+                  :size="88"
+                  :radius="6"
+                  kind="avatar"
+                  alt="助手头像"
+                />
+                <div class="default-image__info">
+                  <el-input
+                    v-model="settings['assistant.avatar']"
+                    size="small"
+                    class="setting-input"
+                    placeholder="图片地址，如 /uploads/20260101/xxx.png"
+                    data-test="assistant-avatar-url"
+                  />
+                  <div class="default-image__actions">
+                    <el-button
+                      size="small"
+                      type="primary"
+                      plain
+                      :icon="Upload"
+                      :loading="uploadingAvatar"
+                      data-test="assistant-avatar-upload"
+                      @click="pickAssistantAvatar"
+                    >
+                      上传图片
+                    </el-button>
+                    <el-button
+                      size="small"
+                      text
+                      :loading="saving['assistant.avatar']"
+                      data-test="assistant-avatar-save"
+                      @click="save('assistant.avatar')"
+                    >
+                      保存
+                    </el-button>
+                    <el-button
+                      size="small"
+                      text
+                      data-test="assistant-avatar-reset"
+                      @click="resetAssistantAvatar"
+                    >
+                      恢复内置
+                    </el-button>
+                  </div>
+                </div>
+              </div>
+            </div>
           </div>
 
-          <div v-if="soundMode === 'custom'" class="sound-custom">
-            <el-input
-              v-model="settings.message_sound"
-              size="small"
-              class="setting-input setting-input--wide"
-              placeholder="音频 URL，如 /uploads/20260101/xxx.mp3 或 https://..."
-            />
-            <el-button
-              size="small"
-              type="primary"
-              plain
-              :loading="saving.message_sound"
-              @click="save('message_sound')"
-            >
-              保存
-            </el-button>
+          <input
+            ref="avatarFileRef"
+            type="file"
+            hidden
+            accept="image/*"
+            data-test="assistant-avatar-file"
+            @change="onPickAssistantAvatar"
+          />
+
+          <!-- 消息提示音 -->
+          <div class="setting-item">
+            <div class="setting-item__label">
+              <div class="setting-item__name">消息提示音</div>
+              <div class="setting-item__remark">
+                客服工作台收到新消息时播放提示音（客户发来的消息，自己发出的不播）
+              </div>
+            </div>
+
+            <div class="setting-item__control">
+              <div class="sound-row">
+                <el-radio-group v-model="soundMode" size="small">
+                  <el-radio value="on">内置提示音</el-radio>
+                  <el-radio value="off">静音</el-radio>
+                  <el-radio value="custom">自定义</el-radio>
+                </el-radio-group>
+                <el-button size="small" text type="primary" @click="previewSound">试听</el-button>
+              </div>
+
+              <div v-if="soundMode === 'custom'" class="sound-custom">
+                <el-input
+                  v-model="settings.message_sound"
+                  size="small"
+                  class="setting-input setting-input--wide"
+                  placeholder="音频 URL，如 /uploads/20260101/xxx.mp3 或 https://..."
+                  data-test="message-sound-url"
+                />
+                <el-button
+                  size="small"
+                  type="primary"
+                  plain
+                  :loading="saving.message_sound"
+                  data-test="message-sound-save"
+                  @click="save('message_sound')"
+                >
+                  保存
+                </el-button>
+              </div>
+            </div>
           </div>
-        </div>
-      </div>
 
-      <el-alert type="info" :closable="false" class="tip">
-        说明：默认图片用于客户列表、订单管理、商品管理等页面的<b>图片兜底</b>；
-        聊天中的图片消息单独使用内置占位图，不受此项影响。提示音「内置」无需上传音频文件，由浏览器直接合成。
-      </el-alert>
-    </div>
+          <el-alert type="info" :closable="false" class="tip">
+            说明：默认图片用于客户列表、订单管理、商品管理等页面的<b>图片兜底</b>；
+            聊天中的图片消息单独使用内置占位图，不受此项影响。提示音「内置」无需上传音频文件，由浏览器直接合成。
+          </el-alert>
+        </el-tab-pane>
 
-    <!-- ---------------- 对象存储（S3 兼容） ---------------- -->
-    <div v-loading="loading" class="admin-card storage-card" data-test="storage-card">
-      <div class="toolbar">
-        <span class="toolbar__title">
-          对象存储
-          <span class="toolbar__sub">S3 兼容对象存储，图片 / 文件直传</span>
-        </span>
-        <div>
-          <el-button
-            size="small"
-            :loading="testing"
-            data-test="storage-test"
-            @click="testStorage"
+        <!-- ---------------- 对象存储（S3 兼容） ---------------- -->
+        <el-tab-pane label="对象存储" name="storage" data-test="tab-storage">
+          <!-- 该选项卡自己的操作区：测试连接 + 保存（只作用于本选项卡） -->
+          <div class="pane-actions">
+            <span class="pane-actions__hint">S3 兼容对象存储，图片 / 文件直传</span>
+            <div class="pane-actions__btns">
+              <el-button
+                size="small"
+                :loading="testing"
+                data-test="storage-test"
+                @click="testStorage"
+              >
+                测试连接
+              </el-button>
+              <el-button
+                size="small"
+                type="primary"
+                :loading="savingStorage"
+                data-test="storage-save"
+                @click="saveStorage"
+              >
+                保存
+              </el-button>
+            </div>
+          </div>
+
+          <div :class="['storage-form', isMobile ? 'storage-form--mobile' : '']">
+            <!-- 启用开关 -->
+            <div class="setting-item">
+              <div class="setting-item__label">
+                <div class="setting-item__name">启用对象存储</div>
+                <div class="setting-item__remark">
+                  关闭时继续使用服务器本地存储，下方参数仅可查看
+                </div>
+              </div>
+              <div class="setting-item__control">
+                <div class="storage-switch">
+                  <el-switch
+                    v-model="storage.enabled"
+                    :size="isMobile ? 'default' : 'small'"
+                    data-test="storage-enabled"
+                    @change="markStorageDirty"
+                  />
+                  <span class="storage-switch__state">
+                    {{ storage.enabled ? '已启用' : '未启用（参数置灰）' }}
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            <!-- 服务商（只读） -->
+            <div class="setting-item">
+              <div class="setting-item__label">
+                <div class="setting-item__name">服务商</div>
+                <div class="setting-item__remark">S3 协议兼容，可对接 MinIO、各云厂商对象存储等</div>
+              </div>
+              <div class="setting-item__control">
+                <div class="storage-readonly" data-test="storage-provider">
+                  S3 兼容协议
+                </div>
+              </div>
+            </div>
+
+            <!-- Endpoint -->
+            <div class="setting-item">
+              <div class="setting-item__label">
+                <div class="setting-item__name">Endpoint</div>
+              </div>
+              <div class="setting-item__control">
+                <el-input
+                  v-model="storage.endpoint"
+                  size="small"
+                  class="setting-input setting-input--wide"
+                  placeholder="https://s3.example.com"
+                  :disabled="!storage.enabled"
+                  data-test="storage-endpoint"
+                  @input="markStorageDirty"
+                />
+                <div class="storage-hint">S3 端点，不要带 bucket</div>
+              </div>
+            </div>
+
+            <!-- 区域 -->
+            <div class="setting-item">
+              <div class="setting-item__label">
+                <div class="setting-item__name">区域 Region</div>
+              </div>
+              <div class="setting-item__control">
+                <el-input
+                  v-model="storage.region"
+                  size="small"
+                  class="setting-input"
+                  placeholder="留空使用默认"
+                  :disabled="!storage.enabled"
+                  data-test="storage-region"
+                  @input="markStorageDirty"
+                />
+                <div class="storage-hint">可选，留空使用默认</div>
+              </div>
+            </div>
+
+            <!-- Bucket -->
+            <div class="setting-item">
+              <div class="setting-item__label">
+                <div class="setting-item__name">Bucket</div>
+              </div>
+              <div class="setting-item__control">
+                <el-input
+                  v-model="storage.bucket"
+                  size="small"
+                  class="setting-input"
+                  placeholder="kefu"
+                  :disabled="!storage.enabled"
+                  data-test="storage-bucket"
+                  @input="markStorageDirty"
+                />
+                <div class="storage-hint">存储桶名称，如 kefu</div>
+              </div>
+            </div>
+
+            <!-- Access Key -->
+            <div class="setting-item">
+              <div class="setting-item__label">
+                <div class="setting-item__name">Access Key</div>
+              </div>
+              <div class="setting-item__control">
+                <el-input
+                  v-model="storage.access_key"
+                  size="small"
+                  class="setting-input setting-input--wide"
+                  placeholder="Access Key"
+                  :disabled="!storage.enabled"
+                  data-test="storage-ak"
+                  @input="markStorageDirty"
+                />
+              </div>
+            </div>
+
+            <!-- Secret Key -->
+            <div class="setting-item">
+              <div class="setting-item__label">
+                <div class="setting-item__name">Secret Key</div>
+              </div>
+              <div class="setting-item__control">
+                <el-input
+                  v-model="storage.secret_key"
+                  type="password"
+                  show-password
+                  size="small"
+                  class="setting-input setting-input--wide"
+                  placeholder="Secret Key"
+                  :disabled="!storage.enabled"
+                  data-test="storage-sk"
+                  @input="markStorageDirty"
+                />
+                <div v-if="secretUntouched" class="storage-hint" data-test="storage-sk-hint">
+                  已保存，留空表示不修改
+                </div>
+                <div v-else-if="secretSaved" class="storage-hint">
+                  将保存新的密钥，留空则保留原密钥
+                </div>
+                <div v-else class="storage-hint">与 Access Key 配对使用</div>
+              </div>
+            </div>
+
+            <!-- 访问域名 -->
+            <div class="setting-item">
+              <div class="setting-item__label">
+                <div class="setting-item__name">访问域名</div>
+              </div>
+              <div class="setting-item__control">
+                <el-input
+                  v-model="storage.public_base"
+                  size="small"
+                  class="setting-input setting-input--wide"
+                  placeholder="https://cdn.example.com"
+                  :disabled="!storage.enabled"
+                  data-test="storage-public-base"
+                  @input="markStorageDirty"
+                />
+                <div class="storage-hint">文件对外访问的域名（CDN 或 bucket 域名）</div>
+              </div>
+            </div>
+
+            <!-- 路径前缀 -->
+            <div class="setting-item">
+              <div class="setting-item__label">
+                <div class="setting-item__name">路径前缀</div>
+              </div>
+              <div class="setting-item__control">
+                <el-input
+                  v-model="storage.path_prefix"
+                  size="small"
+                  class="setting-input"
+                  placeholder="uploads/"
+                  :disabled="!storage.enabled"
+                  data-test="storage-prefix"
+                  @input="markStorageDirty"
+                />
+                <div class="storage-hint">对象 key 前缀，默认 uploads/，保存时自动补尾部 /</div>
+              </div>
+            </div>
+          </div>
+
+          <div
+            v-if="testResult"
+            class="storage-test-result"
+            :class="testResult.ok ? 'is-ok' : 'is-fail'"
+            data-test="storage-test-result"
           >
-            测试连接
-          </el-button>
-          <el-button
-            size="small"
-            type="primary"
-            :loading="savingStorage"
-            data-test="storage-save"
-            @click="saveStorage"
+            上次测试：{{ testResult.message }}
+          </div>
+
+          <el-alert type="info" :closable="false" class="tip">
+            说明：开启后新上传的图片 / 文件写入对象存储，历史文件仍按原地址访问；
+            测试连接只校验 Endpoint / Bucket / 密钥是否可用，不会写入任何文件。
+            密钥已保存时页面只显示 <b>******</b>，留空提交表示保留原密钥。
+          </el-alert>
+        </el-tab-pane>
+
+        <!-- ---------------- AI 应答（可选，默认关闭） ---------------- -->
+        <el-tab-pane label="AI 应答" name="ai" data-test="tab-ai">
+          <!-- 该选项卡自己的操作区：测试连接 + 保存（只作用于本选项卡） -->
+          <div class="pane-actions">
+            <span class="pane-actions__hint">知识库检索 + 大模型生成，默认关闭</span>
+            <div class="pane-actions__btns">
+              <el-button
+                size="small"
+                :loading="aiTesting"
+                data-test="ai-test"
+                @click="testAI"
+              >
+                测试连接
+              </el-button>
+              <el-button
+                size="small"
+                type="primary"
+                :loading="aiSaving"
+                data-test="ai-save"
+                @click="saveAI"
+              >
+                保存
+              </el-button>
+            </div>
+          </div>
+
+          <div :class="['ai-form', isMobile ? 'ai-form--mobile' : '']">
+            <!-- 启用开关 -->
+            <div class="setting-item">
+              <div class="setting-item__label">
+                <div class="setting-item__name">启用 AI 应答</div>
+                <div class="setting-item__remark">
+                  未命中自动回复规则时，先查知识库再让大模型生成回复；失败自动降级为兜底话术
+                </div>
+              </div>
+              <div class="setting-item__control">
+                <div class="storage-switch">
+                  <el-switch
+                    v-model="aiForm.enabled"
+                    :size="isMobile ? 'default' : 'small'"
+                    data-test="ai-enabled"
+                    @change="markAIDirty"
+                  />
+                  <span class="storage-switch__state">
+                    {{ aiForm.enabled ? '已启用' : '未启用（只走规则 + 兜底话术）' }}
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            <!-- Base URL -->
+            <div class="setting-item">
+              <div class="setting-item__label">
+                <div class="setting-item__name">Base URL</div>
+                <div class="setting-item__remark">OpenAI 兼容接口根地址</div>
+              </div>
+              <div class="setting-item__control">
+                <el-input
+                  v-model="aiForm.baseUrl"
+                  size="small"
+                  class="setting-input setting-input--wide"
+                  placeholder="https://api.deepseek.com/v1"
+                  data-test="ai-base-url"
+                  @input="markAIDirty"
+                />
+                <div class="storage-hint">不要带 /chat/completions，后端会自行拼接</div>
+              </div>
+            </div>
+
+            <!-- API Key -->
+            <div class="setting-item">
+              <div class="setting-item__label">
+                <div class="setting-item__name">API Key</div>
+                <div class="setting-item__remark">大模型接口密钥</div>
+              </div>
+              <div class="setting-item__control">
+                <el-input
+                  v-model="aiForm.apiKey"
+                  type="password"
+                  show-password
+                  size="small"
+                  class="setting-input setting-input--wide"
+                  placeholder="sk-..."
+                  data-test="ai-api-key"
+                  @input="markAIDirty"
+                />
+                <div v-if="aiKeyUntouched" class="storage-hint" data-test="ai-api-key-hint">
+                  已保存，留空表示不修改
+                </div>
+                <div v-else-if="aiKeySaved" class="storage-hint">将保存新的 Key，留空则保留原 Key</div>
+                <div v-else class="storage-hint">只保存在服务端，页面只显示 ******</div>
+              </div>
+            </div>
+
+            <!-- 模型名 -->
+            <div class="setting-item">
+              <div class="setting-item__label">
+                <div class="setting-item__name">模型名</div>
+                <div class="setting-item__remark">以服务商文档为准</div>
+              </div>
+              <div class="setting-item__control">
+                <el-input
+                  v-model="aiForm.model"
+                  size="small"
+                  class="setting-input"
+                  placeholder="deepseek-chat"
+                  data-test="ai-model"
+                  @input="markAIDirty"
+                />
+                <div class="storage-hint">例如 deepseek-chat / gpt-4o-mini / qwen-plus</div>
+              </div>
+            </div>
+
+            <!-- 系统提示词 -->
+            <div class="setting-item">
+              <div class="setting-item__label">
+                <div class="setting-item__name">系统提示词</div>
+                <div class="setting-item__remark">约束模型只依据知识库回答，不确定就转人工</div>
+              </div>
+              <div class="setting-item__control">
+                <el-input
+                  v-model="aiForm.systemPrompt"
+                  type="textarea"
+                  :rows="4"
+                  size="small"
+                  class="setting-input setting-input--wide"
+                  maxlength="1000"
+                  show-word-limit
+                  data-test="ai-system-prompt"
+                  @input="markAIDirty"
+                />
+              </div>
+            </div>
+
+            <!-- 超时 -->
+            <div class="setting-item">
+              <div class="setting-item__label">
+                <div class="setting-item__name">超时（秒）</div>
+                <div class="setting-item__remark">超时即降级为兜底话术，客户不会等不到回复</div>
+              </div>
+              <div class="setting-item__control">
+                <el-input-number
+                  v-model="aiForm.timeoutSeconds"
+                  :min="1"
+                  :max="120"
+                  :step="1"
+                  size="small"
+                  data-test="ai-timeout"
+                  @change="markAIDirty"
+                />
+              </div>
+            </div>
+
+            <!-- 检索条数 -->
+            <div class="setting-item">
+              <div class="setting-item__label">
+                <div class="setting-item__name">检索条数 rag.top_k</div>
+                <div class="setting-item__remark">拼进提示词的知识片段数量</div>
+              </div>
+              <div class="setting-item__control">
+                <el-input-number
+                  v-model="aiForm.topK"
+                  :min="1"
+                  :max="10"
+                  :step="1"
+                  size="small"
+                  data-test="ai-top-k"
+                  @change="markAIDirty"
+                />
+              </div>
+            </div>
+
+            <!-- 最低相关度 -->
+            <div class="setting-item">
+              <div class="setting-item__label">
+                <div class="setting-item__name">最低相关度 rag.min_score</div>
+                <div class="setting-item__remark">0~1；低于该值视为知识库无命中，直接回兜底话术</div>
+              </div>
+              <div class="setting-item__control">
+                <el-input-number
+                  v-model="aiForm.minScore"
+                  :min="0"
+                  :max="1"
+                  :step="0.05"
+                  :precision="2"
+                  size="small"
+                  data-test="ai-min-score"
+                  @change="markAIDirty"
+                />
+              </div>
+            </div>
+          </div>
+
+          <div
+            v-if="aiTestResult"
+            class="storage-test-result"
+            :class="aiTestResult.ok ? 'is-ok' : 'is-fail'"
+            data-test="ai-test-result"
           >
-            保存
-          </el-button>
-        </div>
-      </div>
+            上次测试：{{ aiTestResult.message }}
+          </div>
 
-      <div :class="['storage-form', isMobile ? 'storage-form--mobile' : '']">
-        <!-- 启用开关 -->
-        <div class="setting-item">
-          <div class="setting-item__label">
-            <div class="setting-item__name">启用对象存储</div>
-            <div class="setting-item__remark">
-              关闭时继续使用服务器本地存储，下方参数仅可查看
-            </div>
-          </div>
-          <div class="setting-item__control">
-            <div class="storage-switch">
-              <el-switch
-                v-model="storage.enabled"
-                :size="isMobile ? 'default' : 'small'"
-                data-test="storage-enabled"
-                @change="markStorageDirty"
-              />
-              <span class="storage-switch__state">
-                {{ storage.enabled ? '已启用' : '未启用（参数置灰）' }}
-              </span>
-            </div>
-          </div>
-        </div>
-
-        <!-- 服务商（只读） -->
-        <div class="setting-item">
-          <div class="setting-item__label">
-            <div class="setting-item__name">服务商</div>
-            <div class="setting-item__remark">S3 协议兼容，可对接 MinIO、各云厂商对象存储等</div>
-          </div>
-          <div class="setting-item__control">
-            <div class="storage-readonly" data-test="storage-provider">
-              S3 兼容协议
-            </div>
-          </div>
-        </div>
-
-        <!-- Endpoint -->
-        <div class="setting-item">
-          <div class="setting-item__label">
-            <div class="setting-item__name">Endpoint</div>
-          </div>
-          <div class="setting-item__control">
-            <el-input
-              v-model="storage.endpoint"
-              size="small"
-              class="setting-input setting-input--wide"
-              placeholder="https://s3.example.com"
-              :disabled="!storage.enabled"
-              data-test="storage-endpoint"
-              @input="markStorageDirty"
-            />
-            <div class="storage-hint">S3 端点，不要带 bucket</div>
-          </div>
-        </div>
-
-        <!-- 区域 -->
-        <div class="setting-item">
-          <div class="setting-item__label">
-            <div class="setting-item__name">区域 Region</div>
-          </div>
-          <div class="setting-item__control">
-            <el-input
-              v-model="storage.region"
-              size="small"
-              class="setting-input"
-              placeholder="留空使用默认"
-              :disabled="!storage.enabled"
-              data-test="storage-region"
-              @input="markStorageDirty"
-            />
-            <div class="storage-hint">可选，留空使用默认</div>
-          </div>
-        </div>
-
-        <!-- Bucket -->
-        <div class="setting-item">
-          <div class="setting-item__label">
-            <div class="setting-item__name">Bucket</div>
-          </div>
-          <div class="setting-item__control">
-            <el-input
-              v-model="storage.bucket"
-              size="small"
-              class="setting-input"
-              placeholder="kefu"
-              :disabled="!storage.enabled"
-              data-test="storage-bucket"
-              @input="markStorageDirty"
-            />
-            <div class="storage-hint">存储桶名称，如 kefu</div>
-          </div>
-        </div>
-
-        <!-- Access Key -->
-        <div class="setting-item">
-          <div class="setting-item__label">
-            <div class="setting-item__name">Access Key</div>
-          </div>
-          <div class="setting-item__control">
-            <el-input
-              v-model="storage.access_key"
-              size="small"
-              class="setting-input setting-input--wide"
-              placeholder="Access Key"
-              :disabled="!storage.enabled"
-              data-test="storage-ak"
-              @input="markStorageDirty"
-            />
-          </div>
-        </div>
-
-        <!-- Secret Key -->
-        <div class="setting-item">
-          <div class="setting-item__label">
-            <div class="setting-item__name">Secret Key</div>
-          </div>
-          <div class="setting-item__control">
-            <el-input
-              v-model="storage.secret_key"
-              type="password"
-              show-password
-              size="small"
-              class="setting-input setting-input--wide"
-              placeholder="Secret Key"
-              :disabled="!storage.enabled"
-              data-test="storage-sk"
-              @input="markStorageDirty"
-            />
-            <div v-if="secretUntouched" class="storage-hint" data-test="storage-sk-hint">
-              已保存，留空表示不修改
-            </div>
-            <div v-else-if="secretSaved" class="storage-hint">
-              将保存新的密钥，留空则保留原密钥
-            </div>
-            <div v-else class="storage-hint">与 Access Key 配对使用</div>
-          </div>
-        </div>
-
-        <!-- 访问域名 -->
-        <div class="setting-item">
-          <div class="setting-item__label">
-            <div class="setting-item__name">访问域名</div>
-          </div>
-          <div class="setting-item__control">
-            <el-input
-              v-model="storage.public_base"
-              size="small"
-              class="setting-input setting-input--wide"
-              placeholder="https://cdn.example.com"
-              :disabled="!storage.enabled"
-              data-test="storage-public-base"
-              @input="markStorageDirty"
-            />
-            <div class="storage-hint">文件对外访问的域名（CDN 或 bucket 域名）</div>
-          </div>
-        </div>
-
-        <!-- 路径前缀 -->
-        <div class="setting-item">
-          <div class="setting-item__label">
-            <div class="setting-item__name">路径前缀</div>
-          </div>
-          <div class="setting-item__control">
-            <el-input
-              v-model="storage.path_prefix"
-              size="small"
-              class="setting-input"
-              placeholder="uploads/"
-              :disabled="!storage.enabled"
-              data-test="storage-prefix"
-              @input="markStorageDirty"
-            />
-            <div class="storage-hint">对象 key 前缀，默认 uploads/，保存时自动补尾部 /</div>
-          </div>
-        </div>
-      </div>
-
-      <div
-        v-if="testResult"
-        class="storage-test-result"
-        :class="testResult.ok ? 'is-ok' : 'is-fail'"
-        data-test="storage-test-result"
-      >
-        上次测试：{{ testResult.message }}
-      </div>
-
-      <el-alert type="info" :closable="false" class="tip">
-        说明：开启后新上传的图片 / 文件写入对象存储，历史文件仍按原地址访问；
-        测试连接只校验 Endpoint / Bucket / 密钥是否可用，不会写入任何文件。
-        密钥已保存时页面只显示 <b>******</b>，留空提交表示保留原密钥。
-      </el-alert>
-    </div>
-
-    <!-- ---------------- AI 应答（可选，默认关闭） ---------------- -->
-    <div v-loading="loading" class="admin-card ai-card" data-test="ai-card">
-      <div class="toolbar">
-        <span class="toolbar__title">
-          AI 应答（可选）
-          <span class="toolbar__sub">知识库检索 + 大模型生成，默认关闭</span>
-        </span>
-        <div>
-          <el-button
-            size="small"
-            :loading="aiTesting"
-            data-test="ai-test"
-            @click="testAI"
-          >
-            测试连接
-          </el-button>
-          <el-button
-            size="small"
-            type="primary"
-            :loading="aiSaving"
-            data-test="ai-save"
-            @click="saveAI"
-          >
-            保存
-          </el-button>
-        </div>
-      </div>
-
-      <div :class="['ai-form', isMobile ? 'ai-form--mobile' : '']">
-        <!-- 启用开关 -->
-        <div class="setting-item">
-          <div class="setting-item__label">
-            <div class="setting-item__name">启用 AI 应答</div>
-            <div class="setting-item__remark">
-              未命中自动回复规则时，先查知识库再让大模型生成回复；失败自动降级为兜底话术
-            </div>
-          </div>
-          <div class="setting-item__control">
-            <div class="storage-switch">
-              <el-switch
-                v-model="aiForm.enabled"
-                :size="isMobile ? 'default' : 'small'"
-                data-test="ai-enabled"
-                @change="markAIDirty"
-              />
-              <span class="storage-switch__state">
-                {{ aiForm.enabled ? '已启用' : '未启用（只走规则 + 兜底话术）' }}
-              </span>
-            </div>
-          </div>
-        </div>
-
-        <!-- Base URL -->
-        <div class="setting-item">
-          <div class="setting-item__label">
-            <div class="setting-item__name">Base URL</div>
-            <div class="setting-item__remark">OpenAI 兼容接口根地址</div>
-          </div>
-          <div class="setting-item__control">
-            <el-input
-              v-model="aiForm.baseUrl"
-              size="small"
-              class="setting-input setting-input--wide"
-              placeholder="https://api.deepseek.com/v1"
-              data-test="ai-base-url"
-              @input="markAIDirty"
-            />
-            <div class="storage-hint">不要带 /chat/completions，后端会自行拼接</div>
-          </div>
-        </div>
-
-        <!-- API Key -->
-        <div class="setting-item">
-          <div class="setting-item__label">
-            <div class="setting-item__name">API Key</div>
-            <div class="setting-item__remark">大模型接口密钥</div>
-          </div>
-          <div class="setting-item__control">
-            <el-input
-              v-model="aiForm.apiKey"
-              type="password"
-              show-password
-              size="small"
-              class="setting-input setting-input--wide"
-              placeholder="sk-..."
-              data-test="ai-api-key"
-              @input="markAIDirty"
-            />
-            <div v-if="aiKeyUntouched" class="storage-hint" data-test="ai-api-key-hint">
-              已保存，留空表示不修改
-            </div>
-            <div v-else-if="aiKeySaved" class="storage-hint">将保存新的 Key，留空则保留原 Key</div>
-            <div v-else class="storage-hint">只保存在服务端，页面只显示 ******</div>
-          </div>
-        </div>
-
-        <!-- 模型名 -->
-        <div class="setting-item">
-          <div class="setting-item__label">
-            <div class="setting-item__name">模型名</div>
-            <div class="setting-item__remark">以服务商文档为准</div>
-          </div>
-          <div class="setting-item__control">
-            <el-input
-              v-model="aiForm.model"
-              size="small"
-              class="setting-input"
-              placeholder="deepseek-chat"
-              data-test="ai-model"
-              @input="markAIDirty"
-            />
-            <div class="storage-hint">例如 deepseek-chat / gpt-4o-mini / qwen-plus</div>
-          </div>
-        </div>
-
-        <!-- 系统提示词 -->
-        <div class="setting-item">
-          <div class="setting-item__label">
-            <div class="setting-item__name">系统提示词</div>
-            <div class="setting-item__remark">约束模型只依据知识库回答，不确定就转人工</div>
-          </div>
-          <div class="setting-item__control">
-            <el-input
-              v-model="aiForm.systemPrompt"
-              type="textarea"
-              :rows="4"
-              size="small"
-              class="setting-input setting-input--wide"
-              maxlength="1000"
-              show-word-limit
-              data-test="ai-system-prompt"
-              @input="markAIDirty"
-            />
-          </div>
-        </div>
-
-        <!-- 超时 -->
-        <div class="setting-item">
-          <div class="setting-item__label">
-            <div class="setting-item__name">超时（秒）</div>
-            <div class="setting-item__remark">超时即降级为兜底话术，客户不会等不到回复</div>
-          </div>
-          <div class="setting-item__control">
-            <el-input-number
-              v-model="aiForm.timeoutSeconds"
-              :min="1"
-              :max="120"
-              :step="1"
-              size="small"
-              data-test="ai-timeout"
-              @change="markAIDirty"
-            />
-          </div>
-        </div>
-
-        <!-- 检索条数 -->
-        <div class="setting-item">
-          <div class="setting-item__label">
-            <div class="setting-item__name">检索条数 rag.top_k</div>
-            <div class="setting-item__remark">拼进提示词的知识片段数量</div>
-          </div>
-          <div class="setting-item__control">
-            <el-input-number
-              v-model="aiForm.topK"
-              :min="1"
-              :max="10"
-              :step="1"
-              size="small"
-              data-test="ai-top-k"
-              @change="markAIDirty"
-            />
-          </div>
-        </div>
-
-        <!-- 最低相关度 -->
-        <div class="setting-item">
-          <div class="setting-item__label">
-            <div class="setting-item__name">最低相关度 rag.min_score</div>
-            <div class="setting-item__remark">0~1；低于该值视为知识库无命中，直接回兜底话术</div>
-          </div>
-          <div class="setting-item__control">
-            <el-input-number
-              v-model="aiForm.minScore"
-              :min="0"
-              :max="1"
-              :step="0.05"
-              :precision="2"
-              size="small"
-              data-test="ai-min-score"
-              @change="markAIDirty"
-            />
-          </div>
-        </div>
-      </div>
-
-      <div
-        v-if="aiTestResult"
-        class="storage-test-result"
-        :class="aiTestResult.ok ? 'is-ok' : 'is-fail'"
-        data-test="ai-test-result"
-      >
-        上次测试：{{ aiTestResult.message }}
-      </div>
-
-      <el-alert type="info" :closable="false" class="tip">
-        说明：AI 应答只在「未命中自动回复规则 + 渠道已开启机器人」时才触发，
-        链路为 <b>知识库检索 → 大模型 → 兜底话术</b>；检索无命中不会去猜，直接回兜底话术。
-        知识条目在「知识库」页维护。Key 已保存时页面只显示 <b>******</b>，留空提交表示保留原 Key。
-      </el-alert>
+          <el-alert type="info" :closable="false" class="tip">
+            说明：AI 应答只在「未命中自动回复规则 + 渠道已开启机器人」时才触发，
+            链路为 <b>知识库检索 → 大模型 → 兜底话术</b>；检索无命中不会去猜，直接回兜底话术。
+            知识条目在「知识库」页维护。Key 已保存时页面只显示 <b>******</b>，留空提交表示保留原 Key。
+          </el-alert>
+        </el-tab-pane>
+      </el-tabs>
     </div>
   </div>
 </template>
@@ -1117,6 +1113,57 @@ onMounted(load)
     font-size: 12px;
     font-weight: 400;
     color: #7f7f7f;
+  }
+
+  &__actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    justify-content: flex-end;
+  }
+}
+
+/* 顶部工具条更紧凑：下面紧接选项卡 */
+.settings-toolbar {
+  margin-bottom: 12px;
+}
+
+/* ---------------- 选项卡外壳 ---------------- */
+.settings-tabs {
+  border-radius: 6px;
+  overflow: hidden;
+
+  :deep(.el-tabs__item) {
+    font-size: 14px;
+    /* 标题不换行：窄屏时靠横向滚动，不撑破布局 */
+    white-space: nowrap;
+  }
+
+  /* 面板内边距：与原来的 .admin-card 视觉接近 */
+  :deep(.el-tabs__content) {
+    padding: 4px 16px 16px;
+  }
+}
+
+/* 每个选项卡自己的操作区（测试连接 / 保存） */
+.pane-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 6px 0 10px;
+
+  &__hint {
+    font-size: 12px;
+    color: #7f7f7f;
+    line-height: 1.6;
+  }
+
+  &__btns {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    justify-content: flex-end;
   }
 }
 
@@ -1193,16 +1240,6 @@ onMounted(load)
   width: 360px;
 }
 
-/* ---------------- 对象存储卡片 ---------------- */
-.storage-card {
-  /* 右上角操作按钮：窄屏自动换行，避免撑出横向滚动 */
-  .toolbar > div {
-    display: flex;
-    flex-wrap: wrap;
-    justify-content: flex-end;
-  }
-}
-
 .storage-switch {
   display: flex;
   align-items: center;
@@ -1277,16 +1314,6 @@ onMounted(load)
   }
 }
 
-/* ---------------- AI 应答卡片 ---------------- */
-.ai-card {
-  /* 右上角操作按钮：窄屏自动换行，避免撑出横向滚动 */
-  .toolbar > div {
-    display: flex;
-    flex-wrap: wrap;
-    justify-content: flex-end;
-  }
-}
-
 /* JS 判定为移动端时上下堆叠（与 storage-form--mobile 同一口径） */
 .ai-form--mobile {
   .setting-item {
@@ -1324,6 +1351,58 @@ onMounted(load)
       display: block;
       margin-left: 0;
       margin-top: 2px;
+    }
+  }
+
+  .settings-toolbar {
+    flex-direction: row;
+    align-items: center;
+    column-gap: 8px;
+  }
+
+  /* 选项卡：标题横向排列且不换行，超出时整条可横向滑动，不产生整页横向溢出 */
+  .settings-tabs {
+    :deep(.el-tabs__header) {
+      margin: 0;
+    }
+
+    :deep(.el-tabs__nav-scroll) {
+      overflow-x: auto;
+      overflow-y: hidden;
+      -webkit-overflow-scrolling: touch;
+      scrollbar-width: none;
+
+      &::-webkit-scrollbar {
+        height: 0;
+      }
+    }
+
+    :deep(.el-tabs__nav) {
+      display: flex;
+      flex-wrap: nowrap;
+      white-space: nowrap;
+      float: none;
+    }
+
+    :deep(.el-tabs__item) {
+      padding: 0 14px;
+      flex: 0 0 auto;
+    }
+
+    :deep(.el-tabs__content) {
+      padding: 4px 12px 12px;
+      overflow: visible;
+    }
+  }
+
+  .pane-actions {
+    flex-direction: column;
+    align-items: flex-start;
+    row-gap: 8px;
+
+    &__btns {
+      width: 100%;
+      justify-content: flex-start;
     }
   }
 
@@ -1372,26 +1451,6 @@ onMounted(load)
     flex-wrap: wrap;
     align-items: stretch;
     row-gap: 8px;
-  }
-
-  /* 对象存储：标题与操作按钮上下排列，避免按钮把标题挤成竖排 */
-  .storage-card .toolbar {
-    flex-direction: column;
-    row-gap: 8px;
-
-    > div {
-      justify-content: flex-start;
-    }
-  }
-
-  /* AI 应答卡片同理 */
-  .ai-card .toolbar {
-    flex-direction: column;
-    row-gap: 8px;
-
-    > div {
-      justify-content: flex-start;
-    }
   }
 
   .ai-form .setting-item {
