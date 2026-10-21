@@ -8,6 +8,7 @@ package service
 // 只有无状态的纯函数（matchKeywords / splitKeywords / defaultMatchType / orDefaultStr / robotAnswer）保留为包级函数。
 import (
 	"errors"
+	"fmt"
 	"strconv"
 	"strings"
 	"time"
@@ -21,17 +22,19 @@ import (
 
 // AutomationService 自动回复内核的业务编排层，持有本模块仓储、会话内核依赖与账号只读依赖。
 type AutomationService struct {
-	repo  *repository.AutoReplyRepository
-	conv  *ConversationService
-	users *repository.UserRepository
+	repo    *repository.AutoReplyRepository
+	conv    *ConversationService
+	users   *repository.UserRepository
+	account *AccountService
 }
 
 // NewAutomationService 创建业务层实例（自带数据访问层与会话内核依赖）。
 func NewAutomationService() *AutomationService {
 	return &AutomationService{
-		repo:  repository.NewAutoReplyRepository(),
-		conv:  NewConversationService(),
-		users: repository.NewUserRepository(),
+		repo:    repository.NewAutoReplyRepository(),
+		conv:    NewConversationService(),
+		users:   repository.NewUserRepository(),
+		account: NewAccountService(),
 	}
 }
 
@@ -42,26 +45,35 @@ func NewAutomationService() *AutomationService {
 //   - user_id = 0：管理员建的公共规则，全租户客服可见、可用，但只有管理员能改 / 删；
 //   - user_id > 0：创建该规则的客服，只有本人（和管理员）能改 / 删。
 //
-// 匹配 / 触发链路（MatchRule / ReplyNow / hit_count）与改造前完全一致，归属只影响写权限。
+// 渠道范围（多选题）：
+//   - ChannelIDs 非空：规则只对列表里的渠道生效；
+//   - ChannelIDs 为空：回退旧的单渠道语义（ChannelID = 0 全渠道，>0 只对该渠道生效）。
+//   - 命中判定统一走纯函数 MatchChannel（见 match.go），匹配 / 转人工 / 命中计数链路不再自带渠道判断。
+//
+// 匹配 / 触发链路（MatchRule / ReplyNow / hit_count）除渠道判定外与改造前完全一致，归属只影响写权限。
 
 type AutoReplyVO struct {
-	ID              uint   `json:"id"`
-	UserID          uint   `json:"user_id"`
-	Owner           string `json:"owner"`    // 「公共」或创建人昵称，前端直接展示
-	Shared          bool   `json:"shared"`   // user_id = 0：公共规则（客服只读）
-	Editable        bool   `json:"editable"` // 当前登录账号能否改 / 删
-	Name            string `json:"name"`
-	ChannelID       uint   `json:"channel_id"`
-	ChannelName     string `json:"channel_name"`
-	MatchType       string `json:"match_type"` // contain | equal | prefix
-	Keywords        string `json:"keywords"`   // 逗号分隔
-	Reply           string `json:"reply"`
-	ReplyType       string `json:"reply_type"` // text | product
-	TransferToHuman bool   `json:"transfer_to_human"`
-	Enabled         bool   `json:"enabled"`
-	Priority        int    `json:"priority"`
-	HitCount        int64  `json:"hit_count"`
-	CreatedAt       string `json:"created_at"`
+	ID       uint   `json:"id"`
+	UserID   uint   `json:"user_id"`
+	Owner    string `json:"owner"`    // 「公共」或创建人昵称，前端直接展示
+	Shared   bool   `json:"shared"`   // user_id = 0：公共规则（客服只读）
+	Editable bool   `json:"editable"` // 当前登录账号能否改 / 删
+	Name     string `json:"name"`
+	// ChannelID / ChannelName 是改造前的单渠道字段（历史兼容，0 = 全渠道）
+	ChannelID   uint   `json:"channel_id"`
+	ChannelName string `json:"channel_name"`
+	// ChannelIDs 多选渠道（已解析成数组，空 = 全渠道）；ChannelNames 是对应的渠道名，供前端直接展示
+	ChannelIDs      []uint   `json:"channel_ids"`
+	ChannelNames    []string `json:"channel_names"`
+	MatchType       string   `json:"match_type"` // contain | equal | prefix
+	Keywords        string   `json:"keywords"`   // 逗号分隔
+	Reply           string   `json:"reply"`
+	ReplyType       string   `json:"reply_type"` // text | product
+	TransferToHuman bool     `json:"transfer_to_human"`
+	Enabled         bool     `json:"enabled"`
+	Priority        int      `json:"priority"`
+	HitCount        int64    `json:"hit_count"`
+	CreatedAt       string   `json:"created_at"`
 }
 
 // AutoReplyRequest 复用 dto 定义（含 HasTransfer 判定）
@@ -75,22 +87,66 @@ func (s *AutomationService) ListAutoReplies(tenantID, viewerID uint, isAdmin boo
 		return nil, err
 	}
 	names := make(map[uint]string, 4)
+	chNames := s.channelNamesOf(list)
 	out := make([]AutoReplyVO, 0, len(list))
 	for _, r := range list {
-		out = append(out, s.toAutoReplyVO(tenantID, r, viewerID, isAdmin, names))
+		out = append(out, s.toAutoReplyVO(tenantID, r, viewerID, isAdmin, names, chNames))
 	}
 	return out, nil
 }
 
-func (s *AutomationService) toAutoReplyVO(tenantID uint, r *model.AutoReply, viewerID uint, isAdmin bool, names map[uint]string) AutoReplyVO {
+// channelNamesOf 批量查规则用到的渠道名：一次查询覆盖整个列表，避免逐条回查（N+1）。
+// 查询失败只影响名字回显，不阻断列表（与改造前的兜底口径一致）。
+func (s *AutomationService) channelNamesOf(list []*model.AutoReply) map[uint]string {
+	names := make(map[uint]string, len(list))
+	ids := make([]uint, 0, len(list))
+	seen := make(map[uint]bool, len(list))
+	for _, r := range list {
+		for _, id := range RuleChannelIDs(r) {
+			if seen[id] {
+				continue
+			}
+			seen[id] = true
+			ids = append(ids, id)
+		}
+	}
+	if len(ids) == 0 {
+		return names
+	}
+	chs, err := s.repo.FindAutoReplyChannelsByIDs(ids)
+	if err != nil {
+		return names
+	}
+	for _, ch := range chs {
+		names[ch.ID] = ch.Name
+	}
+	return names
+}
+
+func (s *AutomationService) toAutoReplyVO(tenantID uint, r *model.AutoReply, viewerID uint, isAdmin bool, names map[uint]string, chNames map[uint]string) AutoReplyVO {
+	ids := RuleChannelIDs(r)
 	vo := AutoReplyVO{
 		ID: r.ID, UserID: r.UserID, Name: r.Name, ChannelID: r.ChannelID,
+		ChannelIDs: ids, ChannelNames: make([]string, 0, len(ids)),
 		MatchType: r.MatchType, Keywords: r.Keywords, Reply: r.Reply,
 		ReplyType: r.ReplyType, TransferToHuman: r.TransferToHuman,
 		Enabled: r.Enabled, Priority: r.Priority, HitCount: r.HitCount,
 		CreatedAt: util.Default().FmtTime(r.CreatedAt), ChannelName: "全渠道",
 		Shared:   r.UserID == 0,
 		Editable: autoReplyMutable(r, viewerID, isAdmin),
+	}
+	for _, id := range ids {
+		if name := chNames[id]; name != "" {
+			vo.ChannelNames = append(vo.ChannelNames, name)
+			continue
+		}
+		// 渠道被删除时不留空位，退化成渠道 ID（与 owner 的兜底口径一致）
+		vo.ChannelNames = append(vo.ChannelNames, "渠道 #"+strconv.FormatUint(uint64(id), 10))
+	}
+	// 旧字段 ChannelName 跟着多渠道走（多个用「、」连接），未配置渠道时保留「全渠道」兜底文案：
+	// 老客户端即使只读 channel_name 也不会把多选规则错看成「全渠道」。
+	if len(vo.ChannelNames) > 0 {
+		vo.ChannelName = strings.Join(vo.ChannelNames, "、")
 	}
 	if r.UserID == 0 {
 		vo.Owner = "公共"
@@ -107,12 +163,6 @@ func (s *AutomationService) toAutoReplyVO(tenantID uint, r *model.AutoReply, vie
 		}
 		names[r.UserID] = vo.Owner
 	}
-	if r.ChannelID > 0 {
-		// 渠道名查不到时保留"全渠道"兜底文案，不影响规则列表展示（与原逻辑一致）
-		if ch, err := s.repo.FindAutoReplyChannel(r.ChannelID); err == nil {
-			vo.ChannelName = ch.Name
-		}
-	}
 	if vo.ReplyType == "" {
 		vo.ReplyType = "text"
 	}
@@ -123,6 +173,7 @@ func (s *AutomationService) toAutoReplyVO(tenantID uint, r *model.AutoReply, vie
 }
 
 // CreateAutoReply 新增规则：客服建的归属自己，管理员建的是公共规则（user_id = 0）。
+// 渠道必须至少选 1 个且是当前账号已授权的渠道（管理员例外，可选任意渠道或「全渠道」）。
 func (s *AutomationService) CreateAutoReply(tenantID, actorID uint, isAdmin bool, req AutoReplyRequest) (*AutoReplyVO, error) {
 	if strings.TrimSpace(req.Keywords) == "" {
 		return nil, errors.New("关键词不能为空")
@@ -130,12 +181,18 @@ func (s *AutomationService) CreateAutoReply(tenantID, actorID uint, isAdmin bool
 	if !req.HasTransfer() && strings.TrimSpace(req.Reply) == "" {
 		return nil, errors.New("回复内容不能为空（转人工规则可留空）")
 	}
+	ids, _, err := s.resolveAutoReplyChannels(tenantID, actorID, isAdmin, req)
+	if err != nil {
+		return nil, err
+	}
 	owner := actorID
 	if isAdmin {
 		owner = 0
 	}
 	r := &model.AutoReply{
-		TenantID: tenantID, UserID: owner, Name: req.Name, ChannelID: req.ChannelID,
+		TenantID: tenantID, UserID: owner, Name: req.Name,
+		// 渠道统一落多选字段；旧的单渠道字段只服务历史数据，新建时保持 0（= 兼容旧读法）
+		ChannelIDs: FormatChannelIDs(ids), ChannelID: 0,
 		MatchType: defaultMatchType(req.MatchType), Keywords: req.Keywords,
 		Reply: req.Reply, ReplyType: orDefaultStr(req.ReplyType, "text"),
 		Enabled: true, Priority: req.Priority,
@@ -149,11 +206,12 @@ func (s *AutomationService) CreateAutoReply(tenantID, actorID uint, isAdmin bool
 	if err := s.repo.InsertAutoReply(r); err != nil {
 		return nil, err
 	}
-	vo := s.toAutoReplyVO(tenantID, r, actorID, isAdmin, map[uint]string{})
+	vo := s.toAutoReplyVO(tenantID, r, actorID, isAdmin, map[uint]string{}, s.channelNamesOf([]*model.AutoReply{r}))
 	return &vo, nil
 }
 
 // UpdateAutoReply 修改规则：管理员可改全部；客服只能改自己创建的。
+// 渠道字段同样校验（防止「先建后改」把渠道改成未授权的）。
 func (s *AutomationService) UpdateAutoReply(tenantID, id, actorID uint, isAdmin bool, req AutoReplyRequest) error {
 	r, err := s.repo.FindAutoReplyByID(tenantID, id)
 	if err != nil {
@@ -162,11 +220,16 @@ func (s *AutomationService) UpdateAutoReply(tenantID, id, actorID uint, isAdmin 
 	if !autoReplyMutable(r, actorID, isAdmin) {
 		return autoReplyReadonlyErr(r)
 	}
+	ids, channelsProvided, err := s.resolveAutoReplyChannels(tenantID, actorID, isAdmin, req)
+	if err != nil {
+		return err
+	}
 	if req.Name != "" {
 		r.Name = req.Name
 	}
-	if req.ChannelID > 0 || req.ChannelID == 0 && req.Name == "" {
-		r.ChannelID = req.ChannelID
+	if channelsProvided {
+		r.ChannelIDs = FormatChannelIDs(ids)
+		r.ChannelID = 0
 	}
 	if req.MatchType != "" {
 		r.MatchType = req.MatchType
@@ -188,6 +251,73 @@ func (s *AutomationService) UpdateAutoReply(tenantID, id, actorID uint, isAdmin 
 	}
 	r.Priority = req.Priority
 	return s.repo.SaveAutoReply(r)
+}
+
+// ---------------- 渠道归属校验 ----------------
+
+// resolveAutoReplyChannels 校验并规整本次请求的渠道配置（新增 / 修改共用）。
+//
+// 返回：
+//   - ids：生效的渠道 ID 列表（空 = 全渠道，仅管理员允许）；
+//   - provided：本次请求是否涉及渠道字段（修改时 false 表示保持原值不动）；
+//   - err：越权 / 参数错误的业务错误（中文文案，由 handler 统一包成 code 400）。
+//
+// 规则：
+//   - 管理员可任选渠道，空列表 = 全渠道；
+//   - 客服至少要选 1 个渠道，且每个渠道都必须在其已授权渠道内（AccountService.UserChannels）。
+func (s *AutomationService) resolveAutoReplyChannels(tenantID, actorID uint, isAdmin bool, req AutoReplyRequest) (ids []uint, provided bool, err error) {
+	// 两个渠道字段都没传 = 不涉及渠道配置（修改接口用；新增接口调用方会再落成「全渠道」语义）
+	if req.ChannelIDs == nil && req.ChannelID == nil {
+		return []uint{}, false, nil
+	}
+	provided = true
+	ids = normalizeChannelIDs(req.ChannelIDs)
+	// 兼容旧客户端：channel_id > 0 等价于只选这一个渠道
+	if len(ids) == 0 && req.ChannelID != nil && *req.ChannelID > 0 {
+		ids = []uint{*req.ChannelID}
+	}
+	if isAdmin {
+		return ids, true, nil
+	}
+	if len(ids) == 0 {
+		// 空列表 + channel_id = 0（或不传）= 「全部渠道」，客服没有这个权限
+		return nil, true, errors.New("请选择你已授权的渠道")
+	}
+	allowed := s.authorizedChannelIDs(tenantID, actorID)
+	for _, id := range ids {
+		if !allowed[id] {
+			return nil, true, fmt.Errorf("无权在该渠道配置自动回复（渠道 #%d 未授权给你）", id)
+		}
+	}
+	return ids, true, nil
+}
+
+// authorizedChannelIDs 账号已授权的渠道集合：管理员 = 租户全部渠道，客服 = 被分配的渠道
+// （口径完全复用 AccountService.UserChannels，避免两处各算一套）。
+func (s *AutomationService) authorizedChannelIDs(tenantID, actorID uint) map[uint]bool {
+	allowed := make(map[uint]bool, 8)
+	u, err := s.users.FindUserByID(tenantID, actorID)
+	if err != nil || u == nil {
+		return allowed
+	}
+	for _, id := range s.account.UserChannels(u) {
+		allowed[id] = true
+	}
+	return allowed
+}
+
+// normalizeChannelIDs 规整前端传来的渠道 ID 列表：丢弃 0（0 不是真实渠道）与重复项。
+func normalizeChannelIDs(ids []uint) []uint {
+	out := make([]uint, 0, len(ids))
+	seen := make(map[uint]bool, len(ids))
+	for _, id := range ids {
+		if id == 0 || seen[id] {
+			continue
+		}
+		seen[id] = true
+		out = append(out, id)
+	}
+	return out
 }
 
 // DeleteAutoReply 删除规则：权限口径同修改。
@@ -228,10 +358,13 @@ func (s *AutomationService) MatchRule(tenantID, channelID uint, question string)
 	rules, _ := s.repo.ListEnabledAutoReplies(tenantID)
 	q := strings.ToLower(strings.TrimSpace(question))
 
-	// 先渠道专属，再全渠道
-	for _, scope := range []uint{channelID, 0} {
+	// 先渠道专属，再全渠道：渠道作用域统一由 MatchChannel 判定（含多选列表与旧单渠道两种语义）
+	for _, global := range []bool{false, true} {
 		for _, r := range rules {
-			if r.ChannelID != scope {
+			if IsGlobalChannelRule(r) != global {
+				continue
+			}
+			if !MatchChannel(r, channelID) {
 				continue
 			}
 			if matchKeywords(r, q) {

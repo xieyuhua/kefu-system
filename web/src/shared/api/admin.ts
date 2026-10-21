@@ -439,9 +439,14 @@ export interface AutoReply {
   /** 当前登录账号能否改 / 删（客服对公共规则与别人的规则为 false） */
   editable: boolean
   name: string
-  /** 0 = 全渠道 */
+  /** 旧单渠道字段：0 = 全渠道（历史数据） */
   channel_id: number
+  /** 旧单渠道名（渠道名 / 全渠道） */
   channel_name: string
+  /** 多选渠道（已解析成数组，空 = 全渠道） */
+  channel_ids: number[]
+  /** 多选渠道名，与 channel_ids 一一对应（渠道被删时后端退化成「渠道 #id」） */
+  channel_names: string[]
   match_type: string
   /** 逗号分隔的关键词 */
   keywords: string
@@ -456,7 +461,10 @@ export interface AutoReply {
 
 export interface AutoReplyPayload {
   name: string
-  channel_id: number
+  /** 多选渠道：空列表 = 全渠道（仅管理员）；客服至少选 1 个自己已授权的渠道 */
+  channel_ids: number[]
+  /** 兼容旧客户端的单渠道字段（可选，0 = 全渠道）；新前端只传 channel_ids */
+  channel_id?: number
   match_type: string
   keywords: string
   reply: string

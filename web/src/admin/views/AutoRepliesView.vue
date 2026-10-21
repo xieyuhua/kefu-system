@@ -11,6 +11,7 @@ import {
   matchTypeLabel,
   updateAutoReply,
   type AutoReply,
+  type AutoReplyPayload,
 } from '@/shared/api/admin'
 import type { Channel } from '@/shared/types'
 import { useIsMobile } from '@/shared/composables/useIsMobile'
@@ -29,7 +30,8 @@ const formRef = ref<FormInstance>()
 
 interface AutoReplyForm {
   name: string
-  channel_id: number
+  /** 多选渠道；管理员留空 = 全部渠道 */
+  channel_ids: number[]
   match_type: string
   keywords: string
   reply: string
@@ -41,7 +43,7 @@ interface AutoReplyForm {
 function emptyForm(): AutoReplyForm {
   return {
     name: '',
-    channel_id: 0,
+    channel_ids: [],
     match_type: 'contain',
     keywords: '',
     reply: '',
@@ -70,11 +72,33 @@ const rules: FormRules<AutoReplyForm> = {
 
 const drawerTitle = computed(() => (editingId.value === null ? '新增自动回复规则' : '编辑自动回复规则'))
 
-/** 渠道下拉：0 = 全渠道 */
+/** 「全部渠道」在下拉里的占位值（真实渠道 ID 从 1 开始，0 不会冲突） */
+const ALL_CHANNELS = 0
+
+/** 渠道下拉（管理员视角）：全部渠道 + 租户所有渠道，可多选 */
 const channelOptions = computed(() => [
-  { id: 0, name: '全渠道' },
+  { id: ALL_CHANNELS, name: '全部渠道' },
   ...channels.value.map((c) => ({ id: c.id, name: c.name })),
 ])
+
+/** 「全部渠道」与具体渠道互斥：选中全部就清掉具体渠道，反之去掉全部 */
+const prevSelection = ref<number[]>([])
+
+function onChannelsChange(value: number[]): void {
+  const picked = Array.isArray(value) ? value : []
+  const hasAll = picked.includes(ALL_CHANNELS)
+  const others = picked.filter((id) => id !== ALL_CHANNELS)
+  const allJustAdded = hasAll && !prevSelection.value.includes(ALL_CHANNELS)
+  const next = hasAll && others.length ? (allJustAdded ? [ALL_CHANNELS] : others) : picked
+  form.channel_ids = next
+  prevSelection.value = [...next]
+}
+
+/** 列表展示用渠道名：多个用「、」连接，空则「全部渠道」 */
+function channelText(row: AutoReply): string {
+  const names = row.channel_names || []
+  return names.length ? names.join('、') : '全部渠道'
+}
 
 async function loadChannels(): Promise<void> {
   try {
@@ -96,15 +120,17 @@ async function load(): Promise<void> {
 function openCreate(): void {
   editingId.value = null
   Object.assign(form, emptyForm())
+  prevSelection.value = []
   drawerVisible.value = true
   formRef.value?.clearValidate()
 }
 
 function openEdit(row: AutoReply): void {
   editingId.value = row.id
+  const ids = [...(row.channel_ids || [])]
   Object.assign(form, {
     name: row.name,
-    channel_id: row.channel_id ?? 0,
+    channel_ids: ids,
     match_type: row.match_type || 'contain',
     keywords: row.keywords || '',
     reply: row.reply || '',
@@ -112,6 +138,7 @@ function openEdit(row: AutoReply): void {
     enabled: !!row.enabled,
     priority: row.priority ?? 0,
   })
+  prevSelection.value = [...ids]
   drawerVisible.value = true
   formRef.value?.clearValidate()
 }
@@ -124,9 +151,10 @@ async function submit(): Promise<void> {
     return
   }
 
-  const payload = {
+  const payload: AutoReplyPayload = {
     name: form.name.trim(),
-    channel_id: form.channel_id,
+    // 「全部渠道」只是 UI 占位，落库按空列表处理（管理员允许全渠道）
+    channel_ids: form.channel_ids.filter((id) => id !== ALL_CHANNELS),
     match_type: form.match_type,
     keywords: form.keywords.trim(),
     // 转人工时回复内容留空
@@ -157,7 +185,7 @@ async function toggleEnabled(row: AutoReply, value: boolean): Promise<void> {
   try {
     await updateAutoReply(row.id, {
       name: row.name,
-      channel_id: row.channel_id,
+      channel_ids: [...(row.channel_ids || [])],
       match_type: row.match_type,
       keywords: row.keywords,
       reply: row.reply,
@@ -214,6 +242,7 @@ onMounted(() => {
 
       <div class="tip">
         命中规则即由机器人自动回复；开启「转人工」的规则命中后会把会话转入人工接待池并通知客服。
+        适用渠道可多选（不选 = 全部渠道），规则只对所选渠道的会话生效。
         规则按「创建人」归属：管理员新建的是<b>公共规则</b>（客服只读），客服在工作台可增删改自己创建的规则；
         管理员在这里可以改全部。
       </div>
@@ -236,8 +265,8 @@ onMounted(() => {
         </el-table-column>
         <el-table-column label="适用渠道" min-width="150">
           <template #default="{ row }">
-            <el-tag v-if="!row.channel_id" size="small" type="success">全渠道</el-tag>
-            <span v-else>{{ row.channel_name || '--' }}</span>
+            <el-tag v-if="!(row.channel_names || []).length" size="small" type="success">全部渠道</el-tag>
+            <span v-else class="channel-list">{{ channelText(row) }}</span>
           </template>
         </el-table-column>
         <el-table-column label="匹配方式" width="100" align="center">
@@ -293,8 +322,10 @@ onMounted(() => {
             <span class="m-card__tags">
               <el-tag v-if="row.shared" size="small" type="info" effect="plain">公共</el-tag>
               <el-tag v-else size="small" effect="plain">{{ row.owner || '--' }}</el-tag>
-              <el-tag v-if="!row.channel_id" size="small" type="success">全渠道</el-tag>
-              <el-tag v-else size="small" effect="plain">{{ row.channel_name || '--' }}</el-tag>
+              <el-tag v-if="!(row.channel_names || []).length" size="small" type="success">全部渠道</el-tag>
+              <el-tag v-else size="small" effect="plain" class="m-card__channels">
+                {{ channelText(row) }}
+              </el-tag>
             </span>
           </div>
 
@@ -360,8 +391,17 @@ onMounted(() => {
           <el-input v-model="form.name" placeholder="如：发货咨询" maxlength="30" show-word-limit />
         </el-form-item>
 
-        <el-form-item label="适用渠道" prop="channel_id">
-          <el-select v-model="form.channel_id" placeholder="请选择适用渠道" style="width: 100%">
+        <el-form-item label="适用渠道" prop="channel_ids">
+          <el-select
+            v-model="form.channel_ids"
+            multiple
+            collapse-tags
+            collapse-tags-tooltip
+            clearable
+            placeholder="不选 = 全部渠道（可多选）"
+            style="width: 100%"
+            @change="onChannelsChange"
+          >
             <el-option
               v-for="opt in channelOptions"
               :key="opt.id"
@@ -369,6 +409,7 @@ onMounted(() => {
               :value="opt.id"
             />
           </el-select>
+          <div class="form-tip">可多选；不选任何渠道表示全部渠道</div>
         </el-form-item>
 
         <el-form-item label="匹配方式" prop="match_type">
@@ -465,6 +506,24 @@ onMounted(() => {
   display: inline-flex;
   flex-wrap: wrap;
   gap: 4px;
+}
+
+/* 多选渠道：多个渠道名用「、」连接，过长时换行不撑破列宽 */
+.channel-list {
+  display: inline-block;
+  max-width: 100%;
+  word-break: break-word;
+}
+
+.m-card__channels {
+  max-width: 100%;
+  overflow: hidden;
+
+  :deep(.el-tag__content) {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
 }
 
 .form-tip {

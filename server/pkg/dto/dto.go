@@ -317,8 +317,13 @@ type NotificationVO struct {
 }
 
 type AutoReplyRequest struct {
-	Name            string `json:"name"`
-	ChannelID       uint   `json:"channel_id"` // 0 = 全渠道
+	Name string `json:"name"`
+	// ChannelIDs 多选渠道：空列表（或只含 0）= 全渠道，仅管理员可用；
+	// 客服至少要选一个自己已授权的渠道（业务层校验）。
+	ChannelIDs []uint `json:"channel_ids"`
+	// ChannelID 兼容旧客户端：0 = 全渠道，>0 = 单个渠道（等价于只选这一个）。
+	// 指针用于区分「没传」与「显式传 0」：更新接口没传表示不改渠道。
+	ChannelID       *uint  `json:"channel_id"`
 	MatchType       string `json:"match_type"` // contain | equal | prefix
 	Keywords        string `json:"keywords"`   // 逗号分隔
 	Reply           string `json:"reply"`

@@ -588,32 +588,45 @@ http(s)://<host>/kefu/?channel=web&uid=o_abc123&nickname=王小明&avatar=&order
 > 权限：客服可新增（归属自己）与改 / 删**自己创建的**；动公共规则返回
 > `公共规则仅管理员可修改`，动别人的规则返回 `只能修改自己创建的规则`；管理员可改全部。
 > 匹配 / 转人工 / 命中计数的触发逻辑不受归属影响。
+>
+> **渠道是多选的**（`channel_ids`）：规则只对所选渠道的会话生效。
+> 客服只能选**自己被授权的渠道**（`GET /api/auth/me` 的 `data.channels`），
+> 传未授权渠道返回 `无权在该渠道配置自动回复（渠道 #x 未授权给你）`，
+> 不选渠道返回 `请选择你已授权的渠道`；管理员不选 = 全部渠道。
+> 列表可见范围不变：客服仍能看到全租户的规则（团队共用），只限制新增 / 修改时的可选渠道。
 
 ### `GET /api/auto-replies`
 ```json
 [{
   "id":1, "name":"问候语", "user_id":0, "owner":"公共", "shared":true, "editable":false,
-  "channel_id":0, "channel_name":"全渠道",
+  "channel_id":0, "channel_name":"微信公众号客服、网页在线客服",
+  "channel_ids":[1,3], "channel_names":["微信公众号客服","网页在线客服"],
   "match_type":"contain", "keywords":"你好,在吗,hi",
   "reply":"您好，我是智能客服助手～", "reply_type":"text",
   "transfer_to_human":false, "enabled":true, "priority":10, "hit_count":23
 }]
 ```
-> `channel_id = 0` 表示全渠道生效；`match_type`：`contain` 包含 / `equal` 完全匹配 / `prefix` 前缀；
+> `channel_ids` 是多选渠道（已解析成数组，空数组 = 全部渠道），`channel_names` 与之一一对应；
+> 旧字段 `channel_id` / `channel_name` 保留兼容：`channel_id = 0` 表示全部渠道，
+> `channel_name` 在多渠道时是「、」连接的渠道名。
+> 历史数据（只写过 `channel_id`）的规则按 `channel_id` 旧语义继续命中，不需要迁移。
+> `match_type`：`contain` 包含 / `equal` 完全匹配 / `prefix` 前缀；
 > `shared` 等价于 `user_id = 0`，`editable` 由后端按当前登录账号算好，前端据此置灰按钮。
 
 ### `POST /api/auto-replies`
 ```json
-{ "name":"转人工", "channel_id":0, "match_type":"contain",
+{ "name":"转人工", "channel_ids":[1,3], "match_type":"contain",
   "keywords":"人工,转人工,投诉", "reply":"", "transfer_to_human":true,
   "enabled":true, "priority":100 }
 ```
 > 客服调用时归属写当前账号；管理员调用时归属写 `0`（公共规则）。
+> `channel_ids` 为空（或旧客户端传 `channel_id = 0`）表示全部渠道，**只有管理员**可以这么传。
 > `transfer_to_human = true` 时命中即**转人工**：会话置为 `pending`、清空 agent、
 > 插入一条 system 消息，并通知该渠道所有客服（在线走 WebSocket，离线走 APP/PC 推送）。
 
 ### `PUT /api/auto-replies/:id`
 ### `DELETE /api/auto-replies/:id`
+> 修改时同样校验渠道归属（防止先建后改绕过）；请求体不带 `channel_ids` / `channel_id` 时渠道保持原值。
 
 ---
 

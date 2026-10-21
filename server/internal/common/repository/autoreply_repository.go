@@ -82,6 +82,19 @@ func (r *AutoReplyRepository) FindAutoReplyChannel(channelID uint) (*model.Chann
 	return &ch, nil
 }
 
+// FindAutoReplyChannelsByIDs 规则回显多个渠道名用：一次查回一批渠道（只读 channels 表）。
+// 口径同 FindAutoReplyChannel：不叠加租户过滤，历史渠道查不到时由调用方兜底。
+func (r *AutoReplyRepository) FindAutoReplyChannelsByIDs(channelIDs []uint) ([]*model.Channel, error) {
+	if len(channelIDs) == 0 {
+		return []*model.Channel{}, nil
+	}
+	var list []*model.Channel
+	if err := storage.Default().DB().Where("id IN ?", channelIDs).Find(&list).Error; err != nil {
+		return nil, err
+	}
+	return list, nil
+}
+
 // ---------------- 自动回复同步链路所需的会话 / 消息读写 ----------------
 
 // FindAutoReplyConversation 按租户 + 主键读取会话（判定是否已由人工接待）。

@@ -7,6 +7,11 @@
  *   - user_id = 0 → 公共规则，客服只读（编辑 / 删除置灰 + tooltip「公共规则仅管理员可修改」）；
  *   - user_id > 0 → 该客服创建，只有本人（和管理员）能改。
  *
+ * 渠道是多选的：
+ *   - 下拉里只渲染当前登录客服「已授权」的渠道（来源 /api/auth/me 的 data.channels），
+ *     未授权渠道既不可选，后端也会拒绝，前端不做第二套判断；
+ *   - 管理员登录工作台时额外出现「全部渠道」（= 不选任何具体渠道）。
+ *
  * 关键词匹配、转人工、命中计数等触发逻辑全部在后端，这里只做配置管理。
  */
 import { computed, reactive, ref, watch } from 'vue'
@@ -24,6 +29,7 @@ import {
 } from '@/shared/api/admin'
 import { listChannels } from '@/shared/api/channels'
 import type { Channel } from '@/shared/types'
+import { useAuthStore } from '@/shared/stores/auth'
 import { useIsMobile } from '@/shared/composables/useIsMobile'
 
 const visible = defineModel<boolean>({ default: false })
@@ -34,6 +40,7 @@ const emit = defineEmits<{
 }>()
 
 const { isMobile } = useIsMobile()
+const authStore = useAuthStore()
 
 const loading = ref(false)
 const submitting = ref(false)
@@ -45,7 +52,8 @@ const editingId = ref<number | null>(null)
 
 interface AutoReplyForm {
   name: string
-  channel_id: number
+  /** 多选渠道；空数组 = 全渠道（仅管理员可提交） */
+  channel_ids: number[]
   match_type: string
   keywords: string
   reply: string
@@ -57,7 +65,7 @@ interface AutoReplyForm {
 function emptyForm(): AutoReplyForm {
   return {
     name: '',
-    channel_id: 0,
+    channel_ids: [],
     match_type: 'contain',
     keywords: '',
     reply: '',
@@ -70,11 +78,56 @@ function emptyForm(): AutoReplyForm {
 const form = reactive<AutoReplyForm>(emptyForm())
 const formTitle = computed(() => (editingId.value === null ? '新增自动回复' : '编辑自动回复'))
 
-/** 渠道下拉：0 = 全渠道 */
-const channelOptions = computed(() => [
-  { id: 0, name: '全渠道' },
-  ...channels.value.map((c) => ({ id: c.id, name: c.name })),
-])
+/** 「全部渠道」在下拉里的占位值（真实渠道 ID 从 1 开始，0 不会冲突） */
+const ALL_CHANNELS = 0
+
+/** 当前登录账号已授权的渠道 ID（/api/auth/me 的 data.channels） */
+const allowedChannelIds = computed<number[]>(() => {
+  const ids = authStore.user?.channels
+  if (Array.isArray(ids) && ids.length) return ids.map((id) => Number(id))
+  // me 还没回来时退回渠道接口（客服端该接口本身也只返回已授权渠道）
+  return channels.value.map((c) => c.id)
+})
+
+const channelNameOf = computed(() => {
+  const map = new Map<number, string>()
+  channels.value.forEach((c) => map.set(c.id, c.name))
+  return map
+})
+
+/**
+ * 渠道下拉选项：只渲染已授权渠道；
+ * 管理员额外多一个「全部渠道」（选中它时不允许再叠加具体渠道）。
+ */
+const channelOptions = computed(() => {
+  const opts = allowedChannelIds.value.map((id) => ({
+    id,
+    name: channelNameOf.value.get(id) || `渠道 #${id}`,
+  }))
+  if (authStore.isAdmin) {
+    return [{ id: ALL_CHANNELS, name: '全部渠道' }, ...opts]
+  }
+  return opts
+})
+
+/** 「全部渠道」与具体渠道互斥：选中全部就清掉具体渠道，反之去掉全部 */
+const prevSelection = ref<number[]>([])
+
+function onChannelsChange(value: number[]): void {
+  const picked = Array.isArray(value) ? value : []
+  const hasAll = picked.includes(ALL_CHANNELS)
+  const others = picked.filter((id) => id !== ALL_CHANNELS)
+  const allJustAdded = hasAll && !prevSelection.value.includes(ALL_CHANNELS)
+  const next = hasAll && others.length ? (allJustAdded ? [ALL_CHANNELS] : others) : picked
+  form.channel_ids = next
+  prevSelection.value = [...next]
+}
+
+/** 列表展示用渠道名：多个用「、」连接，空则「全部渠道」 */
+function channelText(row: AutoReply): string {
+  const names = row.channel_names || []
+  return names.length ? names.join('、') : '全部渠道'
+}
 
 function keywordTags(keywords: string): string[] {
   return (keywords || '')
@@ -105,6 +158,7 @@ async function load(): Promise<void> {
 function openCreate(): void {
   editingId.value = null
   Object.assign(form, emptyForm())
+  prevSelection.value = []
   formOpen.value = true
 }
 
@@ -114,9 +168,10 @@ function openEdit(row: AutoReply): void {
     return
   }
   editingId.value = row.id
+  const ids = [...(row.channel_ids || [])]
   Object.assign(form, {
     name: row.name,
-    channel_id: row.channel_id ?? 0,
+    channel_ids: ids,
     match_type: row.match_type || 'contain',
     keywords: row.keywords || '',
     reply: row.reply || '',
@@ -124,6 +179,11 @@ function openEdit(row: AutoReply): void {
     enabled: !!row.enabled,
     priority: row.priority ?? 0,
   })
+  const selectable = new Set(channelOptions.value.map((o) => o.id))
+  if (ids.some((id) => !selectable.has(id))) {
+    ElMessage.warning('该规则含你已不再被授权的渠道，保存前请重新选择渠道')
+  }
+  prevSelection.value = [...ids]
   formOpen.value = true
 }
 
@@ -131,13 +191,14 @@ function closeForm(): void {
   formOpen.value = false
   editingId.value = null
   Object.assign(form, emptyForm())
+  prevSelection.value = []
 }
 
 /** 编辑某条规则时的提交体（开关切换复用） */
 function payloadOf(row: AutoReply, enabled: boolean): AutoReplyPayload {
   return {
     name: row.name,
-    channel_id: row.channel_id ?? 0,
+    channel_ids: [...(row.channel_ids || [])],
     match_type: row.match_type || 'contain',
     keywords: row.keywords,
     reply: row.transfer_to_human ? '' : row.reply,
@@ -155,6 +216,13 @@ async function submit(): Promise<void> {
     ElMessage.warning('请输入规则名')
     return
   }
+  // 「全部渠道」只是 UI 占位，落库按空列表处理
+  const channelIDs = form.channel_ids.filter((id) => id !== ALL_CHANNELS)
+  if (!channelIDs.length && !authStore.isAdmin) {
+    // 客服必须选自己已授权的渠道（全渠道只允许管理员配置）
+    ElMessage.warning('请选择你已授权的渠道')
+    return
+  }
   if (!keywords) {
     ElMessage.warning('请输入关键词')
     return
@@ -166,7 +234,7 @@ async function submit(): Promise<void> {
 
   const payload: AutoReplyPayload = {
     name,
-    channel_id: form.channel_id,
+    channel_ids: channelIDs,
     match_type: form.match_type,
     keywords,
     // 转人工规则不需要回复内容
@@ -190,7 +258,7 @@ async function submit(): Promise<void> {
     await load()
     emit('changed')
   } catch {
-    // 错误已由拦截器提示（如「公共规则仅管理员可修改」）
+    // 错误已由拦截器提示（如「公共规则仅管理员可修改」「无权在该渠道配置自动回复」）
   } finally {
     submitting.value = false
   }
@@ -263,6 +331,7 @@ watch(visible, (open) => {
 
     <div class="ar-tip">
       客户消息命中关键词即自动回复；勾「转人工」的规则命中后会把会话转入待接待并通知客服。
+      渠道可多选（只显示你已授权的渠道），命中判定只作用于所选渠道的会话。
       公共规则（管理员建）仅可查看，改 / 删需到管理后台。
     </div>
 
@@ -278,7 +347,18 @@ watch(visible, (open) => {
           <el-input v-model="form.name" maxlength="30" show-word-limit placeholder="如：发货咨询" />
         </el-form-item>
         <el-form-item label="渠道">
-          <el-select v-model="form.channel_id" style="width: 100%">
+          <el-select
+            v-model="form.channel_ids"
+            multiple
+            collapse-tags
+            collapse-tags-tooltip
+            clearable
+            :placeholder="
+              authStore.isAdmin ? '不选 = 全部渠道（可多选）' : '请选择渠道（仅显示你已授权的渠道）'
+            "
+            style="width: 100%"
+            @change="onChannelsChange"
+          >
             <el-option v-for="opt in channelOptions" :key="opt.id" :label="opt.name" :value="opt.id" />
           </el-select>
         </el-form-item>
@@ -341,8 +421,8 @@ watch(visible, (open) => {
           </div>
           <div class="ar-item__meta">
             <el-tag size="small" effect="plain">{{ matchTypeLabel(row.match_type) }}</el-tag>
-            <el-tag size="small" type="success" effect="plain">
-              {{ row.channel_id ? row.channel_name || '指定渠道' : '全渠道' }}
+            <el-tag size="small" type="success" effect="plain" class="ar-item__channels">
+              {{ channelText(row) }}
             </el-tag>
             <span class="ar-item__hit">命中 {{ row.hit_count ?? 0 }} 次</span>
           </div>
@@ -506,6 +586,18 @@ watch(visible, (open) => {
 
   &__hit {
     color: #9c9c9c;
+  }
+
+  /* 多渠道时渠道名会较长：单行省略，避免把窄屏撑出横向滚动 */
+  &__channels {
+    max-width: 100%;
+    overflow: hidden;
+
+    :deep(.el-tag__content) {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
   }
 
   &__kw {
