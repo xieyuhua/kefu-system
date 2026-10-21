@@ -526,8 +526,11 @@ export const useChatStore = defineStore('chat', () => {
       // 同一条消息重复投递：不再重复累加未读，也不再重复刷新统计
       const counted = lastCountedMessageId.get(message.conversation_id) ?? 0
       if (message.id > 0 && message.id <= counted) return
+      // 未读只统计「客户发来」的消息：机器人自动回复/客服消息/系统提示都不计入未读
       if (message.id > 0) lastCountedMessageId.set(message.conversation_id, message.id)
-      target.unread = (target.unread || 0) + 1
+      if (message.direction === 'in' && !isOwnMessage(message)) {
+        target.unread = (target.unread || 0) + 1
+      }
       target.last_message = previewOf({ type: message.type, content: message.content })
     } else {
       void loadConversations()
