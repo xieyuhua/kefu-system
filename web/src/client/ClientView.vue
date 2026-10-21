@@ -133,7 +133,7 @@
 
           <!-- 历史消息上滑分页 -->
           <div v-if="loadingHistory" class="chat__pager">加载中…</div>
-          <div v-else-if="!hasMoreHistory && stream.length" class="chat__pager">没有更多消息了</div>
+          <div v-else-if="historyEnded && stream.length" class="chat__pager">没有更多消息了</div>
 
           <template v-for="item in stream" :key="item.id">
             <!-- 系统通知：居中灰色 pill -->
@@ -681,6 +681,12 @@ const canSend = computed(() => draft.value.trim().length > 0)
 const hasMoreHistory = ref(true)
 /** 翻页加载中 */
 const loadingHistory = ref(false)
+/**
+ * 是否已经「上滑拉到底」：只有真正上滑加载过、且确认没有更多历史时才置 true。
+ * 初始会话（无历史）第一次发消息后 stream 有内容，若直接用 !hasMoreHistory 判断，
+ * 会错误显示「没有更多消息了」，因此单独用这个标记控制。
+ */
+const historyEnded = ref(false)
 
 /** 最早一条消息 id，作为向前翻页游标 */
 const earliestId = computed(() => {
@@ -714,10 +720,14 @@ async function loadMoreHistory(): Promise<void> {
     )
     if (!list.length) {
       hasMoreHistory.value = false
+      historyEnded.value = true
       return
     }
     // 不足一页说明到头了
-    if (list.length < 20) hasMoreHistory.value = false
+    if (list.length < 20) {
+      hasMoreHistory.value = false
+      historyEnded.value = true
+    }
     prependMany(list)
     await nextTick()
     el.scrollTop = prevTop + (el.scrollHeight - prevHeight)
@@ -921,8 +931,9 @@ async function init(): Promise<void> {
       writeSinceKeyToUrl(generatedUid)
     }
     messages.value = sortMessages(res.history ?? [])
-    // 历史超过一页才可继续上滑翻页
+    // 历史超过一页才可继续上滑翻页；每次重新 init 都重置「已拉到底」标记
     hasMoreHistory.value = (res.history ?? []).length >= 20
+    historyEnded.value = false
     sinceId.value = readSince()
     updateSince()
     ready.value = true
