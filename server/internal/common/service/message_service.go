@@ -207,6 +207,11 @@ func (s *ConversationService) SendMessage(tenantID, convID, senderID uint, req d
 	c.LastMessage = messagePreview(m)
 	c.LastMessageAt = now
 	c.MessageCount++
+	// 客服既然回复了，说明客户的消息已经看过：这里直接把未读清零。
+	// 否则列表上会一直挂着「未读 1」（尤其是刚接管、未走过 read 接口的情况下）。
+	_ = s.repo.ClearConversationUnread(tenantID, convID)
+	_ = s.messages.MarkMessagesRead(tenantID, convID)
+	c.Unread = 0
 	if err := s.repo.SaveConversation(c); err != nil {
 		return nil, nil, err
 	}

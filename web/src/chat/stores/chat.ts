@@ -458,6 +458,8 @@ export const useChatStore = defineStore('chat', () => {
         // 客服刚发出回复：会话最后一条消息不再是客户消息 →
         // 列表项上的「未回复 N 秒」立即消失（不必等 conversation.updated 回来）
         unreplied_ts: 0,
+        // 既然已经回复，客户的未读也算读过了：本地立即清角标（服务端同样会清零）
+        unread: 0,
       })
       // 统计走合并后的 refreshStats（与随后到达的 conversation.updated 共用一次请求）
       refreshStats()
