@@ -3,8 +3,10 @@
     <div class="client-shell">
       <!-- 顶部标题栏：客服名称 + 企业认证徽标。
            APP WebView 内嵌时隐藏（宿主 APP 自带导航栏）：
-           URL ?chrome=0 / ?hide_header=1，或后台 渠道管理 → 隐藏 header。 -->
-      <header v-if="!hideHeader" class="topbar">
+           URL ?chrome=0 / ?hide_header=1，或后台 渠道管理 → 隐藏 header。
+           ready 约束：hide_header/hide_debug 可能来自后台渠道配置，guest/init 返回前 channel 未知，
+           若此时按默认渲染 header，刷新后会「先出现再隐藏」闪现；等 init 完成再渲染最终状态。 -->
+      <header v-if="ready && !hideHeader" class="topbar">
         <button type="button" class="topbar__btn" title="返回" @click="goBack">
           <el-icon :size="20"><ArrowLeft /></el-icon>
         </button>
@@ -31,7 +33,7 @@
       </header>
 
       <!-- header 被隐藏时（APP 内嵌），用浮动按钮保留调试入口 -->
-      <div v-if="hideHeader && !hideDebug" class="float-tools">
+      <div v-if="ready && hideHeader && !hideDebug" class="float-tools">
         <button
           type="button"
           class="float-tools__btn"
