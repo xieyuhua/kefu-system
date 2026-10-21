@@ -195,3 +195,39 @@ func TestPingUnauthorized(t *testing.T) {
 		t.Fatalf("Ping 应返回「AI 接口不可用」错误，实际: %v", err)
 	}
 }
+
+// TestPingAcceptsTruncatedEmptyContent 回归用例：
+// 带 reasoning 的模型在 max_tokens 偏小时会返回「content 为空 + finish_reason=length」，
+// 这只能说明输出被截断，不能说明接口不可用——Ping 必须判定为成功。
+func TestPingAcceptsTruncatedEmptyContent(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":""},"finish_reason":"length"}]}`))
+	}))
+	defer srv.Close()
+
+	c, err := NewClient(Config{BaseURL: srv.URL, APIKey: "sk-test", Model: "deepseek-chat", TimeoutSeconds: 5})
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+	if err := c.Ping(context.Background()); err != nil {
+		t.Fatalf("Ping 应判定为成功（输出被截断），实际返回错误: %v", err)
+	}
+}
+
+// TestChatRejectsEmptyContent 业务侧口径不变：真正要发给客户时，空内容仍算失败（触发降级）。
+func TestChatRejectsEmptyContent(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":""},"finish_reason":"length"}]}`))
+	}))
+	defer srv.Close()
+
+	c, err := NewClient(Config{BaseURL: srv.URL, APIKey: "sk-test", Model: "deepseek-chat", TimeoutSeconds: 5})
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+	if _, err := c.Chat(context.Background(), "你好"); err == nil {
+		t.Fatal("Chat 遇到空内容应返回错误（以便业务层降级）")
+	}
+}

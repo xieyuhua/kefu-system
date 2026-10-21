@@ -31,8 +31,9 @@ const (
 	chatCompletionsPath = "/chat/completions"
 	// DefaultTimeoutSeconds 未指定超时时的默认值（与后台 ai.timeout_seconds 默认值一致）。
 	DefaultTimeoutSeconds = 20
-	// pingMaxTokens 探测请求的 max_tokens：只要对方能鉴权并返回结构化响应即可，越省越好。
-	pingMaxTokens = 8
+	// pingMaxTokens 探测请求的 max_tokens：只要能证明「地址 + 鉴权 + 模型」可用即可。
+	// 不要设得过小：带 reasoning 的模型会先花掉若干 token，8 个 token 时常常 finish_reason=length 且内容为空。
+	pingMaxTokens = 64
 	// errBodyLimit 失败时读回的响应体上限：只用于错误提示，避免把整段 HTML 塞进日志。
 	errBodyLimit = 512
 )
@@ -141,42 +142,59 @@ type chatResponse struct {
 // Chat 调 OpenAI 兼容的 /chat/completions，返回首条回复文本。
 // 上层约定：返回 error 时调用方必须降级（不要让客户等不到回复）。
 func (c *Client) Chat(ctx context.Context, userPrompt string) (string, error) {
-	return c.chat(ctx, strings.TrimSpace(userPrompt), 0)
+	reply, finish, err := c.chat(ctx, strings.TrimSpace(userPrompt), 0, true)
+	if err != nil {
+		return "", err
+	}
+	if reply == "" {
+		// 空回复按失败处理：业务层据此降级，避免给客户发一条空白消息
+		return "", fmt.Errorf("响应内容为空（finish_reason=%s）", finish)
+	}
+	return reply, nil
 }
 
-// Ping 连通性探测：发一条极短请求验证「地址 + 鉴权 + 模型名」是否可用。
-// 只要求对方返回结构化 choices（不校验文案内容），成功即代表配置可用。
+// Ping 连通性探测：验证「地址 + 鉴权 + 模型名」是否可用。
+//
+// 两个容易误判的点：
+//  1. 探测请求**不带系统提示词**（系统提示词可能很长，会挤占输出预算）；
+//  2. 输出被 max_tokens 截断（finish_reason=length）时内容可能为空，但这已经证明
+//     接口可访问、鉴权通过、模型存在，应判定为「连接成功」而不是失败。
 func (c *Client) Ping(ctx context.Context) error {
-	if _, err := c.chat(ctx, "ping", pingMaxTokens); err != nil {
+	reply, finish, err := c.chat(ctx, "ping", pingMaxTokens, false)
+	if err != nil {
 		return fmt.Errorf("AI 接口不可用：%w", err)
+	}
+	if reply == "" && finish != "length" {
+		return fmt.Errorf("AI 接口不可用：响应内容为空（finish_reason=%s）", finish)
 	}
 	return nil
 }
 
-// chat 发一次对话补全请求：maxTokens > 0 时限制输出长度（探测用）。
-func (c *Client) chat(ctx context.Context, userPrompt string, maxTokens int) (string, error) {
+// chat 发一次对话补全请求。maxTokens > 0 时限制输出长度；withSystem 控制是否附带系统提示词。
+// 返回「回复文本 + finish_reason」；内容为空不算错误，由调用方按场景判定（Ping 与 Chat 口径不同）。
+func (c *Client) chat(ctx context.Context, userPrompt string, maxTokens int, withSystem bool) (string, string, error) {
 	if strings.TrimSpace(userPrompt) == "" {
-		return "", errors.New("提示词不能为空")
+		return "", "", errors.New("提示词不能为空")
 	}
 	if ctx == nil {
 		ctx = context.Background()
 	}
 
 	msgs := make([]chatMessage, 0, 2)
-	if c.cfg.SystemPrompt != "" {
+	if withSystem && c.cfg.SystemPrompt != "" {
 		msgs = append(msgs, chatMessage{Role: "system", Content: c.cfg.SystemPrompt})
 	}
 	msgs = append(msgs, chatMessage{Role: "user", Content: userPrompt})
 
 	body, err := json.Marshal(chatRequest{Model: c.cfg.Model, Messages: msgs, MaxTokens: maxTokens})
 	if err != nil {
-		return "", fmt.Errorf("序列化请求失败: %w", err)
+		return "", "", fmt.Errorf("序列化请求失败: %w", err)
 	}
 
 	url := c.cfg.BaseURL + chatCompletionsPath
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
-		return "", fmt.Errorf("构造请求失败: %w", err)
+		return "", "", fmt.Errorf("构造请求失败: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+c.cfg.APIKey)
@@ -185,34 +203,29 @@ func (c *Client) chat(ctx context.Context, userPrompt string, maxTokens int) (st
 	resp, err := c.hc.Do(req)
 	if err != nil {
 		// 超时 / DNS / 连接失败：保留原始错误便于业务层打日志定位
-		return "", fmt.Errorf("请求 %s 失败: %w", url, err)
+		return "", "", fmt.Errorf("请求 %s 失败: %w", url, err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if err != nil {
-		return "", fmt.Errorf("读取响应失败: %w", err)
+		return "", "", fmt.Errorf("读取响应失败: %w", err)
 	}
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("接口返回 %d：%s", resp.StatusCode, snippet(raw))
+		return "", "", fmt.Errorf("接口返回 %d：%s", resp.StatusCode, snippet(raw))
 	}
 
 	var out chatResponse
 	if err := json.Unmarshal(raw, &out); err != nil {
-		return "", fmt.Errorf("解析响应失败（响应体：%s）: %w", snippet(raw), err)
+		return "", "", fmt.Errorf("解析响应失败（响应体：%s）: %w", snippet(raw), err)
 	}
 	if out.Error != nil && out.Error.Message != "" {
-		return "", fmt.Errorf("接口返回错误：%s", out.Error.Message)
+		return "", "", fmt.Errorf("接口返回错误：%s", out.Error.Message)
 	}
 	if len(out.Choices) == 0 {
-		return "", fmt.Errorf("响应缺少 choices（响应体：%s）", snippet(raw))
+		return "", "", fmt.Errorf("响应缺少 choices（响应体：%s）", snippet(raw))
 	}
-	reply := strings.TrimSpace(out.Choices[0].Message.Content)
-	if reply == "" {
-		// 空回复按失败处理：业务层据此降级，避免给客户发一条空白消息
-		return "", fmt.Errorf("响应内容为空（finish_reason=%s）", out.Choices[0].FinishReason)
-	}
-	return reply, nil
+	return strings.TrimSpace(out.Choices[0].Message.Content), out.Choices[0].FinishReason, nil
 }
 
 // snippet 截断响应体，避免把整段 HTML 错误页写进日志；按字符切分，不切坏中文。
