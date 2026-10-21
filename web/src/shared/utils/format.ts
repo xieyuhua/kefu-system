@@ -116,10 +116,24 @@ export function messageTimestampMs(message: {
  */
 export function formatWaitDuration(ms: number): string {
   const total = Math.max(0, Math.floor(ms / 1000))
+  // 按量级自动切换单位，最多保留两级（秒 / 分 / 小时 / 天），避免出现「3600 秒」这种难读的数字
   if (total < 60) return `${total} 秒`
+
   const minutes = Math.floor(total / 60)
-  const seconds = total % 60
-  return `${minutes} 分 ${String(seconds).padStart(2, '0')} 秒`
+  if (minutes < 60) {
+    const seconds = total % 60
+    return seconds > 0 ? `${minutes} 分 ${seconds} 秒` : `${minutes} 分`
+  }
+
+  const hours = Math.floor(minutes / 60)
+  if (hours < 24) {
+    const restMinutes = minutes % 60
+    return restMinutes > 0 ? `${hours} 小时 ${restMinutes} 分` : `${hours} 小时`
+  }
+
+  const days = Math.floor(hours / 24)
+  const restHours = hours % 24
+  return restHours > 0 ? `${days} 天 ${restHours} 小时` : `${days} 天`
 }
 
 /** 在线状态圆点颜色：在线 #07C160，离线 #b2b2b2 */
