@@ -389,6 +389,20 @@ type ReplyResult struct {
 	Message     interface{} // 机器人回复的消息 VO（可能为 nil）
 }
 
+// aiHistoryLimit 拼进 AI 提示词的最近对话条数（不含当前这条客户消息）。
+const aiHistoryLimit = 6
+
+// recentHistory 取会话最近 limit 条历史消息（按 id 升序，不含刚落库的当前客户消息）。
+// 查询失败返回空切片：AI 仍可单轮回答，只是少了多轮上下文。
+func (s *AutomationService) recentHistory(tenantID, convID uint, limit int) []dto.MessageVO {
+	list, err := s.conv.ListMessages(tenantID, convID, 0, limit+1)
+	if err != nil || len(list) == 0 {
+		return []dto.MessageVO{}
+	}
+	// ListMessages 已按 id 升序：最后一条是刚写入的当前客户消息，历史里去掉它
+	return list[:len(list)-1]
+}
+
 // ReplyNow 同步执行一次自动回复判定（用户端接口即时返回用）
 func (s *AutomationService) ReplyNow(tenantID, convID, customerID, channelID uint, question string) *ReplyResult {
 	conv, err := s.repo.FindAutoReplyConversation(tenantID, convID)
@@ -430,7 +444,8 @@ func (s *AutomationService) ReplyNow(tenantID, convID, customerID, channelID uin
 			//   ② 兜底话术：AI 未启用 / 配置不全 / 检索无命中 / 调用失败 → 后台可配的 robot.fallback_reply。
 			// 关键词话术不再写死在代码里（已由 pkg/seed 灌成自动回复规则，命中规则走上面的分支）。
 			// AI 内部任何失败都返回空串并打日志，这里不会因此漏回复。
-			reply = s.ai.Answer(tenantID, channelID, question)
+			history := s.recentHistory(tenantID, convID, aiHistoryLimit)
+			reply = s.ai.Answer(tenantID, channelID, question, history)
 			if reply == "" {
 				reply = setting.RobotFallback(tenantID)
 			}

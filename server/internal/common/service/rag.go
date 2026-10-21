@@ -20,6 +20,7 @@ import (
 	"unicode"
 
 	"kefu-server/internal/common/repository"
+	"kefu-server/pkg/dto"
 )
 
 const (
@@ -370,8 +371,12 @@ func clamp01(v float64) float64 {
 
 // ---------------- 提示词拼装 ----------------
 
-// BuildRagPrompt 把命中的语料（自动回复规则 / 快捷回复）拼进提示词，附带来源标题。
+// BuildRagPrompt 把最近对话历史 + 命中语料（自动回复规则 / 快捷回复）拼进提示词。
 // 输出形如：
+//
+//	【对话历史】
+//	客户：我的订单什么时候发货？
+//	客服：您好，正在为您查询～
 //
 //	【参考资料】
 //	[1] 退货政策（相关度 0.42）
@@ -382,8 +387,29 @@ func clamp01(v float64) float64 {
 //
 //	【回答要求】
 //	只依据上面的参考资料回答；资料没有覆盖的信息不要编造，直接说明需要转接人工客服。
-func BuildRagPrompt(question string, docs []*RagDoc, scores []float64) string {
+func BuildRagPrompt(question string, history []dto.MessageVO, docs []*RagDoc, scores []float64) string {
 	var b strings.Builder
+
+	// 最近对话历史（多轮上下文，帮大模型理解指代与语境）
+	if len(history) > 0 {
+		b.WriteString("【对话历史】\n")
+		for _, m := range history {
+			// 只拼文本消息；卡片 / 媒体消息的 content 是 JSON，拼进去只会干扰模型
+			if m.Type != "text" {
+				continue
+			}
+			role := "客服"
+			if m.Direction == "in" {
+				role = "客户"
+			}
+			b.WriteString(role)
+			b.WriteString("：")
+			b.WriteString(clipHistoryContent(m.Content))
+			b.WriteString("\n")
+		}
+		b.WriteString("\n")
+	}
+
 	b.WriteString("【参考资料】\n")
 	for i, doc := range docs {
 		if doc == nil {
@@ -428,6 +454,19 @@ func firstKeyword(keywords string) string {
 		}
 	}
 	return ""
+}
+
+// historyContentMaxLen 对话历史里单条消息的最大长度（字符），超长截断避免提示词爆炸。
+const historyContentMaxLen = 200
+
+// clipHistoryContent 截断对话历史里的单条消息内容。
+func clipHistoryContent(content string) string {
+	s := strings.TrimSpace(content)
+	r := []rune(s)
+	if len(r) <= historyContentMaxLen {
+		return s
+	}
+	return string(r[:historyContentMaxLen]) + "…"
 }
 
 // itoa 提示词里的序号（避免为一个数字引入 fmt 依赖）。

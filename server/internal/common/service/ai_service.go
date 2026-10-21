@@ -26,6 +26,7 @@ import (
 	"strings"
 
 	"kefu-server/pkg/ai"
+	"kefu-server/pkg/dto"
 	"kefu-server/pkg/setting"
 )
 
@@ -125,10 +126,11 @@ func (s *AIService) TestAI(ctx context.Context, tenantID uint, req *AITestReques
 // ---------------- 一次完整应答 ----------------
 
 // Answer 生成一条 AI 回复；返回空串表示「不要用 AI 回复」，调用方必须回退到兜底话术。
+// history 为最近几条对话消息（不含当前问题），拼进提示词帮大模型理解多轮语境。
 //
-// 链路：配置就绪 → 检索该渠道的自动回复规则 → 拼提示词 → 调模型 → 返回文本。
+// 链路：配置就绪 → 检索该渠道的自动回复规则/快捷回复 → 拼提示词（对话历史+语料）→ 调模型 → 返回文本。
 // 任一环节不满足都直接返回空串（并打日志说明原因），不做「没有知识依据的猜测」。
-func (s *AIService) Answer(tenantID, channelID uint, question string) string {
+func (s *AIService) Answer(tenantID, channelID uint, question string, history []dto.MessageVO) string {
 	question = strings.TrimSpace(question)
 	if question == "" {
 		return ""
@@ -166,7 +168,7 @@ func (s *AIService) Answer(tenantID, channelID uint, question string) string {
 		return ""
 	}
 
-	prompt := BuildRagPrompt(question, docs, scores)
+	prompt := BuildRagPrompt(question, history, docs, scores)
 	reply, err := client.Chat(context.Background(), prompt)
 	if err != nil {
 		log.Printf("[ai] 租户 %d 调用模型失败（命中 %d 条语料），降级为兜底话术: %v",
