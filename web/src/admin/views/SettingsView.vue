@@ -350,6 +350,39 @@ onMounted(load)
         </div>
       </div>
 
+      <!-- 机器人兜底话术 -->
+      <div class="setting-item">
+        <div class="setting-item__label">
+          <div class="setting-item__name">机器人兜底话术</div>
+          <div class="setting-item__remark">
+            {{ remarks['robot.fallback_reply'] || '渠道开启机器人但未命中任何规则时的回复；留空则机器人不回复' }}
+          </div>
+        </div>
+        <div class="setting-item__control">
+          <el-input
+            v-model="settings['robot.fallback_reply']"
+            type="textarea"
+            :rows="3"
+            size="small"
+            class="setting-input"
+            maxlength="300"
+            show-word-limit
+            placeholder="例如：您的问题我已记录，稍后将由人工客服为您详细解答～"
+          />
+          <div class="setting-item__actions">
+            <el-button
+              size="small"
+              type="primary"
+              plain
+              :loading="saving['robot.fallback_reply']"
+              @click="save('robot.fallback_reply')"
+            >
+              保存
+            </el-button>
+          </div>
+        </div>
+      </div>
+
       <!-- 默认图片 -->
       <div class="setting-item">
         <div class="setting-item__label">

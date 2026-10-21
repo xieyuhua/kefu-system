@@ -23,6 +23,10 @@ const (
 	SettingMessageSound = "message_sound"
 	// SettingSystemName 系统名称：展示在后台顶栏与页面标题，留空则回退到租户名称
 	SettingSystemName = "system.name"
+	// SettingRobotFallback 机器人兜底话术：渠道开启机器人但未命中任何规则时的回复
+	SettingRobotFallback = "robot.fallback_reply"
+	// defaultRobotFallback 兜底话术的默认值（后台未配置或清空时使用）
+	defaultRobotFallback = "您的问题我已记录，稍后将由人工客服为您详细解答～"
 	// SettingObjectStorage 对象存储（S3 兼容）配置：value 是一段 JSON
 	SettingObjectStorage = "storage.object"
 	// SettingAssistantAvatar 智能助手（机器人）回复时展示的头像 URL，留空用内置头像
@@ -56,6 +60,14 @@ var settingDefaults = map[string]struct {
 		// 默认留空：前端（用户端 / 客服工作台）各自回退到内置头像，避免把某个租户的 logo 写死成全局默认
 		Value:  "",
 		Remark: "智能助手（机器人）回复时展示的头像 URL；留空使用内置头像",
+	},
+	SettingSystemName: {
+		Value:  "",
+		Remark: "系统名称：展示在管理后台顶栏与浏览器标题；留空则使用租户名称",
+	},
+	SettingRobotFallback: {
+		Value:  defaultRobotFallback,
+		Remark: "渠道开启机器人但未命中任何自动回复规则时的兜底回复；留空则使用默认话术",
 	},
 }
 
@@ -185,4 +197,16 @@ func createSetting(s *model.Setting) error {
 // saveSetting 保存配置项全字段（已存在配置的更新路径）。
 func saveSetting(s *model.Setting) error {
 	return storage.Default().DB().Save(s).Error
+}
+
+// RobotFallback 机器人兜底话术（渠道开启机器人但未命中规则时的回复）。
+// 未配置时返回默认话术；显式配成空串表示「不回复」。
+func RobotFallback(tenantID uint) string {
+	if s, err := findSettingByKey(tenantID, SettingRobotFallback); err == nil {
+		if v := strings.TrimSpace(s.Value); v != "" {
+			return v
+		}
+	}
+	// 未配置 / 清空：回退默认话术（避免「配置清掉后机器人彻底不回复」）
+	return defaultRobotFallback
 }

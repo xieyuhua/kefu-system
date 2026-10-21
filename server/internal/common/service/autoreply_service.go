@@ -9,6 +9,7 @@ package service
 import (
 	"errors"
 	"fmt"
+	"kefu-server/pkg/setting"
 	"strconv"
 	"strings"
 	"time"
@@ -420,7 +421,11 @@ func (s *AutomationService) ReplyNow(tenantID, convID, customerID, channelID uin
 		reply = rule.Reply
 	} else {
 		if ch, err := s.repo.FindAutoReplyChannel(channelID); err == nil && ch.RobotEnabled {
+			// 关键词示例话术只在「命中演示关键词」时使用；其余情况一律走后台可配置的兜底话术
 			reply = robotAnswer(question)
+			if reply == "" {
+				reply = setting.RobotFallback(tenantID)
+			}
 		}
 	}
 	if reply == "" {

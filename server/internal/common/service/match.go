@@ -166,7 +166,7 @@ func orDefaultStr(s, d string) string {
 	return s
 }
 
-// robotAnswer 渠道开启机器人且未命中规则时的兜底话术。
+// robotAnswer 按关键词返回示例话术（演示用）；未命中任何关键词时返回空串，
 // 原实现在 service/demo.go，只有 ReplyNow 使用，因此随判定逻辑一起落在本模块。
 func robotAnswer(q string) string {
 	switch {
@@ -179,6 +179,7 @@ func robotAnswer(q string) string {
 	case strings.Contains(q, "你好") || strings.Contains(q, "在吗"):
 		return "您好，我是智能客服助手，很高兴为您服务。请问有什么可以帮您？"
 	default:
-		return "您的问题我已记录，稍后将由人工客服为您详细解答～"
+		// 兜底话术由后台设置 robot.fallback_reply 决定，这里返回空串交给调用方
+		return ""
 	}
 }
