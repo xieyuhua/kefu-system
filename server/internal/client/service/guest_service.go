@@ -87,9 +87,12 @@ func (s *Service) EnsureGuestCustomer(tenantID uint, ch *model.Channel, uid, nic
 	}
 	nickname = strings.TrimSpace(nickname)
 	if nickname == "" {
-		// 昵称为空时取 uid 作为展示昵称：
-		// visitor_ 开头是游客（uid=visitor_<ip>_<时间戳>），其余为业务侧用户标识。
-		nickname = uid
+		// 昵称为空时的展示兜底：visitor_ 开头是游客 → 显示「游客」；其余取 uid（业务侧用户标识）。
+		if strings.HasPrefix(uid, "visitor_") {
+			nickname = "游客"
+		} else {
+			nickname = uid
+		}
 	}
 	now := time.Now()
 	cu := &model.Customer{
