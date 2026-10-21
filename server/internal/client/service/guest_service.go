@@ -87,12 +87,9 @@ func (s *Service) EnsureGuestCustomer(tenantID uint, ch *model.Channel, uid, nic
 	}
 	nickname = strings.TrimSpace(nickname)
 	if nickname == "" {
-		// 取 uid 末尾 4 个「字符」区分；不足 4 位时取全串，避免短 uid 切片越界 panic
-		r := []rune(uid)
-		if len(r) > 4 {
-			r = r[len(r)-4:]
-		}
-		nickname = "游客" + string(r)
+		// 昵称为空时取 uid 作为展示昵称：
+		// visitor_ 开头是游客（uid=visitor_<ip>_<时间戳>），其余为业务侧用户标识。
+		nickname = uid
 	}
 	now := time.Now()
 	cu := &model.Customer{

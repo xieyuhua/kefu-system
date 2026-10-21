@@ -15,7 +15,9 @@ package handler
 import (
 	"errors"
 	"net/http"
+	"strconv"
 	"strings"
+	"time"
 
 	"kefu-server/internal/client/service"
 	"kefu-server/internal/common/model"
@@ -72,7 +74,8 @@ func (h *Handler) GuestInitHandler(c *gin.Context) {
 	}
 	uid := strings.TrimSpace(c.Query("uid"))
 	if uid == "" {
-		uid = "visitor_" + c.ClientIP() + "_" + ch.Type
+		// 游客 ID 生成规则：visitor_ + IP + 下划线 + 时间戳（毫秒，避免同 IP 同秒冲突）
+		uid = "visitor_" + c.ClientIP() + "_" + strconv.FormatInt(time.Now().UnixMilli(), 10)
 	}
 
 	// 找到或创建客户
