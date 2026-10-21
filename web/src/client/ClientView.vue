@@ -248,6 +248,7 @@
           </div>
 
           <button
+            v-if="showEmoji"
             type="button"
             class="composer__icon"
             :class="{ 'is-on': panel === 'emoji' }"
@@ -257,6 +258,7 @@
             😊
           </button>
           <button
+            v-if="showUpload"
             type="button"
             class="composer__icon"
             title="发送图片 / 视频 / 文件"
@@ -502,6 +504,13 @@ const hideDebug = computed(() => {
   if (isFalsy(params.value.hide_debug)) return false
   return channel.value?.hide_debug === true
 })
+
+/**
+ * 输入工具栏开关（后台 渠道管理 → 「展示表情按钮 / 展示文件上传按钮」）。
+ * 后端未下发该字段（旧接口 / 旧数据）时按 true 处理，保持改造前行为。
+ */
+const showEmoji = computed(() => channel.value?.show_emoji !== false)
+const showUpload = computed(() => channel.value?.show_upload !== false)
 
 /**
  * 渠道卡片能力（后台 渠道管理 → 「支持订单卡片 / 支持商品卡片」）。

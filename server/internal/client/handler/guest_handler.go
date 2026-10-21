@@ -109,6 +109,9 @@ func (h *Handler) GuestInitHandler(c *gin.Context) {
 			"hide_header":    ch.HideHeader,
 			"hide_debug":     ch.HideDebug,
 			"hide_more_menu": ch.HideMoreMenu,
+			// 输入工具栏开关：用户端据此隐藏表情 / 文件上传按钮
+			"show_emoji":  ch.ShowEmoji,
+			"show_upload": ch.ShowUpload,
 			// 卡片能力开关：用户端据此隐藏订单 / 商品卡片的发送入口
 			"support_order_card":   ch.SupportOrderCard,
 			"support_product_card": ch.SupportProductCard,

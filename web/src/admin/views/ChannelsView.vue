@@ -46,6 +46,9 @@ interface ChannelForm {
   hide_header: boolean
   hide_debug: boolean
   hide_more_menu: boolean
+  /** 输入工具栏开关（默认开启） */
+  show_emoji: boolean
+  show_upload: boolean
   /** 卡片能力开关（默认开启） */
   support_order_card: boolean
   support_product_card: boolean
@@ -61,6 +64,8 @@ function emptyForm(): ChannelForm {
     hide_header: false,
     hide_debug: false,
     hide_more_menu: false,
+    show_emoji: true,
+    show_upload: true,
     support_order_card: true,
     support_product_card: true,
   }
@@ -171,6 +176,8 @@ function openEdit(row: Channel): void {
     hide_debug: row.hide_debug,
     hide_more_menu: row.hide_more_menu,
     // 老数据没有该字段时按「开启」回显，避免误关
+    show_emoji: row.show_emoji !== false,
+    show_upload: row.show_upload !== false,
     support_order_card: row.support_order_card !== false,
     support_product_card: row.support_product_card !== false,
   })
@@ -194,6 +201,8 @@ async function submit(): Promise<void> {
     hide_header: form.hide_header,
     hide_debug: form.hide_debug,
     hide_more_menu: form.hide_more_menu,
+    show_emoji: form.show_emoji,
+    show_upload: form.show_upload,
     support_order_card: form.support_order_card,
     support_product_card: form.support_product_card,
   }
@@ -768,6 +777,21 @@ onMounted(() => {
           <div class="form-tip">
             隐藏 header 里的齿轮「接入调试」入口（排查参数用）。正式投放建议关闭。<br />
             链接参数：<code>?hide_debug=1</code>
+          </div>
+        </el-form-item>
+
+        <el-divider content-position="left">输入工具栏（用户端底部按钮）</el-divider>
+
+        <el-form-item label="展示表情按钮">
+          <el-switch v-model="form.show_emoji" />
+          <div class="form-tip">
+            关闭后：用户端底部输入栏不再显示 😊 表情按钮，表情面板入口同步隐藏。
+          </div>
+        </el-form-item>
+        <el-form-item label="展示文件上传按钮">
+          <el-switch v-model="form.show_upload" />
+          <div class="form-tip">
+            关闭后：用户端底部输入栏不再显示「发送图片 / 视频 / 文件」按钮，无法上传附件。
           </div>
         </el-form-item>
 

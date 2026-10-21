@@ -15,6 +15,11 @@ type Channel struct {
 	HideDebug    bool `gorm:"default:false" json:"hide_debug"`     // 隐藏「接入调试」入口
 	HideMoreMenu bool `gorm:"default:false" json:"hide_more_menu"` // 隐藏「更多」菜单入口
 
+	// 用户端输入工具栏开关（后台配置，关闭后该渠道用户端不再显示对应按钮）
+	// 默认 true：AutoMigrate 加列时给默认值，存量渠道行为保持不变。
+	ShowEmoji  bool `gorm:"default:true" json:"show_emoji"`  // 是否展示表情按钮
+	ShowUpload bool `gorm:"default:true" json:"show_upload"` // 是否展示文件/图片上传按钮
+
 	// 卡片能力开关（后台配置，关闭后该渠道不能收发对应卡片）
 	// 默认 true：AutoMigrate 加列时给默认值，存量渠道行为保持不变。
 	SupportOrderCard   bool `gorm:"default:true" json:"support_order_card"`

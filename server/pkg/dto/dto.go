@@ -54,6 +54,9 @@ type ChannelRequest struct {
 	HideHeader   *bool `json:"hide_header"`
 	HideDebug    *bool `json:"hide_debug"`
 	HideMoreMenu *bool `json:"hide_more_menu"`
+	// 用户端输入工具栏开关：nil 表示不修改；创建时 nil 视为 true（保持存量行为）
+	ShowEmoji  *bool `json:"show_emoji"`
+	ShowUpload *bool `json:"show_upload"`
 	// 卡片能力开关：nil 表示不修改；创建时 nil 视为 true（保持存量行为）
 	SupportOrderCard   *bool `json:"support_order_card"`
 	SupportProductCard *bool `json:"support_product_card"`
@@ -69,6 +72,9 @@ type ChannelVO struct {
 	HideHeader   bool   `json:"hide_header"`
 	HideDebug    bool   `json:"hide_debug"`
 	HideMoreMenu bool   `json:"hide_more_menu"`
+	// 用户端输入工具栏开关
+	ShowEmoji  bool `json:"show_emoji"`
+	ShowUpload bool `json:"show_upload"`
 	// 卡片能力开关（后台可配；关闭后该渠道不能收发对应卡片）
 	SupportOrderCard   bool   `json:"support_order_card"`
 	SupportProductCard bool   `json:"support_product_card"`
