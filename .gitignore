@@ -5,7 +5,7 @@ server/server.log
 server/data/
 
 # 前端构建产物（由 web 的 pnpm build 直接输出到 server/web）
-# server/web/*
+server/web/*
 !server/web/.gitkeep
 
 *.exe

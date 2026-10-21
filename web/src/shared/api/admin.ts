@@ -359,11 +359,12 @@ export function testStorageObject(cfg: StorageObjectConfig): Promise<StorageTest
 }
 
 /* ------------------------------------------------------------------ *
- * AI 应答（OpenAI 兼容接口）+ RAG 知识库检索 —— 设置项
+ * AI 应答（OpenAI 兼容接口）+ RAG 检索 —— 设置项
  *
  * 存储方式：settings 表逐项存储（一个 key 一个值），因此这里用「key → 值」的
  * 映射还原成一份表单，保存时逐项 PUT /api/settings。
  * ai.api_key 由后端脱敏为 ******，原样回写表示沿用已存密钥。
+ * 检索语料 = 渠道的自动回复规则（关键词 + 回复内容），无独立知识库。
  * ------------------------------------------------------------------ */
 
 /** AI 设置项 key（与后端 pkg/setting 的常量逐字一致） */
@@ -395,7 +396,7 @@ export interface AISettingForm {
   systemPrompt: string
   /** 请求超时（秒） */
   timeoutSeconds: number
-  /** 知识库检索条数 */
+  /** 检索返回条数 */
   topK: number
   /** 最低相关度 0~1 */
   minScore: number
@@ -403,8 +404,8 @@ export interface AISettingForm {
 
 /** AI 默认系统提示词（与后端 setting.DefaultAISystemPrompt 同义，仅用于首屏回显兜底） */
 export const AI_DEFAULT_SYSTEM_PROMPT =
-  '你是企业在线客服助手。只能依据下面提供的「知识库片段」回答客户问题；' +
-  '知识库没有覆盖的内容不要猜测或编造，直接回复：这个问题我需要转接人工客服为您确认。' +
+  '你是企业在线客服助手。只能依据下面提供的「参考资料」回答客户问题；' +
+  '参考资料没有覆盖的内容不要猜测或编造，直接回复：这个问题我需要转接人工客服为您确认。' +
   '回答使用简体中文，语气礼貌、简洁，不要输出标题、编号列表或 Markdown 标记。'
 
 /** 表单缺省值：读取失败 / 字段缺失时兜底，保证页面不白屏 */
