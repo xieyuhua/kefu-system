@@ -729,3 +729,21 @@ select.input{ appearance:auto; }
 /* 顶部导航里指向静态页面的外链（示例场景） */
 .nav-item--ext{ color:#6b7280; }
 .nav-item--ext:hover{ color:#4f46e5; }
+
+/* ---------------------------------------------------------------
+   列表分页 + 批量选择（录制 / 运行 / 元素库共用）
+   --------------------------------------------------------------- */
+.check-cell{ width:36px; padding-right:0 !important; text-align:center; }
+.row-check{ width:15px; height:15px; cursor:pointer; accent-color:#4f46e5; }
+.table thead .row-check{ cursor:pointer; }
+tbody tr.is-selected{ background:#f5f5ff; }
+
+.pager{
+  display:flex; align-items:center; gap:10px; flex-wrap:wrap;
+  padding:10px 2px 2px;
+}
+.pager-info{ color:#6b7280; font-size:12.5px; }
+.pager-size{ width:auto; max-width:120px; padding:5px 8px !important; font-size:12.5px; }
+.pager-btns{ display:flex; align-items:center; gap:5px; margin-left:auto; flex-wrap:wrap; }
+.pager-btns .btn{ min-width:34px; padding:5px 9px; font-size:12.5px; }
+.btn--danger:disabled{ opacity:.5; cursor:not-allowed; }

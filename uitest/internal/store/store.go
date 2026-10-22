@@ -279,7 +279,10 @@ func (db *DB) DeleteRecording(id string) error {
 		return ErrNotFound
 	}
 	delete(db.data.Recordings, id)
+	// 录制没了，它的运行记录也留着没意义
+	victims := db.dropRunsLocked(func(run *model.Run) bool { return run.RecordingID == id })
 	db.markDirty()
+	db.removeRunFiles(victims)
 	return nil
 }
 
@@ -910,4 +913,135 @@ func (db *DB) RestoreBackup(name string) error {
 	db.dirty = true
 	db.mu.Unlock()
 	return db.saveNow()
+}
+
+/* ------------------------------------------------------- 批量删除 / 清空 */
+
+// dropRunsLocked 删除满足条件的运行记录，返回被删掉的 runID（调用方负责删文件）。
+// 注意：必须在已持有 db.mu 的情况下调用。
+func (db *DB) dropRunsLocked(match func(*model.Run) bool) []string {
+	var victims []string
+	for id, run := range db.data.Runs {
+		if match(run) {
+			victims = append(victims, id)
+			delete(db.data.Runs, id)
+		}
+	}
+	return victims
+}
+
+// removeRunFiles 异步清理运行截图目录（失败不影响数据一致性）。
+func (db *DB) removeRunFiles(runIDs []string) {
+	for _, id := range runIDs {
+		_ = os.RemoveAll(filepath.Join(db.dir, "runs", id))
+	}
+}
+
+// DeleteRecordings 批量删除录制（连带它们的运行记录与截图）。返回实际删除条数。
+func (db *DB) DeleteRecordings(ids []string) int {
+	db.mu.Lock()
+	defer db.mu.Unlock()
+	deleted := 0
+	gone := map[string]bool{}
+	for _, id := range ids {
+		if id == "" {
+			continue
+		}
+		if _, ok := db.data.Recordings[id]; ok {
+			delete(db.data.Recordings, id)
+			gone[id] = true
+			deleted++
+		}
+	}
+	if deleted == 0 {
+		return 0
+	}
+	victims := db.dropRunsLocked(func(run *model.Run) bool { return gone[run.RecordingID] })
+	db.markDirty()
+	db.removeRunFiles(victims)
+	return deleted
+}
+
+// DeleteAllRecordings 清空所有录制（连带全部运行记录与截图）。返回删除的录制条数。
+func (db *DB) DeleteAllRecordings() int {
+	db.mu.Lock()
+	n := len(db.data.Recordings)
+	if n == 0 {
+		db.mu.Unlock()
+		return 0
+	}
+	db.data.Recordings = map[string]*model.Recording{}
+	victims := db.dropRunsLocked(func(*model.Run) bool { return true })
+	db.markDirty()
+	db.mu.Unlock()
+	db.removeRunFiles(victims)
+	return n
+}
+
+// DeleteRuns 批量删除运行记录（不影响录制）。返回实际删除条数。
+func (db *DB) DeleteRuns(ids []string) int {
+	db.mu.Lock()
+	defer db.mu.Unlock()
+	deleted := 0
+	var victims []string
+	for _, id := range ids {
+		if id == "" {
+			continue
+		}
+		if _, ok := db.data.Runs[id]; ok {
+			delete(db.data.Runs, id)
+			victims = append(victims, id)
+			deleted++
+		}
+	}
+	if deleted > 0 {
+		db.markDirty()
+	}
+	db.removeRunFiles(victims)
+	return deleted
+}
+
+// DeleteAllRuns 清空所有运行记录（保留录制）。
+func (db *DB) DeleteAllRuns() int {
+	db.mu.Lock()
+	n := len(db.data.Runs)
+	if n == 0 {
+		db.mu.Unlock()
+		return 0
+	}
+	victims := db.dropRunsLocked(func(*model.Run) bool { return true })
+	db.markDirty()
+	db.mu.Unlock()
+	db.removeRunFiles(victims)
+	return n
+}
+
+// DeleteElements 批量删除元素绑定。返回实际删除条数。
+func (db *DB) DeleteElements(keys []string) int {
+	db.mu.Lock()
+	defer db.mu.Unlock()
+	deleted := 0
+	for _, k := range keys {
+		if _, ok := db.data.Elements[k]; ok {
+			delete(db.data.Elements, k)
+			deleted++
+		}
+	}
+	if deleted > 0 {
+		db.markDirty()
+	}
+	return deleted
+}
+
+// DeleteAllElements 清空元素绑定。
+func (db *DB) DeleteAllElements() int {
+	db.mu.Lock()
+	defer db.mu.Unlock()
+	n := len(db.data.Elements)
+	if n == 0 {
+		return 0
+	}
+	db.data.Elements = map[string]*model.Element{}
+	db.markDirty()
+	return n
 }

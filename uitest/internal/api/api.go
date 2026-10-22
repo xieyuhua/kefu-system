@@ -50,6 +50,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/recordings/{id}", s.getRecording)
 	mux.HandleFunc("PATCH /api/recordings/{id}", s.patchRecording)
 	mux.HandleFunc("DELETE /api/recordings/{id}", s.deleteRecording)
+	// 批量删除 / 清空（清空必须带 ?all=1 显式确认）
+	mux.HandleFunc("POST /api/recordings/batch-delete", s.batchDeleteRecordings)
+	mux.HandleFunc("DELETE /api/recordings", s.clearRecordings)
 	mux.HandleFunc("POST /api/recordings/{id}/steps", s.addStep)
 	mux.HandleFunc("PATCH /api/recordings/{id}/steps/{sid}", s.patchStep)
 	mux.HandleFunc("DELETE /api/recordings/{id}/steps/{sid}", s.deleteStep)
@@ -60,6 +63,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/elements/bind", s.bindElement)
 	mux.HandleFunc("GET /api/elements", s.listElements)
 	mux.HandleFunc("DELETE /api/elements/{key}", s.deleteElement)
+	mux.HandleFunc("POST /api/elements/batch-delete", s.batchDeleteElements)
+	mux.HandleFunc("DELETE /api/elements", s.clearElements)
 
 	mux.HandleFunc("POST /api/ai/dataset", s.aiDataset)
 
@@ -68,6 +73,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/runs/{id}", s.getRun)
 	mux.HandleFunc("POST /api/runs/{id}/cancel", s.cancelRun)
 	mux.HandleFunc("POST /api/runs/{id}/heal", s.healRun)
+	mux.HandleFunc("POST /api/runs/batch-delete", s.batchDeleteRuns)
+	mux.HandleFunc("DELETE /api/runs", s.clearRuns)
 	mux.HandleFunc("GET /api/runs/{id}/events", s.runEvents)
 
 	mux.HandleFunc("GET /api/browser/status", s.browserStatus)

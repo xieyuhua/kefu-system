@@ -706,13 +706,82 @@
   }
 
   /* ======================================================================
+   * 列表通用：分页 + 批量选择（录制 / 运行 / 元素库三个列表共用）
+   *   · 每页条数存 localStorage，默认 20
+   *   · 选择状态按 id 记在 state.sel 里，跨页保留
+   *   · 表头复选框 = 选中当前页
+   * ====================================================================== */
+
+  var PAGE_SIZE_KEY = 'uitest.pageSize';
+  var PAGE_SIZES = [10, 20, 50, 100];
+
+  function pageSize() {
+    var v = parseInt(lsRead(PAGE_SIZE_KEY) || '20', 10);
+    return PAGE_SIZES.indexOf(v) >= 0 ? v : 20;
+  }
+  function setPageSize(v) {
+    var n = parseInt(v, 10);
+    if (PAGE_SIZES.indexOf(n) >= 0) lsWrite(PAGE_SIZE_KEY, String(n));
+  }
+
+  /** 把全量列表切成当前页，并夹紧页码 */
+  function paginate(list, page, size) {
+    var total = list.length;
+    var pages = Math.max(1, Math.ceil(total / size));
+    var p = Math.min(Math.max(1, parseInt(page, 10) || 1), pages);
+    var start = (p - 1) * size;
+    return { items: list.slice(start, start + size), page: p, pages: pages, total: total, size: size, start: start };
+  }
+
+  /** 分页条 HTML（页码最多显示 7 个，其余用省略号） */
+  function pagerHtml(pg) {
+    var nums = [];
+    var from = Math.max(1, pg.page - 3), to = Math.min(pg.pages, from + 6);
+    from = Math.max(1, Math.min(from, to - 6));
+    for (var i = from; i <= to; i++) nums.push(i);
+    var sizeOpts = PAGE_SIZES.map(function (n) {
+      return '<option value="' + n + '"' + (n === pg.size ? ' selected' : '') + '>' + n + ' 条/页</option>';
+    }).join('');
+    return '<div class="pager">' +
+      '<span class="pager-info">共 ' + pg.total + ' 条 · 第 ' + pg.page + '/' + pg.pages + ' 页</span>' +
+      '<select class="input input--tiny pager-size" data-act="page-size">' + sizeOpts + '</select>' +
+      '<div class="pager-btns">' +
+      '<button class="btn btn--sm" data-act="page" data-page="1"' + (pg.page === 1 ? ' disabled' : '') + '>«</button>' +
+      '<button class="btn btn--sm" data-act="page" data-page="' + (pg.page - 1) + '"' + (pg.page === 1 ? ' disabled' : '') + '>上一页</button>' +
+      nums.map(function (n) {
+        return '<button class="btn btn--sm' + (n === pg.page ? ' btn--primary' : '') + '" data-act="page" data-page="' + n + '">' + n + '</button>';
+      }).join('') +
+      '<button class="btn btn--sm" data-act="page" data-page="' + (pg.page + 1) + '"' + (pg.page === pg.pages ? ' disabled' : '') + '>下一页</button>' +
+      '<button class="btn btn--sm" data-act="page" data-page="' + pg.pages + '"' + (pg.page === pg.pages ? ' disabled' : '') + '>»</button>' +
+      '</div></div>';
+  }
+
+  /** 选中数量 */
+  function selCount(sel) {
+    var n = 0;
+    for (var k in sel) if (sel[k]) n++;
+    return n;
+  }
+  /** 选中的 id 列表 */
+  function selIds(sel) {
+    var out = [];
+    for (var k in sel) if (sel[k]) out.push(k);
+    return out;
+  }
+  /** 丢掉已经不在列表里的选择（删除后清理） */
+  function pruneSel(sel, items, keyOf) {
+    var alive = {};
+    items.forEach(function (it) { alive[keyOf(it)] = true; });
+    for (var k in sel) if (!alive[k]) delete sel[k];
+  }
+  /* ======================================================================
    * 6.1 录制列表  #/recordings
    * ====================================================================== */
 
   function renderRecordings(app) {
     var root = pageRoot(app);
 
-    var state = { items: [], q: '', loading: true, debounce: null };
+    var state = { items: [], q: '', loading: true, debounce: null, page: 1, sel: {} };
 
     root.innerHTML =
       '<div class="page-head">' +
@@ -731,11 +800,16 @@
       '</span>' +
       '<input id="rec-search" class="input" type="search" placeholder="按名称 / 标签 / 说明过滤" autocomplete="off">' +
       '</div>' +
-      '<div class="toolbar-right muted" id="rec-count"></div>' +
+      '<div class="toolbar-right">' +
+      '<span class="muted" id="rec-count"></span>' +
+      '<button class="btn btn--sm btn--danger hidden" id="rec-batch" data-act="batch-del">删除选中</button>' +
+      '<button class="btn btn--sm btn--danger hidden" id="rec-clear" data-act="clear-all">清空全部</button>' +
+      '</div>' +
       '</div>' +
       '<div class="table-wrap">' +
       '<table class="table">' +
       '<thead><tr>' +
+      '<th class="check-cell" style="width:36px"><input type="checkbox" class="row-check" id="rec-check-all" title="全选本页"></th>' +
       '<th style="width:32%">名称</th>' +
       '<th class="num" style="width:70px">步骤数</th>' +
       '<th style="width:96px">状态</th>' +
@@ -743,9 +817,10 @@
       '<th style="width:130px">更新时间</th>' +
       '<th class="actions-cell" style="width:210px">操作</th>' +
       '</tr></thead>' +
-      '<tbody id="rec-body"><tr><td colspan="6" class="cell-state">加载中…</td></tr></tbody>' +
+      '<tbody id="rec-body"><tr><td colspan="7" class="cell-state">加载中…</td></tr></tbody>' +
       '</table>' +
       '</div>' +
+      '<div id="rec-pager"></div>' +
       '</section>';
 
     var tbody = $('#rec-body', root);
@@ -764,6 +839,8 @@
     function rowHtml(rec) {
       var rid = encodeURIComponent(rec.id);
       return '<tr>' +
+        '<td class="check-cell"><input type="checkbox" class="row-check" data-sel="' + esc(rec.id) + '"' +
+        (state.sel[rec.id] ? ' checked' : '') + '></td>' +
         '<td class="cell-name">' +
         '<a class="strong" href="#/recordings/' + rid + '">' + esc(rec.name || '(未命名)') + '</a>' +
         (rec.description ? '<div class="cell-sub">' + esc(rec.description) + '</div>' : '') +
@@ -782,11 +859,30 @@
     }
 
     function paint() {
-      var items = filterItems(state.items, state.q);
-      countEl.textContent = state.items.length ? ('共 ' + items.length + ' 条' + (state.q ? '（已过滤）' : '')) : '';
+      var all = filterItems(state.items, state.q);
+      var pg = paginate(all, state.page, pageSize());
+      state.page = pg.page;
+      state.all = all;
+      pruneSel(state.sel, state.items, function (it) { return it.id; });
+      var picked = selCount(state.sel);
+      countEl.textContent = state.items.length ? ('共 ' + all.length + ' 条' + (state.q ? '（已过滤）' : '')) : '';
+
+      // 批量 / 清空按钮：有数据才显示，有选中才亮
+      var batchBtn = $('#rec-batch', root);
+      var clearBtn = $('#rec-clear', root);
+      if (batchBtn) {
+        batchBtn.classList.toggle('hidden', !state.items.length);
+        batchBtn.textContent = picked ? ('删除选中（' + picked + '）') : '删除选中';
+        batchBtn.disabled = picked === 0;
+      }
+      if (clearBtn) clearBtn.classList.toggle('hidden', !state.items.length);
+
+      var pagerEl = $('#rec-pager', root);
+      if (pagerEl) pagerEl.innerHTML = state.items.length ? pagerHtml(pg) : '';
+      syncCheckAll(pg.items);
 
       if (!state.items.length) {
-        tbody.innerHTML = '<tr><td colspan="6" class="cell-state" style="padding:0">' +
+        tbody.innerHTML = '<tr><td colspan="7" class="cell-state" style="padding:0">' +
           emptyCard(
             '还没有任何录制',
             '先在浏览器里安装录制插件，打开业务页面点「开始录制」；也可以直接新建一条空录制，或导入其他人导出的 JSON。',
@@ -795,17 +891,27 @@
           ) + '</td></tr>';
         return;
       }
-      if (!items.length) {
-        tbody.innerHTML = '<tr><td colspan="6" class="cell-state" style="padding:0">' +
+      if (!all.length) {
+        tbody.innerHTML = '<tr><td colspan="7" class="cell-state" style="padding:0">' +
           emptyCard('没有匹配的录制', '换个关键词，或清空搜索框。',
             '<button class="btn" data-act="clear-search">清空搜索</button>') + '</td></tr>';
         return;
       }
-      tbody.innerHTML = items.map(rowHtml).join('');
+      tbody.innerHTML = pg.items.map(rowHtml).join('');
+    }
+
+    /** 表头「全选本页」的勾选状态与实际一致 */
+    function syncCheckAll(pageItems) {
+      var head = $('#rec-check-all', root);
+      if (!head) return;
+      var ids = pageItems.map(function (it) { return it.id; });
+      var allOn = ids.length > 0 && ids.every(function (id) { return !!state.sel[id]; });
+      head.checked = allOn;
+      head.indeterminate = !allOn && ids.some(function (id) { return !!state.sel[id]; });
     }
 
     async function load(withLoading) {
-      if (withLoading) tbody.innerHTML = '<tr><td colspan="6" class="cell-state">加载中…</td></tr>';
+      if (withLoading) tbody.innerHTML = '<tr><td colspan="7" class="cell-state">加载中…</td></tr>';
       try {
         var res = await api('GET', '/api/recordings?q=' + encodeURIComponent(state.q || ''), undefined, { silent: true });
         state.items = apiItems(res);
@@ -814,7 +920,7 @@
       } catch (e) {
         state.loading = false;
         countEl.textContent = '';
-        tbody.innerHTML = '<tr><td colspan="6" class="cell-state cell-state--error">' +
+        tbody.innerHTML = '<tr><td colspan="7" class="cell-state cell-state--error">' +
           esc(e.message || '加载失败') +
           '　<button class="btn btn--sm" data-act="refresh">重试</button></td></tr>';
       }
@@ -969,11 +1075,77 @@
         return;
       }
       if (act === 'del') { deleteRecording(findRec(id)); return; }
+      if (act === 'page') { state.page = parseInt(btn.getAttribute('data-page'), 10) || 1; paint(); return; }
+      if (act === 'batch-del') { batchDelete(); return; }
+      if (act === 'clear-all') { clearAll(); return; }
     });
+
+    // 分页条上的「每页 N 条」
+    root.addEventListener('change', function (e) {
+      var t = e.target;
+      if (!t || !t.getAttribute) return;
+      var act = t.getAttribute('data-act');
+      if (act === 'page-size') { setPageSize(t.value); state.page = 1; paint(); return; }
+      if (t.id === 'rec-check-all') {
+        var pg = paginate(filterItems(state.items, state.q), state.page, pageSize());
+        pg.items.forEach(function (it) {
+          if (t.checked) state.sel[it.id] = true; else delete state.sel[it.id];
+        });
+        paint();
+        return;
+      }
+      if (t.getAttribute('data-sel')) {
+        var sid = t.getAttribute('data-sel');
+        if (t.checked) state.sel[sid] = true; else delete state.sel[sid];
+        paint();
+      }
+    });
+
+    /** 批量删除选中录制 */
+    async function batchDelete() {
+      var ids = selIds(state.sel);
+      if (!ids.length) { toast('先勾选要删除的录制', 'info'); return; }
+      var ok = await confirmDialog({
+        title: '批量删除录制',
+        message: '确定删除选中的 ' + ids.length + ' 条录制吗？\n它们的步骤与运行记录会一并删除，不可恢复。',
+        confirmText: '删除 ' + ids.length + ' 条'
+      });
+      if (!ok) return;
+      try {
+        var r = await api('POST', '/api/recordings/batch-delete', { ids: ids });
+        state.sel = {};
+        state.page = 1;
+        toast((r && r.message) || '已删除', 'success');
+        await load();
+        await refreshHealth();
+      } catch (e) { /* api 已提示 */ }
+    }
+
+    /** 清空全部录制（连带运行记录） */
+    async function clearAll() {
+      var n = state.items.length;
+      if (!n) { toast('列表已经是空的', 'info'); return; }
+      var ok = await confirmDialog({
+        title: '清空全部录制',
+        message: '确定清空全部 ' + n + ' 条录制吗？\n所有录制的步骤、运行记录、截图都会被删除，不可恢复。\n\n' +
+          '误删可以到「设置 → 数据快照」用启动时的快照恢复。',
+        confirmText: '清空全部'
+      });
+      if (!ok) return;
+      try {
+        var r = await api('DELETE', '/api/recordings?all=1');
+        state.sel = {};
+        state.page = 1;
+        toast((r && r.message) || '已清空', 'success');
+        await load();
+        await refreshHealth();
+      } catch (e) { /* api 已提示 */ }
+    }
 
     var searchInput = $('#rec-search', root);
     searchInput.addEventListener('input', function () {
       state.q = searchInput.value;
+      state.page = 1;
       if (state.debounce) clearTimeout(state.debounce);
       state.debounce = setTimeout(function () {
         state.debounce = null;
@@ -1781,7 +1953,7 @@
 
   function renderRuns(app) {
     var root = pageRoot(app);
-    var state = { items: [], timer: null };
+    var state = { items: [], timer: null, page: 1, sel: {} };
 
     root.innerHTML =
       '<div class="page-head">' +
@@ -1791,8 +1963,15 @@
       '<button class="btn" data-act="refresh">刷新</button>' +
       '</div></div>' +
       '<section class="card">' +
+      '<div class="card-toolbar">' +
+      '<div class="toolbar-right">' +
+      '<span class="muted" id="run-count"></span>' +
+      '<button class="btn btn--sm btn--danger" id="run-batch" data-act="batch-del">删除选中</button>' +
+      '<button class="btn btn--sm btn--danger" id="run-clear" data-act="clear-all">清空全部</button>' +
+      '</div></div>' +
       '<div class="table-wrap"><table class="table">' +
       '<thead><tr>' +
+      '<th class="check-cell" style="width:36px"><input type="checkbox" class="row-check" id="run-check-all" title="全选本页"></th>' +
       '<th style="width:104px">状态</th>' +
       '<th>录制名称</th>' +
       '<th style="width:104px">数据来源</th>' +
@@ -1801,8 +1980,9 @@
       '<th style="width:130px">开始时间</th>' +
       '<th class="actions-cell" style="width:140px">操作</th>' +
       '</tr></thead>' +
-      '<tbody id="runs-body"><tr><td colspan="7" class="cell-state">加载中…</td></tr></tbody>' +
+      '<tbody id="runs-body"><tr><td colspan="8" class="cell-state">加载中…</td></tr></tbody>' +
       '</table></div>' +
+      '<div id="run-pager"></div>' +
       '</section>';
 
     var tbody = $('#runs-body', root);
@@ -1811,6 +1991,8 @@
     function rowHtml(run) {
       var rid = encodeURIComponent(run.id);
       return '<tr>' +
+        '<td class="check-cell"><input type="checkbox" class="row-check" data-sel="' + esc(run.id) + '"' +
+        (state.sel[run.id] ? ' checked' : '') + '></td>' +
         '<td>' + runStatusBadge(run.status) + '</td>' +
         '<td class="cell-name">' +
         '<a class="strong" href="#/runs/' + rid + '">' + esc(run.recording_name || run.recording_id || '(录制已删除)') + '</a>' +
@@ -1829,25 +2011,47 @@
 
     function paint() {
       if (!state.items.length) {
-        tbody.innerHTML = '<tr><td colspan="7" class="cell-state" style="padding:0">' +
+        tbody.innerHTML = '<tr><td colspan="8" class="cell-state" style="padding:0">' +
           emptyCard('还没有运行记录',
             '进入某条录制详情，在「数据准备」面板点「执行测试」即可提交一次运行。',
             '<a class="btn btn--primary" href="#/recordings">去录制列表</a>') + '</td></tr>';
         return;
       }
-      tbody.innerHTML = state.items.map(rowHtml).join('');
+      var pg = paginate(state.items, state.page, pageSize());
+      state.page = pg.page;
+      pruneSel(state.sel, state.items, function (it) { return it.id; });
+      var picked = selCount(state.sel);
+      var countEl2 = $('#run-count', root);
+      if (countEl2) countEl2.textContent = state.items.length ? ('共 ' + state.items.length + ' 条') : '';
+      var batchBtn = $('#run-batch', root);
+      var clearBtn = $('#run-clear', root);
+      if (batchBtn) {
+        batchBtn.classList.toggle('hidden', !state.items.length);
+        batchBtn.textContent = picked ? ('删除选中（' + picked + '）') : '删除选中';
+        batchBtn.disabled = picked === 0;
+      }
+      if (clearBtn) clearBtn.classList.toggle('hidden', !state.items.length);
+      var pagerEl = $('#run-pager', root);
+      if (pagerEl) pagerEl.innerHTML = state.items.length ? pagerHtml(pg) : '';
+      var head = $('#run-check-all', root);
+      if (head) {
+        var ids = pg.items.map(function (it) { return it.id; });
+        head.checked = ids.length > 0 && ids.every(function (id) { return !!state.sel[id]; });
+        head.indeterminate = !head.checked && ids.some(function (id) { return !!state.sel[id]; });
+      }
+      tbody.innerHTML = pg.items.map(rowHtml).join('');
     }
 
     async function load(silent, withLoading) {
-      if (withLoading) tbody.innerHTML = '<tr><td colspan="7" class="cell-state">加载中…</td></tr>';
+      if (withLoading) tbody.innerHTML = '<tr><td colspan="8" class="cell-state">加载中…</td></tr>';
       try {
-        var res = await api('GET', '/api/runs?limit=50', undefined, { silent: !!silent });
+        var res = await api('GET', '/api/runs?limit=200', undefined, { silent: !!silent });
         state.items = apiItems(res);
         paint();
         if (hint) hint.textContent = '自动刷新中 · ' + fmtClock(new Date()).slice(0, 8);
       } catch (e) {
         if (!silent) {
-          tbody.innerHTML = '<tr><td colspan="7" class="cell-state cell-state--error">' +
+          tbody.innerHTML = '<tr><td colspan="8" class="cell-state cell-state--error">' +
             esc(e.message || '加载失败') +
             '　<button class="btn btn--sm" data-act="refresh">重试</button></td></tr>';
           if (hint) hint.textContent = '刷新失败';
@@ -1880,7 +2084,68 @@
       var act = btn.getAttribute('data-act');
       if (act === 'refresh') { load(false, true); return; }
       if (act === 'rerun') { rerun(btn.getAttribute('data-id')); return; }
+      if (act === 'page') { state.page = parseInt(btn.getAttribute('data-page'), 10) || 1; paint(); return; }
+      if (act === 'batch-del') { batchDeleteRuns(); return; }
+      if (act === 'clear-all') { clearAllRuns(); return; }
     });
+
+    root.addEventListener('change', function (e) {
+      var t = e.target;
+      if (!t || !t.getAttribute) return;
+      var act = t.getAttribute('data-act');
+      if (act === 'page-size') { setPageSize(t.value); state.page = 1; paint(); return; }
+      if (t.id === 'run-check-all') {
+        var pg = paginate(state.items, state.page, pageSize());
+        pg.items.forEach(function (it) {
+          if (t.checked) state.sel[it.id] = true; else delete state.sel[it.id];
+        });
+        paint();
+        return;
+      }
+      if (t.getAttribute('data-sel')) {
+        var sid = t.getAttribute('data-sel');
+        if (t.checked) state.sel[sid] = true; else delete state.sel[sid];
+        paint();
+      }
+    });
+
+    async function batchDeleteRuns() {
+      var ids = selIds(state.sel);
+      if (!ids.length) { toast('先勾选要删除的运行记录', 'info'); return; }
+      var ok = await confirmDialog({
+        title: '批量删除运行记录',
+        message: '确定删除选中的 ' + ids.length + ' 条运行记录吗？\n只删记录与截图，对应的录制不受影响。',
+        confirmText: '删除 ' + ids.length + ' 条'
+      });
+      if (!ok) return;
+      try {
+        var r = await api('POST', '/api/runs/batch-delete', { ids: ids });
+        state.sel = {};
+        state.page = 1;
+        toast((r && r.message) || '已删除', 'success');
+        await load(false);
+        await refreshHealth();
+      } catch (e) { /* api 已提示 */ }
+    }
+
+    async function clearAllRuns() {
+      var n = state.items.length;
+      if (!n) { toast('列表已经是空的', 'info'); return; }
+      var ok = await confirmDialog({
+        title: '清空运行记录',
+        message: '确定清空全部 ' + n + ' 条运行记录吗？\n录制会保留，只删运行记录与失败截图。',
+        confirmText: '清空全部'
+      });
+      if (!ok) return;
+      try {
+        var r = await api('DELETE', '/api/runs?all=1');
+        state.sel = {};
+        state.page = 1;
+        toast((r && r.message) || '已清空', 'success');
+        await load(false);
+        await refreshHealth();
+      } catch (e) { /* api 已提示 */ }
+    }
 
     load(false, true);
     state.timer = setInterval(function () { load(true); }, 3000);
@@ -2511,7 +2776,7 @@
 
   function renderElements(app) {
     var root = pageRoot(app);
-    var state = { items: [], page: '', q: '' };
+    var state = { items: [], pageFilter: '', q: '', pageNo: 1, sel: {} };
 
     root.innerHTML =
       '<div class="page-head">' +
@@ -2531,10 +2796,15 @@
       '<circle cx="11" cy="11" r="7"></circle><path d="M20 20l-3.6-3.6"></path></svg></span>' +
       '<input id="el-search" class="input" type="search" placeholder="按 key / 描述 / 标签过滤" autocomplete="off"></div>' +
       '<select id="el-page" class="input" style="max-width:280px"><option value="">全部页面</option></select>' +
-      '<div class="toolbar-right muted" id="el-count"></div>' +
+      '<div class="toolbar-right">' +
+      '<span class="muted" id="el-count"></span>' +
+      '<button class="btn btn--sm btn--danger" id="el-batch" data-act="batch-del">删除选中</button>' +
+      '<button class="btn btn--sm btn--danger" id="el-clear" data-act="clear-all">清空全部</button>' +
+      '</div>' +
       '</div>' +
       '<div class="table-wrap"><table class="table">' +
       '<thead><tr>' +
+      '<th class="check-cell" style="width:36px"><input type="checkbox" class="row-check" id="el-check-all" title="全选本页"></th>' +
       '<th style="width:150px">key</th>' +
       '<th style="width:22%">页面</th>' +
       '<th>描述 descriptor</th>' +
@@ -2544,8 +2814,9 @@
       '<th style="width:90px">状态</th>' +
       '<th class="actions-cell" style="width:80px">操作</th>' +
       '</tr></thead>' +
-      '<tbody id="el-body"><tr><td colspan="8" class="cell-state">加载中…</td></tr></tbody>' +
+      '<tbody id="el-body"><tr><td colspan="9" class="cell-state">加载中…</td></tr></tbody>' +
       '</table></div>' +
+      '<div id="el-pager"></div>' +
       '</section>';
 
     var tbody = $('#el-body', root);
@@ -2556,7 +2827,7 @@
     function filtered() {
       var kw = String(state.q || '').trim().toLowerCase();
       return state.items.filter(function (it) {
-        if (state.page && it.page !== state.page) return false;
+        if (state.pageFilter && it.page !== state.pageFilter) return false;
         if (!kw) return true;
         var hay = [it.key, it.descriptor, it.label, it.tag, it.type, it.selector, it.page].join(' ').toLowerCase();
         return hay.indexOf(kw) >= 0;
@@ -2569,6 +2840,8 @@
       if (el.type) tags.push(el.type);
       if (el.label) tags.push(el.label);
       return '<tr>' +
+        '<td class="check-cell"><input type="checkbox" class="row-check" data-sel="' + esc(el.key) + '"' +
+        (state.sel[el.key] ? ' checked' : '') + '></td>' +
         '<td class="mono">' + esc(el.key) + '</td>' +
         '<td class="mono" style="word-break:break-all">' + esc(el.page || '—') + '</td>' +
         '<td>' + esc(el.descriptor || el.selector || '—') +
@@ -2590,7 +2863,7 @@
       });
       pages.sort();
       var html = '<option value="">全部页面</option>' + pages.map(function (p) {
-        return '<option value="' + esc(p) + '"' + (p === state.page ? ' selected' : '') + '>' + esc(p) + '</option>';
+        return '<option value="' + esc(p) + '"' + (p === state.pageFilter ? ' selected' : '') + '>' + esc(p) + '</option>';
       }).join('');
       pageSel.innerHTML = html;
     }
@@ -2599,17 +2872,37 @@
       var items = filtered();
       countEl.textContent = state.items.length ? ('共 ' + items.length + ' / ' + state.items.length + ' 条') : '';
       if (!state.items.length) {
-        tbody.innerHTML = '<tr><td colspan="8" class="cell-state" style="padding:0">' +
+        tbody.innerHTML = '<tr><td colspan="9" class="cell-state" style="padding:0">' +
           emptyCard('元素库还是空的',
             '在浏览器里用插件录制一次，插件会顺手把操作过的元素登记到元素库。',
             '<a class="btn btn--primary" href="#/recordings">去录制列表</a>') + '</td></tr>';
         return;
       }
       if (!items.length) {
-        tbody.innerHTML = '<tr><td colspan="8" class="cell-state">没有匹配的元素，换个关键词或页面筛选项。</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="9" class="cell-state">没有匹配的元素，换个关键词或页面筛选项。</td></tr>';
         return;
       }
-      tbody.innerHTML = items.map(rowHtml).join('');
+      var pg = paginate(items, state.pageNo, pageSize());
+      state.pageNo = pg.page;
+      pruneSel(state.sel, state.items, function (it) { return it.key; });
+      var picked = selCount(state.sel);
+      var batchBtn = $('#el-batch', root);
+      var clearBtn = $('#el-clear', root);
+      if (batchBtn) {
+        batchBtn.classList.toggle('hidden', !state.items.length);
+        batchBtn.textContent = picked ? ('删除选中（' + picked + '）') : '删除选中';
+        batchBtn.disabled = picked === 0;
+      }
+      if (clearBtn) clearBtn.classList.toggle('hidden', !state.items.length);
+      var pagerEl = $('#el-pager', root);
+      if (pagerEl) pagerEl.innerHTML = state.items.length ? pagerHtml(pg) : '';
+      var head = $('#el-check-all', root);
+      if (head) {
+        var keys = pg.items.map(function (it) { return it.key; });
+        head.checked = keys.length > 0 && keys.every(function (k) { return !!state.sel[k]; });
+        head.indeterminate = !head.checked && keys.some(function (k) { return !!state.sel[k]; });
+      }
+      tbody.innerHTML = pg.items.map(rowHtml).join('');
     }
 
     async function load() {
@@ -2623,7 +2916,7 @@
         paintPageOptions();
         paint();
       } catch (e) {
-        tbody.innerHTML = '<tr><td colspan="8" class="cell-state cell-state--error">' +
+        tbody.innerHTML = '<tr><td colspan="9" class="cell-state cell-state--error">' +
           esc(e.message || '加载失败') +
           '　<button class="btn btn--sm" data-act="refresh">重试</button></td></tr>';
       }
@@ -2651,14 +2944,74 @@
       var act = btn.getAttribute('data-act');
       if (act === 'refresh') { load(); return; }
       if (act === 'del') { removeElement(btn.getAttribute('data-key')); return; }
+      if (act === 'page') { state.pageNo = parseInt(btn.getAttribute('data-page'), 10) || 1; paint(); return; }
+      if (act === 'batch-del') { batchDeleteElements(); return; }
+      if (act === 'clear-all') { clearAllElements(); return; }
     });
+
+    root.addEventListener('change', function (e) {
+      var t = e.target;
+      if (!t || !t.getAttribute) return;
+      if (t.getAttribute('data-act') === 'page-size') { setPageSize(t.value); state.pageNo = 1; paint(); return; }
+      if (t.id === 'el-check-all') {
+        var pg = paginate(filtered(), state.pageNo, pageSize());
+        pg.items.forEach(function (it) {
+          if (t.checked) state.sel[it.key] = true; else delete state.sel[it.key];
+        });
+        paint();
+        return;
+      }
+      if (t.getAttribute('data-sel')) {
+        var sk = t.getAttribute('data-sel');
+        if (t.checked) state.sel[sk] = true; else delete state.sel[sk];
+        paint();
+      }
+    });
+
+    async function batchDeleteElements() {
+      var keys = selIds(state.sel);
+      if (!keys.length) { toast('先勾选要删除的元素', 'info'); return; }
+      var ok = await confirmDialog({
+        title: '批量删除元素绑定',
+        message: '确定删除选中的 ' + keys.length + ' 个元素绑定吗？\n用到这些 uid 的步骤需要重新录制或依赖备用定位。',
+        confirmText: '删除 ' + keys.length + ' 个'
+      });
+      if (!ok) return;
+      try {
+        var r = await api('POST', '/api/elements/batch-delete', { keys: keys });
+        state.sel = {};
+        state.pageNo = 1;
+        toast((r && r.message) || '已删除', 'success');
+        await load();
+      } catch (e) { /* api 已提示 */ }
+    }
+
+    async function clearAllElements() {
+      var n = state.items.length;
+      if (!n) { toast('元素库已经是空的', 'info'); return; }
+      var ok = await confirmDialog({
+        title: '清空元素库',
+        message: '确定清空全部 ' + n + ' 个元素绑定吗？\n录制与运行记录不受影响，但 uid 命中统计会清零。',
+        confirmText: '清空全部'
+      });
+      if (!ok) return;
+      try {
+        var r = await api('DELETE', '/api/elements?all=1');
+        state.sel = {};
+        state.pageNo = 1;
+        toast((r && r.message) || '已清空', 'success');
+        await load();
+      } catch (e) { /* api 已提示 */ }
+    }
 
     searchEl.addEventListener('input', function () {
       state.q = searchEl.value;
+      state.pageNo = 1;
       paint();
     });
     pageSel.addEventListener('change', function () {
-      state.page = pageSel.value;
+      state.pageFilter = pageSel.value;
+      state.pageNo = 1;
       paint();
     });
 

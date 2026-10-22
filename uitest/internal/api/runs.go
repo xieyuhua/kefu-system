@@ -307,3 +307,67 @@ func (s *Server) deleteElement(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
+
+// batchDeleteRuns POST /api/runs/batch-delete
+func (s *Server) batchDeleteRuns(w http.ResponseWriter, r *http.Request) {
+	var req idsReq
+	if err := readJSON(r, &req); err != nil {
+		writeErr(w, http.StatusBadRequest, "请求体不是合法 JSON: "+err.Error())
+		return
+	}
+	if len(req.IDs) == 0 {
+		writeErr(w, http.StatusBadRequest, "没有指定要删除的运行记录")
+		return
+	}
+	n := s.DB.DeleteRuns(req.IDs)
+	recs, runs := s.DB.Counts()
+	writeJSON(w, http.StatusOK, map[string]any{
+		"deleted": n, "recordings": recs, "runs": runs,
+		"message": fmt.Sprintf("已删除 %d 条运行记录", n),
+	})
+}
+
+// clearRuns DELETE /api/runs?all=1
+func (s *Server) clearRuns(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Query().Get("all") != "1" {
+		writeErr(w, http.StatusBadRequest, "清空需要显式确认：DELETE /api/runs?all=1")
+		return
+	}
+	n := s.DB.DeleteAllRuns()
+	recs, runs := s.DB.Counts()
+	writeJSON(w, http.StatusOK, map[string]any{
+		"deleted": n, "recordings": recs, "runs": runs,
+		"message": fmt.Sprintf("已清空 %d 条运行记录（录制保留）", n),
+	})
+}
+
+// batchDeleteElements POST /api/elements/batch-delete
+func (s *Server) batchDeleteElements(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Keys []string `json:"keys"`
+	}
+	if err := readJSON(r, &req); err != nil {
+		writeErr(w, http.StatusBadRequest, "请求体不是合法 JSON: "+err.Error())
+		return
+	}
+	if len(req.Keys) == 0 {
+		writeErr(w, http.StatusBadRequest, "没有指定要删除的元素")
+		return
+	}
+	n := s.DB.DeleteElements(req.Keys)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"deleted": n, "message": fmt.Sprintf("已删除 %d 个元素绑定", n),
+	})
+}
+
+// clearElements DELETE /api/elements?all=1
+func (s *Server) clearElements(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Query().Get("all") != "1" {
+		writeErr(w, http.StatusBadRequest, "清空需要显式确认：DELETE /api/elements?all=1")
+		return
+	}
+	n := s.DB.DeleteAllElements()
+	writeJSON(w, http.StatusOK, map[string]any{
+		"deleted": n, "message": fmt.Sprintf("已清空 %d 个元素绑定", n),
+	})
+}

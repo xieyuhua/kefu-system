@@ -215,7 +215,57 @@ Field：`{"key","label","kind","value","note"}`。
 |---|---|---|---|
 | GET | `/api/settings` | – | `{ai:{base_url,model,has_key,key_hint,timeout_sec},browser:{executable,headless,step_delay_ms,action_timeout_ms,no_sandbox,debug_url,kernel_dir,extra_args,resolved_flags},server:{port,version}}` |
 | PUT | `/api/settings` | 同上（`ai.api_key` 只写不读） | 同上 |
-| GET | `/api/health` | – | `{ok:true,version,recordings,runs,browser_running}` |
+| GET | `/api/health` | – | `{ok:true,version,recordings,runs,browser_running,assist:{auto_data_key,stable_id_hint,auto_rebind_uid}}` |
+
+`assist` 三项辅助开关（缺省全开）：
+
+```json
+{ "assist": { "auto_data_key": true, "stable_id_hint": true, "auto_rebind_uid": true } }
+```
+
+`browser.after_run`（运行结束后怎么处理内置浏览器，缺省 `auto`）：
+
+| 取值 | 行为 |
+|---|---|
+| `auto` | 通过就关标签页；失败/取消保留现场 |
+| `close_tab` | 每次运行后关闭本次标签页（浏览器继续运行） |
+| `close_browser` | 每次运行后关闭整个内置浏览器 |
+| `keep` | 都不关，保留现场 |
+
+### 2.7 批量删除 / 清空
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| POST | `/api/recordings/batch-delete` | body `{"ids":["rec_a","rec_b"]}`；**连带删除**这些录制的运行记录与截图。返回 `{deleted,recordings,runs,message}` |
+| DELETE | `/api/recordings?all=1` | 清空全部录制（连带全部运行记录）。不带 `all=1` → 400 |
+| POST | `/api/runs/batch-delete` | body `{"ids":[...]}`；只删运行记录与截图，录制保留 |
+| DELETE | `/api/runs?all=1` | 清空全部运行记录（录制保留）。不带 `all=1` → 400 |
+| POST | `/api/elements/batch-delete` | body `{"keys":["ut_1a2b3c4d"]}` |
+| DELETE | `/api/elements?all=1` | 清空元素绑定。不带 `all=1` → 400 |
+
+> 清空类接口强制要求 `all=1`，防止脚本或误操作一键清空；误删后可用数据快照恢复（见 2.8）。
+
+### 2.8 辅助能力：一键刷新定位 / 数据快照
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| POST | `/api/recordings/{id}/rebind` | 打开起始页，把每步定位重算成 `data-uitest-id` 并写回（**语义优先**，旧定位降级为兜底） |
+| GET | `/api/backups` | 列出 `data/backups/` 里的数据快照（名称/时间/录制数/运行数/大小） |
+| POST | `/api/backups/{name}/restore` | 用某份快照覆盖当前数据（覆盖前自动再存一份，可回退） |
+
+`POST /api/recordings/{id}/rebind` 返回：
+
+```json
+{
+  "total": 7, "updated": 5, "failed": 0, "key_fixed": 0, "duration_ms": 676,
+  "message": "共 7 步：刷新 5 个定位，0 个失败，修正 0 个字段名",
+  "steps": [
+    {"index": 2, "action": "input", "from": "css=input.el-input__inner",
+     "to": "uid=ut_1932b0b6", "ok": true,
+     "detail": "原定位已失效，靠 near=商品名称>>input:not([type=hidden]) 命中"}
+  ]
+}
+```
 
 ---
 
