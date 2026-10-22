@@ -24,7 +24,8 @@
           <span class="topbar-stat">待接待 {{ chat.stats.pending }}</span>
           <span class="topbar-stat">进行中 {{ chat.stats.open }}</span>
           <span class="topbar-stat">未读 {{ chat.stats.unread }}</span>
-          <DemoPanel />
+          <!-- 模拟新咨询：演示/自测用，仅管理员可见 -->
+          <DemoPanel v-if="auth.isAdmin" />
           <el-button size="small" title="自动回复规则（团队共用）" @click="autoReplyOpen = true">
             🤖 自动回复
           </el-button>
@@ -47,7 +48,7 @@
         <!-- 移动端：未读角标 + 更多菜单（功能与 PC 端一致） -->
         <template v-else>
           <span v-if="chat.stats.unread > 0" class="mobile-unread">未读 {{ chat.stats.unread }}</span>
-          <DemoPanel compact />
+          <DemoPanel v-if="auth.isAdmin" compact />
           <el-dropdown trigger="click" @command="onMobileMenu">
             <el-button size="small" :icon="MoreFilled" circle title="更多" />
             <template #dropdown>

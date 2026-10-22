@@ -12,6 +12,11 @@ import (
 // ---------------- 演示入口 ----------------
 
 func (h *Handler) DemoIncomingHandler(c *gin.Context) {
+	// 模拟新咨询仅用于演示/自测，只允许管理员调用（子账号工作台不显示该入口）
+	if !authctx.IsAdmin(c) {
+		response.Default().Forbid(c, "仅管理员可模拟新咨询")
+		return
+	}
 	var req dto.DemoIncomingRequest
 	if !httpx.Default().BindJSON(c, &req) {
 		return
