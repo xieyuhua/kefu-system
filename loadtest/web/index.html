@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>HTTP 压测台 · AI 编排</title>
+<link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+
+<header>
+  <h1>HTTP 压测台</h1>
+  <span class="sub" id="targetHint">给一个地址，AI 帮你整理接口、你勾选、AI 读结果出整改方案</span>
+  <span class="spacer"></span>
+  <span class="pill" id="aiPill"><i class="dot"></i><span id="aiText">AI 未配置</span></span>
+  <button class="tiny" id="btnAISetup">AI 设置</button>
+  <span class="pill" id="statusPill"><i class="dot"></i><span id="statusText">空闲</span></span>
+</header>
+
+<main>
+  <!-- ================= 左：三步流程 ================= -->
+  <section>
+    <div class="card">
+      <h2>① 目标地址 → 接口清单</h2>
+      <label class="field">
+        <span>目标地址</span>
+        <input type="text" id="target" placeholder="http://127.0.0.1:8480" />
+      </label>
+      <div class="row">
+        <label class="field">
+          <span>访客渠道</span>
+          <input type="text" id="channel" list="channels" value="web" />
+          <datalist id="channels">
+            <option value="web"></option><option value="wechat"></option>
+            <option value="wecom"></option><option value="app"></option>
+          </datalist>
+        </label>
+        <label class="field">
+          <span>参考并发（给 AI 建议用）</span>
+          <input type="number" id="initConc" value="10" min="1" max="500" />
+        </label>
+      </div>
+      <div class="actions">
+        <button class="primary" id="btnDiscover">让 AI 分析接口</button>
+      </div>
+      <p class="hint">只做只读勘察：探活 → 找 OpenAPI 契约 → 识别已知接口 → 扫页面脚本 → 交给 AI 整理成可勾选清单。</p>
+
+      <div id="factsWrap" style="display:none">
+        <div class="facts-title">勘察记录 <span class="tag" id="srcTag">—</span> <span class="hint" id="discoverTime"></span></div>
+        <div class="facts" id="facts"></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>② 勾选要压的接口</h2>
+      <div id="candEmpty" class="empty">先点上面的「让 AI 分析接口」，这里会出现可勾选的接口清单。</div>
+
+      <div id="candWrap" style="display:none">
+        <table class="cand">
+          <thead>
+            <tr>
+              <th style="width:26px"></th>
+              <th>接口</th>
+              <th style="width:66px">并发</th>
+              <th style="width:76px">间隔ms</th>
+              <th style="width:62px"></th>
+            </tr>
+          </thead>
+          <tbody id="candBody"></tbody>
+        </table>
+        <div class="cand-tools">
+          <button class="tiny" id="btnSelRec">全选推荐</button>
+          <button class="tiny" id="btnSelNone">全不选</button>
+          <span class="hint" id="selHint">已选 0 个接口 · 总并发 0</span>
+        </div>
+      </div>
+
+      <div class="row-3" style="margin-top:14px">
+        <label class="field">
+          <span>运行时长（秒）</span>
+          <input type="number" id="duration" value="30" min="1" step="5" />
+        </label>
+        <label class="field">
+          <span>爬坡（毫秒）</span>
+          <input type="number" id="rampup" value="0" min="0" step="500" />
+        </label>
+        <label class="field">
+          <span>超时（毫秒）</span>
+          <input type="number" id="timeout" value="15000" min="200" step="500" />
+        </label>
+      </div>
+      <div class="row">
+        <label class="field">
+          <span>登录 Token（给需要鉴权的接口）</span>
+          <input type="text" id="token" placeholder="Bearer Token，可留空" />
+        </label>
+        <label class="field">
+          <span>客户 ID 前缀</span>
+          <input type="text" id="uidPrefix" value="lt_" />
+        </label>
+      </div>
+      <label class="switch"><input type="checkbox" id="useWs" /> 同时建立访客 WebSocket 长连接（对需要初始化的接口生效）</label>
+      <label class="switch"><input type="checkbox" id="keepAlive" checked /> HTTP 长连接复用</label>
+
+      <div class="actions">
+        <button class="primary" id="btnStart" disabled>开始压测</button>
+        <button class="danger" id="btnStop" disabled>停止</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>报告</h2>
+      <div class="actions">
+        <button class="ghost" id="btnJson" disabled>JSON 报告</button>
+        <button class="ghost" id="btnCsv" disabled>CSV 曲线</button>
+        <button class="ghost" id="btnMd" disabled>整改建议 .md</button>
+      </div>
+      <p class="hint" id="reportHint">压测结束自动保存到 reports/ 目录。</p>
+    </div>
+  </section>
+
+  <!-- ================= 右：看板 ================= -->
+  <section>
+    <div class="card">
+      <h2>③ 实时指标</h2>
+      <div class="metrics">
+        <div class="metric accent"><div class="k">发起请求</div><div class="v" id="mSent">0</div></div>
+        <div class="metric ok"><div class="k">成功</div><div class="v" id="mOk">0</div></div>
+        <div class="metric bad"><div class="k">失败</div><div class="v" id="mFailed">0</div></div>
+        <div class="metric"><div class="k">失败率</div><div class="v" id="mFailRate">0.00<small>%</small></div></div>
+        <div class="metric accent"><div class="k">当前 RPS</div><div class="v" id="mRps">0</div></div>
+        <div class="metric"><div class="k">平均 RPS</div><div class="v" id="mAvgRps">0</div></div>
+      </div>
+      <div class="latency">
+        <div><span class="k">平均</span><span class="v" id="lAvg">0 ms</span></div>
+        <div><span class="k">P50</span><span class="v" id="lP50">0 ms</span></div>
+        <div><span class="k">P90</span><span class="v" id="lP90">0 ms</span></div>
+        <div><span class="k">P95</span><span class="v" id="lP95">0 ms</span></div>
+        <div><span class="k">P99</span><span class="v" id="lP99">0 ms</span></div>
+        <div><span class="k">最大</span><span class="v" id="lMax">0 ms</span></div>
+      </div>
+      <div class="banner" id="failBanner" style="display:none"></div>
+      <div class="progress"><i id="bar"></i></div>
+      <p class="hint" id="progressHint">未开始</p>
+    </div>
+
+    <div class="card" id="cardScen" style="display:none">
+      <h2>分接口表现</h2>
+      <table class="scen">
+        <thead>
+          <tr><th>接口</th><th style="width:70px">并发</th><th style="width:74px">发起</th><th style="width:82px">失败率</th><th style="width:82px">平均</th><th style="width:78px">P95</th></tr>
+        </thead>
+        <tbody id="scenBody"></tbody>
+      </table>
+    </div>
+
+    <div class="card">
+      <h2>实时日志
+        <span class="h2-tools">
+          <label class="mini"><input type="checkbox" id="logToggle" checked /> 实时查看</label>
+          <label class="mini"><input type="checkbox" id="logAuto" checked /> 自动滚动</label>
+          <button class="tiny" id="logClear">清空</button>
+        </span>
+      </h2>
+      <div class="log" id="logBox"><div class="log-line info"><span class="t">--:--:--</span><span class="m">等待操作…</span></div></div>
+    </div>
+
+    <div class="card">
+      <h2>吞吐曲线（每秒）
+        <span class="h2-tools"><label class="mini"><input type="checkbox" id="chartSmooth" checked /> 平滑曲线</label></span>
+      </h2>
+      <div class="chart-wrap"><canvas id="chartTps" height="150"></canvas></div>
+      <div class="legend"><span class="l-sent">发起</span><span class="l-ok">成功</span><span class="l-fail">失败</span></div>
+    </div>
+
+    <div class="card">
+      <h2>响应延迟曲线（每秒平均）</h2>
+      <div class="chart-wrap"><canvas id="chartLat" height="150"></canvas></div>
+      <div class="legend"><span class="l-lat">平均延迟 ms</span></div>
+    </div>
+
+    <div class="card" id="cardAdvice">
+      <h2>④ AI 分析与整改方案
+        <span class="h2-tools">
+          <span class="tag" id="adviceSrc">未生成</span>
+          <button class="tiny" id="btnAdvise" disabled>分析这轮结果</button>
+        </span>
+      </h2>
+      <div class="md" id="adviceBox"><div class="empty">压测结束后点「分析这轮结果」，会给出瓶颈定位 + 按优先级排的整改优化方案。</div></div>
+    </div>
+
+    <div class="card">
+      <h2>错误分布</h2>
+      <table>
+        <thead><tr><th style="width:52%">类型 / 详情</th><th style="width:14%">次数</th><th>占比</th></tr></thead>
+        <tbody id="errBody"><tr><td colspan="3" class="empty">暂无错误</td></tr></tbody>
+      </table>
+    </div>
+
+    <div class="card">
+      <h2>最近错误样本</h2>
+      <table>
+        <thead><tr><th style="width:68px">时间</th><th style="width:56px">并发</th><th style="width:110px">类型</th><th>详情</th></tr></thead>
+        <tbody id="sampleBody"><tr><td colspan="4" class="empty">暂无错误</td></tr></tbody>
+      </table>
+    </div>
+  </section>
+</main>
+
+<dialog id="aiDialog">
+  <form method="dialog" class="dialog-body">
+    <h3>AI 设置</h3>
+    <p class="hint">任意 OpenAI 兼容接口都行（DeepSeek / 通义 / Moonshot / OpenAI）。留空则使用内置规则引擎，功能照常可用。</p>
+    <label class="field"><span>base_url</span><input type="text" id="aiBase" placeholder="https://api.deepseek.com/v1" /></label>
+    <div class="row">
+      <label class="field"><span>model</span><input type="text" id="aiModel" placeholder="deepseek-chat" /></label>
+      <label class="field"><span>超时（秒）</span><input type="number" id="aiTimeout" value="90" min="10" /></label>
+    </div>
+    <label class="field"><span>api_key</span><input type="password" id="aiKey" placeholder="sk-..." /></label>
+    <p class="hint" id="aiKeyHint"></p>
+    <div class="actions">
+      <button class="primary" value="save" id="btnAISave">保存</button>
+      <button class="ghost" value="cancel">取消</button>
+    </div>
+  </form>
+</dialog>
+
+<div class="toast" id="toast"></div>
+<script src="app.js"></script>
+</body>
+</html>
