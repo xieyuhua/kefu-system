@@ -261,6 +261,12 @@ type BrowserSettings struct {
 	ResolvedFlags []string `json:"resolved_flags,omitempty"`
 	// ProfileDir 探测成功后固化下来的 user-data-dir（记住登录态、下次直接接管实例）。
 	ProfileDir string `json:"profile_dir,omitempty"`
+	// AfterRun 一次运行结束后如何处理内置浏览器：
+	//   auto          通过就关掉本次标签页，失败则保留现场（默认，推荐）
+	//   close_tab     每次都关掉本次标签页（浏览器进程继续运行）
+	//   close_browser 每次都把整个内置浏览器关掉
+	//   keep          都不关，保留现场随时查看
+	AfterRun string `json:"after_run"`
 }
 
 // DefaultSettings 出厂默认值。
@@ -270,6 +276,7 @@ func DefaultSettings() Settings {
 		Browser: BrowserSettings{
 			StepDelayMS:     260,
 			ActionTimeoutMS: 15000,
+			AfterRun:        "auto",
 		},
 		// 三项辅助默认全开：都是"让定位/数据更清楚"的增益能力，关掉也不会报错
 		Assist: AssistSettings{AutoDataKey: true, StableIDHint: true, AutoRebindUID: true},

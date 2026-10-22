@@ -119,7 +119,8 @@ func (r *Runner) execute(ctx context.Context, runID string) {
 		r.finish(runID, "failed", "启动内置浏览器失败："+err.Error())
 		return
 	}
-	defer page.Close(context.Background())
+	// 运行结束后怎么处理浏览器由设置决定（auto / close_tab / close_browser / keep）
+	defer r.settleBrowser(runID, page)
 	r.logf(runID, "info", 0, "内置浏览器已就绪，标签页 targetId=%s", page.TargetID)
 
 	startURL := strings.TrimSpace(rec.StartURL)
@@ -575,6 +576,48 @@ func semanticLocator(t model.Target) model.Locator {
 	return model.Locator{}
 }
 
+// settleBrowser 运行结束后按设置收尾浏览器。
+//
+//	keep          不关，保留现场（失败时方便直接看页面）
+//	close_tab     关掉本次标签页，浏览器进程继续
+//	close_browser 关掉整个内置浏览器
+//	auto（默认）  通过就关标签页，未通过保留现场
+func (r *Runner) settleBrowser(runID string, page *browser.Page) {
+	if page == nil {
+		return
+	}
+	mode := strings.TrimSpace(r.store.Settings().Browser.AfterRun)
+	if mode == "" {
+		mode = "auto"
+	}
+	status := ""
+	if run, err := r.store.GetRun(runID); err == nil {
+		status = run.Status
+	}
+	closeTab := func() { page.Close(context.Background()) }
+	switch mode {
+	case "keep":
+		r.logf(runID, "info", 0, "按设置保留浏览器现场：标签页留在当前页面，可直接查看")
+	case "close_browser":
+		closeTab()
+		if err := r.br.Close(); err != nil {
+			r.logf(runID, "warn", 0, "按设置关闭内置浏览器时出错：%s", err.Error())
+		} else {
+			r.logf(runID, "info", 0, "按设置已关闭内置浏览器")
+		}
+	case "close_tab":
+		closeTab()
+		r.logf(runID, "info", 0, "按设置已关闭本次标签页（内置浏览器继续运行）")
+	default: // auto
+		if status == "passed" {
+			closeTab()
+			r.logf(runID, "info", 0, "执行通过，已关闭本次标签页（内置浏览器继续运行）")
+		} else {
+			r.logf(runID, "warn", 0, "执行未通过，已保留现场：标签页停在失败页面，可直接查看")
+		}
+	}
+}
+
 // rebindStep 把某一步的定位换成新的 uid，旧定位降级为兜底（顺序保持，最多留 6 条）。
 func (r *Runner) rebindStep(step model.Step, newUID string) error {
 	if newUID == "" || newUID == step.Locator.Value {
@@ -665,7 +708,8 @@ func (r *Runner) Rebind(ctx context.Context, recordingID string) (RebindReport, 
 	if err != nil {
 		return rep, fmt.Errorf("启动内置浏览器失败：%w", err)
 	}
-	defer page.Close(context.Background())
+	// 运行结束后怎么处理浏览器由设置决定（auto / close_tab / close_browser / keep）
+	defer page.Close(context.Background()) // 批量刷新定位是内部操作，用完即关
 
 	navCtx, cancelNav := context.WithTimeout(ctx, 60*time.Second)
 	navErr := page.Navigate(navCtx, startURL)

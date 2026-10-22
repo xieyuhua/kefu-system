@@ -71,6 +71,7 @@ type putSettingsReq struct {
 		DebugURL        *string   `json:"debug_url"`
 		KernelDir       *string   `json:"kernel_dir"`
 		ExtraArgs       *[]string `json:"extra_args"`
+		AfterRun        *string   `json:"after_run"`
 	} `json:"browser"`
 	Assist *struct {
 		AutoDataKey   *bool `json:"auto_data_key"`
@@ -123,6 +124,16 @@ func (s *Server) putSettings(w http.ResponseWriter, r *http.Request) {
 		}
 		if req.Browser.KernelDir != nil {
 			st.Browser.KernelDir = strings.TrimSpace(*req.Browser.KernelDir)
+		}
+		if req.Browser.AfterRun != nil {
+			v := strings.TrimSpace(*req.Browser.AfterRun)
+			switch v {
+			case "auto", "close_tab", "close_browser", "keep":
+				st.Browser.AfterRun = v
+			case "":
+				// 传空表示恢复默认
+				st.Browser.AfterRun = "auto"
+			}
 		}
 		if req.Browser.ExtraArgs != nil {
 			args := make([]string, 0, len(*req.Browser.ExtraArgs))

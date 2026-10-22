@@ -524,8 +524,13 @@
       renderElements(app);
     } else if (page === 'settings') {
       setActiveNav('settings');
-      title = '设置';
-      renderSettings(app);
+      // 设置拆成独立子菜单页：#/settings/ai|browser|assist|backups|help
+      var allowed = ['ai', 'browser', 'assist', 'backups', 'help'];
+      if (!id) { location.hash = '#/settings/ai'; return; }
+      var sec = id.toLowerCase();
+      if (allowed.indexOf(sec) < 0) { location.hash = '#/settings/ai'; return; }
+      title = '设置 · ' + settingsSectionTitle(sec);
+      renderSettings(app, sec);
     } else {
       setActiveNav('');
       title = '页面不存在';
@@ -2664,39 +2669,70 @@
    * 6.6 设置  #/settings
    * ====================================================================== */
 
-  function renderSettings(app) {
+  /* ======================================================================
+   * 6.4 设置（拆成 5 个独立子菜单页）
+   *   #/settings/ai       AI 数据生成
+   *   #/settings/browser  内置浏览器
+   *   #/settings/assist   辅助功能
+   *   #/settings/backups  数据快照
+   *   #/settings/help     使用说明
+   * ====================================================================== */
+
+  var SETTINGS_SECTIONS = [
+    { key: 'ai', label: 'AI 数据生成', desc: 'OpenAI 兼容接口、模型与超时' },
+    { key: 'browser', label: '内置浏览器', desc: '内核、启动参数与诊断' },
+    { key: 'assist', label: '辅助功能', desc: '字段名、锚点提醒、uid 自动刷新' },
+    { key: 'backups', label: '数据快照', desc: '备份列表与一键恢复' },
+    { key: 'help', label: '使用说明', desc: '四步上手' }
+  ];
+
+  function settingsSectionTitle(key) {
+    for (var i = 0; i < SETTINGS_SECTIONS.length; i++) {
+      if (SETTINGS_SECTIONS[i].key === key) return SETTINGS_SECTIONS[i].label;
+    }
+    return '设置';
+  }
+
+  function renderSettings(app, section) {
     var root = pageRoot(app);
+    var sec = section || 'ai';
     var state = { data: null, backups: null };
+    var bodyEl = null;
+
+    // 子菜单（每个设置分区一个独立页面/独立菜单项）
+    var tabs = SETTINGS_SECTIONS.map(function (s) {
+      return '<a class="settings-tab' + (s.key === sec ? ' active' : '') + '" href="#/settings/' + s.key + '" title="' + esc(s.desc) + '">' +
+        esc(s.label) + '</a>';
+    }).join('');
 
     root.innerHTML =
       '<div class="page-head">' +
-      '<div><h1>设置</h1><p class="sub">AI 数据生成与内置浏览器参数，保存后立即生效</p></div>' +
-      '<div class="head-actions"><button class="btn" data-act="reload">重新读取</button></div>' +
+      '<div><h1>设置<span class="page-head-sec">· ' + esc(settingsSectionTitle(sec)) + '</span></h1>' +
+      '<p class="sub">' + esc((SETTINGS_SECTIONS.filter(function (x) { return x.key === sec; })[0] || {}).desc || '') + '</p></div>' +
+      '<div class="head-actions">' +
+      (sec === 'help' ? '' : '<button class="btn" data-act="reload">重新读取</button>') +
       '</div>' +
-      '<div id="settings-body">' + loadingCard() + '</div>' +
-      '<section class="card">' +
-      '<div class="card-head"><h2>怎么用（4 步）</h2></div>' +
-      '<div class="card-body">' +
-      '<ol class="steps-list">' +
-      '<li><b>装插件录制</b>：浏览器加载录制插件（MV3），填录制名称后开始操作业务页面，步骤与元素会自动上报到服务端。</li>' +
-      '<li><b>生成数据</b>：进入录制详情，在「数据准备」里写一句指令（如「价格 99-299」），点「AI 生成测试数据」；没配大模型会用内置规则生成。</li>' +
-      '<li><b>执行</b>：确认字段覆盖率后点「执行测试」，服务端用内置浏览器逐步执行（多级定位 + 自愈）。</li>' +
-      '<li><b>看运行详情</b>：在运行详情里看逐步结果、实际使用定位、截图与实时日志；有自愈命中可一键写回录制。</li>' +
-      '</ol>' +
-      '</div></section>';
+      '</div>' +
+      '<nav class="settings-tabs">' + tabs + '</nav>' +
+      '<div id="settings-body">' + loadingCard() + '</div>';
 
-    var bodyEl = $('#settings-body', root);
+    bodyEl = $('#settings-body', root);
 
-    function settingsFormHtml(s) {
+    function saveBarHtml() {
+      return '<section class="card"><div class="card-body head-actions">' +
+        '<button class="btn btn--primary" data-act="save">保存本页设置</button>' +
+        '<button class="btn" data-act="reload">取消并重新读取</button>' +
+        '</div></section>';
+    }
+
+    /* ---- AI 数据生成 ---- */
+    function aiCardHtml(s) {
       var ai = s.ai || {};
-      var br = s.browser || {};
       var sv = s.server || {};
       var keyBadge = ai.has_key
         ? '<span class="badge badge--ok"><i class="dot"></i>API Key 已配置</span>'
         : '<span class="badge badge--draft"><i class="dot"></i>未配置 API Key</span>';
-
-      return '<div class="settings-grid">' +
-        '<section class="card">' +
+      return '<section class="card">' +
         '<div class="card-head"><h2>AI 数据生成</h2>' + keyBadge + '</div>' +
         '<div class="card-body">' +
         field('base_url',
@@ -2712,10 +2748,16 @@
           '<input class="input input--mono" id="s-timeout" type="number" min="1" step="1" value="' +
           esc(ai.timeout_sec === null || ai.timeout_sec === undefined ? '' : ai.timeout_sec) + '" placeholder="30">',
           '调用大模型的超时时间（秒）。') +
+        '<div class="alert alert--info">没配置大模型也能用：生成测试数据时会自动改用内置规则（离线可用）。</div>' +
         (sv.port ? '<div class="field-hint">服务端端口：<span class="mono">' + esc(sv.port) + '</span></div>' : '') +
         '</div></section>' +
+        saveBarHtml();
+    }
 
-        '<section class="card">' +
+    /* ---- 内置浏览器 ---- */
+    function browserCardHtml(s) {
+      var br = s.browser || {};
+      return '<section class="card">' +
         '<div class="card-head"><h2>内置浏览器</h2></div>' +
         '<div class="card-body">' +
         field('executable',
@@ -2738,6 +2780,15 @@
         field('debug_url',
           '<input class="input input--mono" id="s-debug-url" value="' + esc(br.debug_url || '') + '" placeholder="留空 = 由服务端自己拉起浏览器；例：http://127.0.0.1:9400">',
           '连接一个已在运行的浏览器（先手工执行 msedge --remote-debugging-port=9400），服务端不再自己启动浏览器。') +
+        '<div class="field"><label for="s-after-run">after_run（运行结束后）</label>' +
+        '<select class="input" id="s-after-run">' +
+        '<option value="auto"' + ((br.after_run || 'auto') === 'auto' ? ' selected' : '') + '>auto：通过就关标签页，失败保留现场（推荐）</option>' +
+        '<option value="close_tab"' + (br.after_run === 'close_tab' ? ' selected' : '') + '>close_tab：每次都关掉本次标签页</option>' +
+        '<option value="close_browser"' + (br.after_run === 'close_browser' ? ' selected' : '') + '>close_browser：每次都关掉整个内置浏览器</option>' +
+        '<option value="keep"' + (br.after_run === 'keep' ? ' selected' : '') + '>keep：都不关，保留现场随时查看</option>' +
+        '</select>' +
+        '<span class="field-hint">运行结束后怎么处理后台浏览器。选 auto 时：执行通过就关掉本次标签页（浏览器继续跑，下次开页更快），' +
+        '执行失败/取消则把标签页停在失败页面，方便你直接看现场。</span></div>' +
         '<div class="card-sub">' +
         '<button class="btn btn--sm" data-act="diagnose">诊断浏览器</button>' +
         '<span class="field-hint">真实打开一个页面，检查渲染进程、内核路径与启动参数</span>' +
@@ -2747,18 +2798,11 @@
         '<label class="check-line"><input type="checkbox" id="s-nosandbox"' + (br.no_sandbox ? ' checked' : '') + '>' +
         '<span>启动时追加 --no-sandbox（渲染进程一直崩溃时再打开）</span></label></div>' +
         '</div></section>' +
-        assistFormHtml(s) +
-        '</div>' +
-        backupCardHtml() +
-
-        '<section class="card"><div class="card-body head-actions">' +
-        '<button class="btn btn--primary" data-act="save">保存设置</button>' +
-        '<button class="btn" data-act="reload">取消并重新读取</button>' +
-        '</div></section>';
+        saveBarHtml();
     }
 
-    /** 辅助功能开关：三项都能单独关掉，关掉不影响主流程 */
-    function assistFormHtml(s) {
+    /* ---- 辅助功能 ---- */
+    function assistCardHtml(s) {
       var a = s.assist || {};
       function row(id, title, desc, on) {
         return '<div class="field">' +
@@ -2779,11 +2823,12 @@
         row('s-assist-rebind', '执行时自动刷新过期的 uid',
           '某一步的 uid 已过期、但靠兜底策略（标题/按钮文字/表格行）命中了元素时，自动把新 uid 写回录制。' +
           '关掉后只提示、不落盘。', a.auto_rebind_uid !== false) +
-        '</div></section>';
+        '</div></section>' +
+        saveBarHtml();
     }
 
-    /** 数据快照：每次启动都会留一份，误删/误改可以一键恢复 */
-    function backupCardHtml() {
+    /* ---- 数据快照 ---- */
+    function backupSectionHtml() {
       var items = state.backups;
       if (!items) {
         return '<section class="card"><div class="card-head"><h2>数据快照</h2></div>' +
@@ -2802,25 +2847,52 @@
         '<div class="card-head"><h2>数据快照</h2>' +
         '<div class="card-tools"><button class="btn btn--sm" data-act="reload-backups">刷新列表</button></div></div>' +
         '<div class="card-body">' +
-        '<div class="field-hint">服务端每次启动都会把 data/uitest.json 快照到 data/backups（保留最近 5 份）。' +
-        '恢复会用快照覆盖当前数据，覆盖前会先把当前状态再存一份，所以恢复错了也能退回。</div>' +
+        '<div class="field-hint">服务端每次启动都会把 <span class="mono">data/uitest.json</span> 快照到 ' +
+        '<span class="mono">data/backups/</span>（保留最近 5 份）。恢复会用快照覆盖当前数据，' +
+        '覆盖前会先把当前状态再存一份，所以恢复错了也能退回。</div>' +
         (items.length
-          ? '<div class="table-wrap"><table class="table"><thead><tr><th>文件</th><th>时间</th><th>内容</th><th>大小</th><th>操作</th></tr></thead><tbody>' + rows + '</tbody></table></div>'
+          ? '<div class="table-wrap" style="margin-top:12px"><table class="table"><thead><tr><th>文件</th><th>时间</th><th>内容</th><th>大小</th><th>操作</th></tr></thead><tbody>' + rows + '</tbody></table></div>'
           : '<div class="field-hint" style="margin-top:10px">还没有快照（重启一次服务端就会生成）。</div>') +
         '</div></section>';
     }
 
+    /* ---- 使用说明 ---- */
+    function helpHtml() {
+      return '<section class="card">' +
+        '<div class="card-head"><h2>四步上手</h2></div>' +
+        '<div class="card-body">' +
+        '<ol class="steps-list">' +
+        '<li><b>装插件录制</b>：浏览器加载录制插件（MV3），填录制名称后开始操作业务页面，步骤与元素会自动上报到服务端。</li>' +
+        '<li><b>生成数据</b>：进入录制详情，「数据准备」面板（默认悬浮）里写一句指令（如「价格 99-299」），点「AI 生成测试数据」；没配大模型会用内置规则生成。</li>' +
+        '<li><b>刷新定位（推荐）</b>：录制详情右上角「一键刷新定位」，把定位升级成稳定的 data-uitest-id 绑定 —— 业务页面以后重新打包也不会失效。</li>' +
+        '<li><b>执行 + 看日志</b>：点「执行测试」，在运行详情里看逐步结果、实际使用定位、截图与实时日志（悬浮窗可拖动）；有自愈命中可一键写回录制。</li>' +
+        '</ol>' +
+        '</div></section>';
+    }
+
+    function sectionHtml() {
+      var s = state.data || {};
+      if (sec === 'ai') return aiCardHtml(s);
+      if (sec === 'browser') return browserCardHtml(s);
+      if (sec === 'assist') return assistCardHtml(s);
+      if (sec === 'backups') return backupSectionHtml();
+      return helpHtml();
+    }
+
     function paint() {
+      if (sec === 'backups') { bodyEl.innerHTML = backupSectionHtml(); return; }
+      if (sec === 'help') { bodyEl.innerHTML = helpHtml(); return; }
       if (!state.data) { bodyEl.innerHTML = loadingCard(); return; }
-      bodyEl.innerHTML = settingsFormHtml(state.data);
+      bodyEl.innerHTML = sectionHtml();
     }
 
     async function load() {
+      if (sec === 'help') { paint(); return; }
       bodyEl.innerHTML = '<div class="card state-card"><span class="spinner"></span><span>加载中…</span></div>';
       try {
         state.data = await api('GET', '/api/settings');
         paint();
-        loadBackups();
+        if (sec === 'backups') loadBackups();
       } catch (e) {
         bodyEl.innerHTML = errorCard(e.message || '无法读取设置');
       }
@@ -2836,47 +2908,57 @@
       paint();
     }
 
-    async function save() {
-      var read = function (elId) {
-        var el = $('#' + elId, root);
-        return el ? String(el.value).trim() : '';
-      };
-      var readNum = function (elId, fallback) {
-        var v = read(elId);
-        if (v === '') return fallback;
-        var n = Number(v);
-        return isFinite(n) ? n : fallback;
-      };
+    function read(id) {
+      var el = $('#' + id, root);
+      return el ? String(el.value).trim() : '';
+    }
+    function readNum(id, fallback) {
+      var v = read(id);
+      if (v === '') return fallback;
+      var n = Number(v);
+      return isFinite(n) ? n : fallback;
+    }
+    function checked(id) {
+      var el = $('#' + id, root);
+      return !!(el && el.checked);
+    }
 
-      var payload = {
-        ai: {
+    async function save() {
+      var payload = {};
+      if (sec === 'ai') {
+        payload.ai = {
           base_url: read('s-base-url'),
           model: read('s-model'),
           timeout_sec: readNum('s-timeout', 0)
-        },
-        browser: {
+        };
+        var key = read('s-api-key');
+        if (key) payload.ai.api_key = key;   // 留空 → 不提交，保持原值
+      } else if (sec === 'browser') {
+        payload.browser = {
           executable: read('s-exec'),
-          headless: !!($('#s-headless', root) && $('#s-headless', root).checked),
+          headless: checked('s-headless'),
           step_delay_ms: readNum('s-step-delay', 0),
           action_timeout_ms: readNum('s-action-timeout', 0),
           debug_url: read('s-debug-url'),
           kernel_dir: read('s-kernel-dir'),
-          no_sandbox: !!($('#s-nosandbox', root) && $('#s-nosandbox', root).checked)
-        }
-      };
-      var apiKey = read('s-api-key');
-      if (apiKey) payload.ai.api_key = apiKey;   // 留空 → 不提交，保持原值
-      payload.assist = {
-        auto_data_key: !!($('#s-assist-datakey', root) && $('#s-assist-datakey', root).checked),
-        stable_id_hint: !!($('#s-assist-testid', root) && $('#s-assist-testid', root).checked),
-        auto_rebind_uid: !!($('#s-assist-rebind', root) && $('#s-assist-rebind', root).checked)
-      };
-
+          no_sandbox: checked('s-nosandbox'),
+          after_run: read('s-after-run') || 'auto'
+        };
+      } else if (sec === 'assist') {
+        payload.assist = {
+          auto_data_key: checked('s-assist-datakey'),
+          stable_id_hint: checked('s-assist-testid'),
+          auto_rebind_uid: checked('s-assist-rebind')
+        };
+      } else {
+        return;
+      }
       try {
         var res = await api('PUT', '/api/settings', payload);
-        if (res && res.ai) state.data = res;
-        toast('设置已保存', 'success');
+        if (res) state.data = res;
+        toast('已保存「' + settingsSectionTitle(sec) + '」', 'success');
         paint();
+        await refreshHealth();
       } catch (e) { /* api 已提示 */ }
     }
 
@@ -2903,7 +2985,7 @@
             toast((r && r.message) || '已恢复', 'success');
             await load();
             await refreshHealth();
-          } catch (e) { /* api 已提示 */ }
+          } catch (e2) { /* api 已提示 */ }
         });
         return;
       }

@@ -87,26 +87,45 @@ extension/
 
 ---
 
-## 四、元素稳定 ID 原理
+## 四、元素稳定 ID 原理（2.0 重建安全）
 
 每个录制到的元素都会写上一个属性：`data-uitest-id="ut_xxxxxxxx"`。
 
-1. **确定性算法**：`ut_<fnv1a32(语义指纹)>`，指纹只取 `tag / type / id / name / aria-label /
-   placeholder / label` 这类"业务上不太会变"的语义信息，**不含 DOM 层级、不含随机数、不含时间戳**。
-   - 页面改版只要语义没变，key 就不变；
-   - 页面刷新后重算结果完全一致；
-   - 插件录制时算一次，服务端执行时用**同一份 `uitest-keys.js`** 再算一次 → uid 定位永远命中。
-2. **多级兜底**：每个步骤的 `locator.fallbacks` 依次带上
-   `id` → `name` → `css`（唯一选择器）→ `text`（按钮类元素的可见文本，超过 40 字不采用）。
-   定位顺序：`uid` > `id` > `name` > `css` > `xpath` > `label`/`text`/`placeholder`。
-3. **自愈定位**：全部失败时，用录制时保存的元素指纹（`step.target`：tag/type/label/placeholder/
-   aria/文本）在页面上做相似度打分，唯一最高分且达到阈值才算命中，运行日志标记 `healed=true`；
-   之后可用 `POST /api/runs/{id}/heal` 把新定位回写到录制，越跑越稳。
+1. **确定性算法**：`ut_<fnv1a32(语义指纹)>`，指纹只取
+   `tag / type / 稳定id / 稳定name / aria-label / placeholder / label / 表单项标题 / 表格列名`
+   这类"业务上不太会变"的语义信息，**不含 DOM 层级、不含随机数、不含构建产物**：
+
+   | 会被过滤掉（每次打包都变） | 例子 |
+   |---|---|
+   | CSS Modules / scoped hash 类名 | `.product-card_1a2b3c`、`.css-9f8e7d`、`.sc-bdVaJa` |
+   | 作用域属性 | `data-v-7ba5bd90` |
+   | 组件库自动 id / name | `el-id-3812-12`、`:r1:`、`input-3`、`rc_select_7` |
+
+   页面重新打包只要**业务语义没变**（标题、按钮文字、列名还在），key 就不变；
+   同一页面里签名相同的元素会自动加 `_2/_3` 后缀去重，保证 key 唯一且跨构建顺序一致。
+
+2. **定位链（按"重建后是否还可靠"排序）**：
+   `uid` → `attr`(`data-testid`/`data-test`/`data-cy`) → `id`/`name`（仅稳定时）
+   → `label`(表单项标题) → `near`(标题 → 同一表单项里的控件)
+   → `role`(角色+按钮文字) → `cell`(表格行文字+按钮文字) → `text`
+   → `placeholder` → `css`（纯结构路径，不含 class） → `xpath`。
+
+   按钮类元素**只走** `cell`/`role`/`text`：按钮文字如果走 `label` 会被当成表单项标题，
+   进而抓到旁边的输入框。
+
+3. **自愈定位**：全部失败时用录制时保存的元素指纹（`step.target`：tag/type/label/placeholder/
+   aria/文本/表单项标题/列名/name/test_attr）在页面上打分，**唯一最高分且 ≥5 分**才命中，
+   运行日志标记 `healed=true`；可用 `POST /api/runs/{id}/heal` 把新定位回写录制。
+   另外「执行时自动刷新过期的 uid」打开后，靠兜底命中的新 uid 会自动写回。
+
 4. **元素库**：录制时顺手上报 `POST /api/elements/bind`（key = `data-uitest-id`），
-   控制台可以查看元素的命中次数、上次出现时间、是否失效。
+   控制台可查看命中次数、上次出现时间、是否失效。
 
----
-
+5. **和平台配合的推荐做法**：
+   - 关键元素让前端加 `data-testid`（控制台里被标红「缺 testid」的就是建议补的），
+     它会被当成仅次于 uid 的最高优先级；
+   - 录完在录制详情点一次「一键刷新定位」，把定位统一升级成 uid；
+   - 业务页面重新打包后跑一次 `go run ./cmd/scenarios -only 重新打包` 就能验证跨版本是否还命中。
 ## 五、常见问题（FAQ）
 
 **Q1：插件连不上服务端（圆点是红色）。**
