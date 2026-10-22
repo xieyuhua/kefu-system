@@ -13,8 +13,11 @@ package handler
 // → platform → pkg。本包不 import admin / agent 两端的任何包。
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -73,8 +76,9 @@ func (h *Handler) GuestInitHandler(c *gin.Context) {
 	}
 	uid := strings.TrimSpace(c.Query("uid"))
 	if uid == "" {
-		// 游客 ID 生成规则：visitor_ + IP + _ + 渠道类型 + _ + 年月日时分秒
-		uid = "visitor_" + c.ClientIP() + "_" + ch.Type + "_" + time.Now().Format("20060102150405")
+		// 游客 ID：visitor_ + 紧凑年月日时分秒(yyMMddHHmmss) + 4 位随机 hex。
+		// 不再拼 IP / 渠道（冗余且太长），随机尾号保证同秒并发不冲突。
+		uid = "visitor_" + time.Now().Format("060102150405") + randomHex(2)
 	}
 
 	// 找到或创建客户
@@ -290,4 +294,17 @@ func (h *Handler) GuestWSHandler(c *gin.Context) {
 
 	go client.WritePump()
 	go client.ReadPump()
+}
+
+// randomHex 返回 n 字节的随机十六进制串（长度 2n）。
+// 用于游客 ID 尾号，保证同秒并发访问不冲突；随机源失败时降级为纳秒时间戳的十六进制。
+func randomHex(n int) string {
+	if n <= 0 {
+		return ""
+	}
+	b := make([]byte, n)
+	if _, err := rand.Read(b); err == nil {
+		return hex.EncodeToString(b)
+	}
+	return strconv.FormatInt(time.Now().UnixNano(), 16)
 }

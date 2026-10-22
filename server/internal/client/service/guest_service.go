@@ -88,9 +88,9 @@ func (s *Service) EnsureGuestCustomer(tenantID uint, ch *model.Channel, uid, nic
 	nickname = strings.TrimSpace(nickname)
 	if nickname == "" {
 		// 昵称为空时的展示兜底：
-		// visitor_ 开头是游客 → 显示「游客_<ip>_<渠道>_<年月日时分秒>」；其余取 uid（业务侧用户标识）。
+		// visitor_ 开头是游客 → 生成短昵称「游客_<ip>_<时分秒>」；其余取 uid（业务侧用户标识）。
 		if strings.HasPrefix(uid, "visitor_") {
-			nickname = "游客_" + strings.TrimPrefix(uid, "visitor_")
+			nickname = visitorNickname(uid)
 		} else {
 			nickname = uid
 		}
@@ -107,6 +107,16 @@ func (s *Service) EnsureGuestCustomer(tenantID uint, ch *model.Channel, uid, nic
 	}
 	s.RecordCustomerIP(cu.ID, cu.IP)
 	return cu, nil
+}
+
+// visitorNickname 由游客 uid 生成短展示昵称。
+// uid 格式：visitor_<yyMMddHHmmss><随机4位> → 昵称「游客_<HHmmss>」（时分秒，够区分同时段游客且更短）。
+func visitorNickname(uid string) string {
+	rest := strings.TrimPrefix(uid, "visitor_")
+	if len(rest) >= 12 {
+		return "游客_" + rest[6:12]
+	}
+	return "游客_" + rest
 }
 
 // RecordCustomerIP 记录访客最新 IP 与归属城市。
