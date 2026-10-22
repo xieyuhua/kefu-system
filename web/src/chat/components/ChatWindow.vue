@@ -605,7 +605,8 @@ const searchList = computed<Message[]>(() => props.searchResults || [])
   }
 
   .title-name {
-    max-width: 26vw;
+    /* 移动端按钮已收窄，标题可以多显示几个字，减少「bg_17764838…」这种过度截断 */
+    max-width: 34vw;
     font-size: 14px;
   }
 
@@ -632,7 +633,9 @@ const searchList = computed<Message[]>(() => props.searchResults || [])
   }
 
   .chat-body {
-    padding: 10px 12px;
+    /* 顶部多留一点，第一条消息不会紧贴 header 显得被压住 */
+    padding: 12px 12px 10px;
+    scroll-padding-top: 12px;
   }
 }
 </style>

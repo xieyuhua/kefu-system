@@ -398,7 +398,29 @@ onBeforeUnmount(stopTicker)
   }
 
   .conv-item {
-    padding: 10px;
+    /* 移动端行略紧凑，一屏能多看一两条会话 */
+    padding: 9px 10px;
+    align-items: flex-start;
+  }
+
+  .conv-avatar {
+    /* 手机上头像与首行文字基线对齐，避免看起来「悬空」 */
+    margin-top: 1px;
+    width: 38px;
+    height: 38px;
+  }
+
+  .conv-name {
+    font-size: 15px;
+  }
+
+  .conv-time {
+    font-size: 11px;
+  }
+
+  .conv-msg {
+    font-size: 12.5px;
+    line-height: 1.45;
   }
 
   /* 窄屏：时间 / 未回复 / 未读数一行可能放不下，
@@ -660,7 +682,9 @@ onBeforeUnmount(stopTicker)
 
 .conv-msg {
   flex: 1;
+  min-width: 0;
   font-size: 12px;
+  line-height: 1.5;
   color: var(--kf-text-sub);
 }
 

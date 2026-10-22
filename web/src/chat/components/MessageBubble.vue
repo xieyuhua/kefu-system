@@ -291,4 +291,28 @@ onBeforeUnmount(() => {
     text-align: center;
   }
 }
+
+/* ---------------- 移动端适配 ---------------- */
+@media (max-width: 768px) {
+  /* 手机屏幕窄：气泡放宽到 78%，图片/二维码不至于被压得过小 */
+  .bubble-col {
+    max-width: 78%;
+  }
+
+  .bubble {
+    padding: 8px 10px;
+    font-size: 15px;
+    line-height: 1.5;
+  }
+
+  /* 媒体气泡本身不带内边距，宽度交给图片自己撑 */
+  .bubble:has(.media) {
+    padding: 2px;
+  }
+
+  .bubble-meta {
+    margin-bottom: 3px;
+    font-size: 11px;
+  }
+}
 </style>

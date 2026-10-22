@@ -107,7 +107,7 @@
       ref="areaRef"
       v-model="draft"
       class="input-area"
-      :placeholder="disabled ? '请选择会话后再发送消息' : '输入消息，Ctrl + Enter 发送'"
+      :placeholder="disabled ? '请选择会话后再发送消息' : inputPlaceholder"
       :disabled="disabled"
       @keydown.ctrl.enter.prevent="submit"
       @keydown.enter.exact.prevent="submit"
@@ -297,6 +297,14 @@ const uploading = ref(false)
 
 const canSend = computed(() => draft.value.trim().length > 0)
 
+/**
+ * 输入框占位文案：紧凑布局（移动端）不提示「Ctrl + Enter」——手机键盘没有这个组合键，
+ * 提示反而让人困惑；桌面端保留快捷键说明。
+ */
+const inputPlaceholder = computed(() =>
+  props.compact ? '输入消息…' : '输入消息，Ctrl + Enter 发送',
+)
+
 watch(
   () => props.conversationId,
   () => {
@@ -379,7 +387,9 @@ defineExpose({ focus, insert })
 .message-input {
   display: flex;
   flex-direction: column;
-  height: 172px;
+  /* 原来固定 172px，输入区留出大片空白；改为自适应高度 + 合理最小高度 */
+  height: auto;
+  min-height: 138px;
   background: #fff;
   border-top: 1px solid var(--kf-border);
 }
@@ -411,7 +421,8 @@ defineExpose({ focus, insert })
 
 .input-area {
   flex: 1;
-  padding: 8px 12px;
+  min-height: 64px;
+  padding: 10px 14px;
   border: none;
   outline: none;
   resize: none;
@@ -437,6 +448,35 @@ defineExpose({ focus, insert })
 .foot-hint {
   font-size: 12px;
   color: var(--kf-text-weak);
+}
+
+/* ---------------- 移动端适配 ---------------- */
+@media (max-width: 768px) {
+  .message-input {
+    min-height: 104px;
+  }
+
+  .toolbar {
+    padding: 2px 6px;
+  }
+
+  .input-area {
+    /* 手机上字号略大更好读、更好点，高度也更紧凑 */
+    min-height: 52px;
+    padding: 6px 12px;
+    font-size: 15px;
+  }
+
+  .input-foot {
+    padding: 2px 10px 8px;
+    /* 字数统计在移动端隐藏后，用 flex-end 让「发送」仍然靠右 */
+    justify-content: flex-end;
+  }
+
+  /* 移动端不显示字数统计，把空间让给发送按钮 */
+  .foot-hint {
+    display: none;
+  }
 }
 
 .emoji-grid {
