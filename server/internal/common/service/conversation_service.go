@@ -282,7 +282,9 @@ func (s *ConversationService) ClaimConversation(tenantID, id, agentID uint) (*dt
 	if m := s.lastSystemMessage(tenantID, c.ID); m != nil {
 		realtime.HubInstance().PublishToGuest(tenantID, c.ID, realtime.Event{Event: "message.new", Data: *m})
 	}
-	realtime.HubInstance().PublishToGuest(tenantID, c.ID, realtime.Event{Event: "conversation.updated", Data: vo})
+	// 广播给客服端（同渠道其他客服据此把自己的列表里这条会话移除）+ 用户端状态更新。
+	// 只发 PublishToGuest 的话，其他客服的工作台收不到事件，列表会一直挂着已被人领走的会话。
+	s.BroadcastConversation(tenantID, c.ID)
 	return &vo, nil
 }
 

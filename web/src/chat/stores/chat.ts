@@ -3,6 +3,7 @@ import { defineStore } from 'pinia'
 import { listChannels } from '@/shared/api/channels'
 import * as convApi from '@/shared/api/conversations'
 import * as msgApi from '@/shared/api/messages'
+import { useAuthStore } from '@/shared/stores/auth'
 import dayjs from 'dayjs'
 import type { Channel } from '@/shared/types'
 import type {
@@ -541,11 +542,36 @@ export const useChatStore = defineStore('chat', () => {
 
   /** WebSocket 收到会话新建/更新 */
   function onConversation(conversation: Conversation): void {
+    // 互斥接待：会话被其他客服领走后，它对本账号已不可见，必须从列表移除（而不是原地更新）。
+    // 同时按 external_id 移除该用户的其它渠道会话 —— 与后端「客户互斥」口径保持一致。
+    if (isHandledByOthers(conversation)) {
+      const ext = conversation.user?.external_id || ''
+      const doomed = conversations.value
+        .filter((c) => c.id === conversation.id || (ext !== '' && c.user?.external_id === ext))
+        .map((c) => c.id)
+      if (doomed.length) {
+        doomed.forEach((id) => removeConversation(id))
+        refreshStats()
+      }
+      return
+    }
     const prev = conversations.value.find((c) => c.id === conversation.id)
     upsertConversation(conversation)
     // 重复投递的同一条 conversation.updated（快照完全一样）→ 会话与统计都没变化，不再刷新
     if (prev && sameConversationSnapshot(prev, conversation)) return
     refreshStats()
+  }
+
+  /**
+   * 该会话是否已被「其他客服」接待（对当前账号不可见）。
+   * 管理员不受限制；agent_id = 0（待接待）或 = 自己时仍可见。
+   */
+  function isHandledByOthers(c: Conversation): boolean {
+    const auth = useAuthStore()
+    if (auth.isAdmin) return false
+    const agentId = c.agent?.id ?? 0
+    const mine = auth.user?.id ?? 0
+    return agentId !== 0 && agentId !== mine
   }
 
   /**
