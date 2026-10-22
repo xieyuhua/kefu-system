@@ -37,13 +37,24 @@
     </div>
 
     <div v-loading="loading" class="list-body kf-scroll">
-      <div
-        v-for="c in conversations"
-        :key="c.id"
-        class="conv-item"
-        :class="{ active: c.id === currentId }"
-        @click="emit('select', c)"
-      >
+      <div v-for="c in conversations" :key="c.id" class="conv-swipe">
+        <!-- 移动端左滑露出的删除按钮（桌面端用行内的删除图标） -->
+        <div class="conv-swipe__actions">
+          <button type="button" class="conv-swipe__del" @click.stop="onSwipeDelete(c)">
+            删除
+          </button>
+        </div>
+
+        <div
+          class="conv-item"
+          :class="{ active: c.id === currentId }"
+          :style="swipeStyle(c)"
+          @click="onSelect(c)"
+          @touchstart="onTouchStart(c, $event)"
+          @touchmove="onTouchMove(c, $event)"
+          @touchend="onTouchEnd"
+          @touchcancel="onTouchEnd"
+        >
         <div class="conv-avatar">
           <img v-if="c.user?.avatar" :src="c.user.avatar" alt="" />
           <span v-else>{{ (c.user?.nickname || '?').slice(0, 1) }}</span>
@@ -101,6 +112,7 @@
             </el-tooltip>
           </div>
         </div>
+        </div>
       </div>
 
       <el-empty v-if="!loading && !conversations.length" description="暂无会话" :image-size="72" />
@@ -152,6 +164,97 @@ const emit = defineEmits<{
 const keyword = ref('')
 
 watch(keyword, (val) => emit('update:keyword', val))
+
+/* ---------------- 移动端左滑删除 ---------------- */
+/** 左滑露出的删除按钮宽度（px） */
+const SWIPE_MAX = 76
+/** 当前滑开的会话 id（0 = 全部收起） */
+const swipeId = ref(0)
+/** 当前滑动位移（<= 0） */
+const swipeDx = ref(0)
+let touchStartX = 0
+let touchStartY = 0
+let touchBaseDx = 0
+let swipeLocked: '' | 'h' | 'v' = ''
+let swipeMoved = false
+
+function closeSwipe(): void {
+  swipeId.value = 0
+  swipeDx.value = 0
+  swipeLocked = ''
+  swipeMoved = false
+}
+
+/** 行内位移样式：只有当前滑开的行才发生位移，其余保持 0 */
+function swipeStyle(c: Conversation): Record<string, string> {
+  if (swipeId.value !== c.id || swipeDx.value === 0) return {}
+  return {
+    transform: `translateX(${swipeDx.value}px)`,
+    transition: swipeMoved ? 'none' : 'transform 0.18s ease',
+  }
+}
+
+function onTouchStart(c: Conversation, e: TouchEvent): void {
+  if (e.touches.length !== 1) return
+  const t = e.touches[0]
+  touchStartX = t.clientX
+  touchStartY = t.clientY
+  touchBaseDx = swipeId.value === c.id ? swipeDx.value : 0
+  swipeLocked = ''
+  swipeMoved = false
+}
+
+function onTouchMove(c: Conversation, e: TouchEvent): void {
+  if (e.touches.length !== 1) return
+  const t = e.touches[0]
+  const dx = t.clientX - touchStartX
+  const dy = t.clientY - touchStartY
+  // 首次移动先判定方向：横向才接管，纵向交还给列表滚动
+  if (swipeLocked === '') {
+    if (Math.abs(dx) < 8 && Math.abs(dy) < 8) return
+    swipeLocked = Math.abs(dx) > Math.abs(dy) ? 'h' : 'v'
+  }
+  if (swipeLocked !== 'h') return
+  // 左滑为负、右滑回弹，统一夹在 [-SWIPE_MAX, 0]
+  swipeId.value = c.id
+  swipeDx.value = Math.max(-SWIPE_MAX, Math.min(0, touchBaseDx + dx))
+  swipeMoved = true
+}
+
+function onTouchEnd(): void {
+  if (swipeLocked !== 'h' || !swipeMoved) {
+    swipeMoved = false
+    swipeLocked = ''
+    return
+  }
+  // 超过一半吸附打开，否则回弹收起
+  swipeDx.value = swipeDx.value < -SWIPE_MAX / 2 ? -SWIPE_MAX : 0
+  if (swipeDx.value === 0) swipeId.value = 0
+  swipeMoved = false
+  swipeLocked = ''
+}
+
+/** 点击行：滑开状态下先收起（不进入会话），否则正常选中 */
+function onSelect(c: Conversation): void {
+  if (swipeId.value === c.id && swipeDx.value < 0) {
+    closeSwipe()
+    return
+  }
+  if (swipeId.value !== 0) closeSwipe()
+  emit('select', c)
+}
+
+/** 滑动删除：先收起再交给父组件归档（与行内删除图标同一动作） */
+function onSwipeDelete(c: Conversation): void {
+  closeSwipe()
+  emit('archive', c)
+}
+
+// 列表数据变化（刷新/切 Tab/删除）时收起滑动状态，避免停在已不存在的行上
+watch(
+  () => props.conversations,
+  () => closeSwipe(),
+)
 
 const filters = computed(() => ({ status: props.status }))
 
@@ -376,12 +479,47 @@ onBeforeUnmount(stopTicker)
   flex: 1;
 }
 
+/* ---------------- 移动端左滑删除 ---------------- */
+.conv-swipe {
+  position: relative;
+  overflow: hidden;
+  /* 背景色与行一致，避免滑动时透出底色 */
+  background: var(--kf-bg-card, #fff);
+}
+
+.conv-swipe__actions {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  width: 76px;
+}
+
+.conv-swipe__del {
+  flex: 1;
+  border: none;
+  background: #f56c6c;
+  color: #fff;
+  font-size: 14px;
+  cursor: pointer;
+
+  &:active {
+    background: #e45656;
+  }
+}
+
 .conv-item {
+  position: relative;
   display: flex;
   gap: 10px;
   padding: 10px 12px;
   cursor: pointer;
+  background: var(--kf-bg-card, #fff);
   border-bottom: 1px solid var(--kf-border-light);
+  /* 横向手势自己处理，纵向滚动交给浏览器 */
+  touch-action: pan-y;
+  will-change: transform;
 
   &:hover {
     background: var(--kf-bg-hover);
