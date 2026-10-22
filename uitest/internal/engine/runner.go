@@ -90,6 +90,8 @@ type actionResult struct {
 	URL      string   `json:"url"`
 	Navigate string   `json:"navigate"`
 	Snippet  string   `json:"snippet"`
+	UID      string   `json:"uid"`       // 命中元素的稳定 uid（供自动回写）
+	TestAttr string   `json:"test_attr"` // 元素上的 data-testid 一类锚点
 }
 
 func (r *Runner) execute(ctx context.Context, runID string) {
@@ -257,6 +259,15 @@ func (r *Runner) execStep(ctx context.Context, runID string, page *browser.Page,
 		if out.Healed {
 			res.HealFrom = strings.Join(out.Tried, " → ")
 			r.logf(runID, "warn", step.Index, "定位失效，已自愈：%s（原定位 %s）", out.Used, res.HealFrom)
+		} else if out.UID != "" && step.Locator.Strategy == "uid" && out.UID != step.Locator.Value {
+			// uid 漂移但兜底命中了：把新 uid 写回录制（设置里可关）
+			if r.store.Settings().Assist.AutoRebindUID {
+				if err := r.rebindStep(step, out.UID); err == nil {
+					r.logf(runID, "info", step.Index, "已自动刷新定位：uid %s → %s（靠 %s 命中的）", step.Locator.Value, out.UID, out.Used)
+				}
+			} else {
+				r.logf(runID, "warn", step.Index, "uid 已过期（%s），本次靠 %s 命中；可在录制详情点「刷新定位」更新", step.Locator.Value, out.Used)
+			}
 		}
 	}
 
@@ -384,7 +395,7 @@ func (r *Runner) ensureRuntime(ctx context.Context, page *browser.Page) error {
 	if err := page.EvalInto(ctx, `(window.__uitestKeys && window.__uitestKeys.version) || ""`, &version); err != nil {
 		return err
 	}
-	if version != "" {
+	if version == jsruntime.Version && version != "" {
 		return nil
 	}
 	if _, err := page.Eval(ctx, jsruntime.KeysJS); err != nil {
@@ -521,6 +532,255 @@ func (r *Runner) actionTimeoutMS() int {
 		v = 15000
 	}
 	return v
+}
+
+// semanticLocator 依据元素指纹生成"语义定位"（表单项标题 / 按钮文字 / 表格行），
+// 用于刷新定位时避免踩到老 css 的歧义。取不到语义时返回零值。
+func semanticLocator(t model.Target) model.Locator {
+	tag := strings.ToLower(strings.TrimSpace(t.Tag))
+	role := strings.TrimSpace(t.Role)
+	isButton := tag == "button" || tag == "a" || role == "button" || role == "link" ||
+		(tag == "input" && (t.Type == "submit" || t.Type == "button"))
+	label := strings.TrimSpace(t.Label)
+	if isButton {
+		if label != "" {
+			if t.Column != "" && t.RowText != "" {
+				return model.Locator{Strategy: "cell", Value: t.RowText + ">>" + label}
+			}
+			if role == "" {
+				role = "button"
+			}
+			return model.Locator{Strategy: "role", Value: role + "|" + label}
+		}
+		if strings.TrimSpace(t.Text) != "" {
+			return model.Locator{Strategy: "text", Value: t.Text}
+		}
+		return model.Locator{}
+	}
+	if label != "" {
+		tagSel := ""
+		switch tag {
+		case "textarea":
+			tagSel = "textarea"
+		case "select":
+			tagSel = "select"
+		case "input":
+			tagSel = "input:not([type=hidden])"
+		}
+		return model.Locator{Strategy: "near", Value: label + ">>" + tagSel}
+	}
+	if t.TestAttr != "" {
+		return model.Locator{Strategy: "attr", Value: t.TestAttr}
+	}
+	return model.Locator{}
+}
+
+// rebindStep 把某一步的定位换成新的 uid，旧定位降级为兜底（顺序保持，最多留 6 条）。
+func (r *Runner) rebindStep(step model.Step, newUID string) error {
+	if newUID == "" || newUID == step.Locator.Value {
+		return nil
+	}
+	fb := []model.Locator{}
+	if step.Locator.Strategy != "" && step.Locator.Value != "" && step.Locator.Value != newUID {
+		fb = append(fb, model.Locator{Strategy: step.Locator.Strategy, Value: step.Locator.Value})
+	}
+	for _, f := range step.Locator.Fallbacks {
+		if f.Value == newUID || f.Strategy == "" || f.Value == "" {
+			continue
+		}
+		dup := false
+		for _, x := range fb {
+			if x.Strategy == f.Strategy && x.Value == f.Value {
+				dup = true
+				break
+			}
+		}
+		if !dup {
+			fb = append(fb, f)
+		}
+		if len(fb) >= 6 {
+			break
+		}
+	}
+	loc := model.Locator{Strategy: "uid", Value: newUID, Fallbacks: fb, FrameURL: step.Locator.FrameURL}
+	_, err := r.store.UpdateStep(step.RecordingID, step.ID, store.StepPatch{Locator: &loc})
+	return err
+}
+
+// RebindReport 批量刷新定位的结果。
+type RebindReport struct {
+	Total      int               `json:"total"`
+	Updated    int               `json:"updated"`
+	Failed     int               `json:"failed"`
+	KeyFixed   int               `json:"key_fixed"`
+	Message    string            `json:"message"`
+	Steps      []RebindStepBrief `json:"steps,omitempty"`
+	DurationMS int64             `json:"duration_ms"`
+}
+
+// RebindStepBrief 单步结果（只给控制台看摘要）。
+type RebindStepBrief struct {
+	Index  int    `json:"index"`
+	Action string `json:"action"`
+	From   string `json:"from"`
+	To     string `json:"to"`
+	OK     bool   `json:"ok"`
+	Detail string `json:"detail,omitempty"`
+}
+
+// Rebind 批量刷新一条录制里所有步骤的定位（重算 uid）。
+//
+// 用途：老录制是旧算法算的 uid（或干脆是 css 定位），页面改版后虽然能靠兜底跑通，
+// 但不稳。这里打开起始页、按每步现有定位找到元素、把它当前的 uid 写回去，
+// 顺便按业务词典修正 data_key（设置里可关）。
+func (r *Runner) Rebind(ctx context.Context, recordingID string) (RebindReport, error) {
+	started := time.Now()
+	rep := RebindReport{}
+	rec, err := r.store.GetRecording(recordingID)
+	if err != nil {
+		return rep, err
+	}
+	rep.Total = len(rec.Steps)
+	if len(rec.Steps) == 0 {
+		rep.Message = "这条录制还没有步骤"
+		return rep, nil
+	}
+
+	startURL := strings.TrimSpace(rec.StartURL)
+	if startURL == "" {
+		for _, s := range rec.Steps {
+			if s.Action == "navigate" && strings.TrimSpace(s.Value) != "" {
+				startURL = s.Value
+				break
+			}
+		}
+	}
+	if startURL == "" {
+		return rep, fmt.Errorf("录制没有起始 URL，无法打开页面")
+	}
+
+	openCtx, cancelOpen := context.WithTimeout(ctx, 150*time.Second)
+	page, err := r.br.OpenPage(openCtx, "about:blank")
+	cancelOpen()
+	if err != nil {
+		return rep, fmt.Errorf("启动内置浏览器失败：%w", err)
+	}
+	defer page.Close(context.Background())
+
+	navCtx, cancelNav := context.WithTimeout(ctx, 60*time.Second)
+	navErr := page.Navigate(navCtx, startURL)
+	cancelNav()
+	if navErr != nil {
+		return rep, fmt.Errorf("打开起始页失败：%w", navErr)
+	}
+	if err := r.ensureRuntime(ctx, page); err != nil {
+		return rep, fmt.Errorf("注入页面运行时失败：%w", err)
+	}
+	// 等页面真正就绪：刚导航完时 DOM/文本可能还没稳定，
+	// 语义定位（按表单项标题匹配）会因此失败，退化成有歧义的 css。
+	if err := waitReady(ctx, page, 20*time.Second); err != nil {
+		return rep, fmt.Errorf("等待页面就绪失败：%w", err)
+	}
+
+	for _, step := range rec.Steps {
+		if ctx.Err() != nil {
+			break
+		}
+		brief := RebindStepBrief{Index: step.Index, Action: step.Action, From: step.Locator.Strategy + "=" + step.Locator.Value}
+		if step.Action == "navigate" || step.Action == "script" || step.Action == "wait" || step.Action == "assert" {
+			brief.OK = true
+			brief.Detail = "无需定位"
+			rep.Steps = append(rep.Steps, brief)
+			continue
+		}
+		// 语义优先：老录制的 css 定位常常是有歧义的（input.el-input__inner 会指向第一个输入框），
+		// 直接按它重算会把错误固化下来。所以先用表单项标题/按钮文字重新定位，失败再退回原定位。
+		resolveLoc := semanticLocator(step.Target)
+		if resolveLoc.Strategy != "" {
+			base := []model.Locator{}
+			if step.Locator.Strategy != "" && step.Locator.Value != "" {
+				base = append(base, model.Locator{Strategy: step.Locator.Strategy, Value: step.Locator.Value})
+			}
+			base = append(base, step.Locator.Fallbacks...)
+			resolveLoc.Fallbacks = base
+			resolveLoc.FrameURL = step.Locator.FrameURL
+		} else {
+			resolveLoc = step.Locator
+		}
+		req := map[string]any{"action": "resolve", "locator": resolveLoc, "target": step.Target}
+		rawReq, _ := json.Marshal(req)
+		expr := fmt.Sprintf(`(async () => {
+  if (!window.__uitestKeys) return {ok:false, message:"页面运行时未注入"};
+  return await window.__uitestKeys.runAction(%s);
+})()`, rawReq)
+		var out actionResult
+		stepCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		evalErr := page.EvalInto(stepCtx, expr, &out)
+		cancel()
+		if evalErr != nil || !out.OK || out.UID == "" {
+			brief.OK = false
+			if evalErr != nil {
+				brief.Detail = "定位失败：" + evalErr.Error()
+			} else if !out.OK {
+				brief.Detail = "元素未找到"
+			} else {
+				brief.Detail = "拿不到 uid"
+			}
+			rep.Failed++
+			rep.Steps = append(rep.Steps, brief)
+			continue
+		}
+		brief.To = "uid=" + out.UID
+		brief.OK = true
+		if out.Used != "" && !strings.HasPrefix(out.Used, "uid=") {
+			brief.Detail = "原定位已失效，靠 " + out.Used + " 命中"
+		}
+		if out.UID != step.Locator.Value || step.Locator.Strategy != "uid" {
+			if err := r.rebindStep(step, out.UID); err == nil {
+				rep.Updated++
+			} else {
+				brief.OK = false
+				brief.Detail = "写回失败：" + err.Error()
+				rep.Failed++
+			}
+		}
+		rep.Steps = append(rep.Steps, brief)
+	}
+
+	if r.store.Settings().Assist.AutoDataKey {
+		rep.KeyFixed = r.store.ImproveDataKeys(recordingID)
+	}
+	rep.DurationMS = time.Since(started).Milliseconds()
+	rep.Message = fmt.Sprintf("共 %d 步：刷新 %d 个定位，%d 个失败，修正 %d 个字段名", rep.Total, rep.Updated, rep.Failed, rep.KeyFixed)
+	return rep, nil
+}
+
+// waitReady 等 document.readyState 变成 complete，并且 body 有文本（最多等 timeout）。
+func waitReady(ctx context.Context, page *browser.Page, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	for {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		var state struct {
+			Ready string `json:"ready"`
+			Text  int    `json:"text"`
+		}
+		if err := page.EvalInto(ctx, `(() => {
+  const b = document.body;
+  return { ready: document.readyState, text: b ? (b.textContent || '').trim().length : 0 };
+})()`, &state); err == nil {
+			if state.Ready == "complete" && state.Text > 0 {
+				// 再给框架一点渲染时间（Vue/React 首屏渲染、异步接口回来后才会出现表单）
+				time.Sleep(500 * time.Millisecond)
+				return nil
+			}
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("页面在 %s 内没有就绪", timeout)
+		}
+		time.Sleep(250 * time.Millisecond)
+	}
 }
 
 func fileExists(p string) bool {

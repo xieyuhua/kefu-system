@@ -22,6 +22,7 @@ type Config struct {
 	} `json:"storage"`
 	Browser model.BrowserSettings `json:"browser"`
 	AI      model.AISettings      `json:"ai"`
+	Assist  model.AssistSettings  `json:"assist"`
 }
 
 // Default 返回默认配置。
@@ -33,6 +34,7 @@ func Default() Config {
 	c.Storage.KeepRuns = 200
 	c.Browser = model.DefaultSettings().Browser
 	c.AI = model.DefaultSettings().AI
+	c.Assist = model.DefaultSettings().Assist
 	return c
 }
 

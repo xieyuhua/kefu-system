@@ -112,6 +112,16 @@
     return fmtDateTime(v).slice(0, 16);
   }
 
+  // 本地时间字符串（备份列表用）
+  function fmtTime(iso) {
+    if (!iso) return '-';
+    var d = new Date(iso);
+    if (isNaN(d.getTime())) return String(iso);
+    var p = function (n) { return (n < 10 ? '0' : '') + n; };
+    return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()) + ' ' +
+      p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds());
+  }
+
   function fmtDuration(ms) {
     if (ms === null || ms === undefined || isNaN(ms)) return '—';
     if (ms < 1000) return Math.round(ms) + ' ms';
@@ -377,11 +387,20 @@
 
   var Health = { data: null, timer: null };
 
+  // 辅助能力开关（服务端 /api/health 带出来，控制台全局用来决定是否显示提醒等）
+  var Assist = { auto_data_key: true, stable_id_hint: true, auto_rebind_uid: true };
+
   async function refreshHealth() {
     try {
       Health.data = await api('GET', '/api/health', undefined, { silent: true });
     } catch (e) {
       Health.data = null;
+    }
+    if (Health.data && Health.data.assist) {
+      var a = Health.data.assist;
+      Assist.auto_data_key = a.auto_data_key !== false;
+      Assist.stable_id_hint = a.stable_id_hint !== false;
+      Assist.auto_rebind_uid = a.auto_rebind_uid !== false;
     }
     paintHealth();
   }
@@ -514,6 +533,171 @@
     }
 
     document.title = title + ' · UI 自动化测试平台';
+  }
+
+  /* ======================================================================
+   * 浮动卡片工具：让任意「卡片」默认变成可拖动/可缩放的悬浮面板
+   *   —— 实时日志、数据准备都用它，行为一致：
+   *      · 面板始终悬浮（不做停靠模式），可拖动、可缩放、可收起
+   *      · 位置/尺寸记忆、拖出视口自动夹回、双击标题栏收起/展开
+   *      · 元素被 innerHTML 重建后重新调用 applyFloatCard() 即可恢复
+   * ====================================================================== */
+
+  var FLOAT_MIN_W = 320;
+  var FLOAT_MIN_H = 200;
+
+  function lsRead(key) {
+    try { return localStorage.getItem(key); } catch (e) { return null; }
+  }
+  function lsWrite(key, val) {
+    try { localStorage.setItem(key, val); } catch (e) { /* 隐私模式忽略 */ }
+  }
+  function jsonRead(key) {
+    try {
+      var v = JSON.parse(lsRead(key) || 'null');
+      return v && typeof v === 'object' ? v : null;
+    } catch (e) { return null; }
+  }
+  function clampPx(v, min, max) {
+    return Math.max(min, Math.min(max, v));
+  }
+
+  /**
+   * 给卡片接上浮动/拖动/缩放/收起能力。
+   * @param {HTMLElement} el 目标卡片（需有 .card-head 作为拖动手柄）
+   * @param {object} opts { key, grid, gridClass, defaultFloating, defaultPos }
+   */
+  function applyFloatCard(el, opts) {
+    if (!el || !el.classList) return;
+    opts = opts || {};
+    var key = opts.key || 'card';
+    var FLAG_KEY = 'uitest.float.' + key;
+    var POS_KEY = 'uitest.pos.' + key;
+    var head = el.querySelector('.card-head') || el.firstElementChild;
+    var grid = opts.grid || el.parentElement;
+
+    function isFloating() { return el.classList.contains('is-floating'); }
+
+    function persistPos() {
+      if (!isFloating()) return;
+      var r = el.getBoundingClientRect();
+      lsWrite(POS_KEY, JSON.stringify({
+        l: Math.round(r.left), t: Math.round(r.top),
+        w: Math.round(r.width), h: Math.round(r.height)
+      }));
+    }
+
+    function syncGrid() {
+      if (grid && opts.gridClass) grid.classList.toggle(opts.gridClass, isFloating());
+    }
+
+    function setCollapsed(on) {
+      el.classList.toggle('is-collapsed', !!on);
+      var b = el.querySelector('[data-float-act="collapse"]');
+      if (b) b.textContent = on ? '展开' : '收起';
+    }
+
+    function setFloating(on, silent) {
+      if (on) {
+        var pos = jsonRead(POS_KEY) || {};
+        var vw = window.innerWidth, vh = window.innerHeight;
+        var def = opts.defaultPos || {};
+        var w = clampPx(pos.w || def.w || Math.round(vw * 0.28), FLOAT_MIN_W, Math.max(FLOAT_MIN_W, vw - 8));
+        var h = clampPx(pos.h || def.h || Math.round(vh * 0.62), FLOAT_MIN_H, Math.max(FLOAT_MIN_H, vh - 8));
+        var l = typeof pos.l === 'number' ? pos.l : (def.l === 'right' ? vw - w - 24 : (def.l || vw - w - 24));
+        var t = typeof pos.t === 'number' ? pos.t : (def.t || 96);
+        el.classList.add('is-floating');
+        el.classList.remove('is-collapsed');
+        el.style.width = w + 'px';
+        el.style.height = h + 'px';
+        el.style.left = clampPx(l, 4, Math.max(4, vw - w - 4)) + 'px';
+        el.style.top = clampPx(t, 4, Math.max(4, vh - h - 4)) + 'px';
+        setCollapsed(false);
+      } else {
+        el.classList.remove('is-floating');
+        el.style.width = '';
+        el.style.height = '';
+        el.style.left = '';
+        el.style.top = '';
+      }
+      syncGrid();
+      if (!silent) lsWrite(FLAG_KEY, on ? '1' : '0');
+    }
+
+    // 头部工具按钮：只要「收起」（面板始终悬浮，不再提供停靠）
+    if (head && !head.querySelector('[data-float-act]')) {
+      var tools = document.createElement('div');
+      tools.className = 'float-tools';
+      tools.innerHTML = '<button class="btn btn--sm" type="button" data-float-act="collapse">收起</button>';
+      head.appendChild(tools);
+    }
+
+    // 按钮行为（挂在卡片元素上，元素不被替换就一直有效；重复调用不会重复绑定）
+    if (!el.__floatClickWired) {
+      el.__floatClickWired = true;
+      el.addEventListener('click', function (e) {
+        var t = e.target && e.target.nodeType === 1 ? e.target.closest('[data-float-act]') : null;
+        if (!t) return;
+        if (t.getAttribute('data-float-act') === 'collapse') {
+          setCollapsed(!el.classList.contains('is-collapsed'));
+          e.stopPropagation();
+        }
+      });
+    }
+
+    // 拖动（只认标题栏，标题栏上的控件不触发）
+    var drag = null;
+    function onMove(ev) {
+      if (!drag) return;
+      var rect = el.getBoundingClientRect();
+      el.style.left = clampPx(ev.clientX - drag.dx, 4, Math.max(4, window.innerWidth - rect.width - 4)) + 'px';
+      el.style.top = clampPx(ev.clientY - drag.dy, 4, Math.max(4, window.innerHeight - rect.height - 4)) + 'px';
+    }
+    function onUp() {
+      document.removeEventListener('pointermove', onMove);
+      document.removeEventListener('pointerup', onUp);
+      document.removeEventListener('pointercancel', onUp);
+      el.classList.remove('is-dragging');
+      if (drag) persistPos();
+      drag = null;
+    }
+    // 拖动/双击：标题栏可能被 innerHTML 重建，所以按"这个 head 元素是否已接好"来判断，
+    // 避免重复绑定导致一次拖动走两倍位移。
+    if (head && head.__floatDragWired !== key) {
+      head.__floatDragWired = key;
+      head.setAttribute('title', '按住这一行可以拖动窗口');
+      head.addEventListener('pointerdown', function (ev) {
+        if (!isFloating() || ev.button !== 0) return;
+        if (ev.target.closest('button, input, textarea, select, label, a')) return;
+        var rect = el.getBoundingClientRect();
+        drag = { dx: ev.clientX - rect.left, dy: ev.clientY - rect.top };
+        el.classList.add('is-dragging');
+        document.addEventListener('pointermove', onMove);
+        document.addEventListener('pointerup', onUp);
+        document.addEventListener('pointercancel', onUp);
+        ev.preventDefault();
+      });
+      head.addEventListener('dblclick', function (ev) {
+        if (ev.target.closest('button, input, textarea, select, label, a')) return;
+        setCollapsed(!el.classList.contains('is-collapsed'));
+      });
+    }
+
+    // 手动缩放后记住尺寸
+    if (typeof window.ResizeObserver === 'function' && !el.__floatRO) {
+      var t2 = null;
+      var ro = new ResizeObserver(function () {
+        if (!isFloating()) return;
+        if (t2) clearTimeout(t2);
+        t2 = setTimeout(persistPos, 300);
+      });
+      ro.observe(el);
+      el.__floatRO = ro;
+    }
+
+    // 面板始终悬浮（最小化/尺寸/位置来自 localStorage，不存在"停靠"状态）
+    setFloating(true, true);
+    return { setFloating: setFloating, setCollapsed: setCollapsed, isFloating: isFloating };
   }
 
   /* ======================================================================
@@ -902,9 +1086,31 @@
       var strategy = loc.strategy || '';
       var value = loc.value || '';
       var fb = Array.isArray(loc.fallbacks) ? loc.fallbacks : [];
+      // 导航步骤不做元素定位，locator 里的 url 只是记录地址，界面上给个更明确的说法
+      if (step.action === 'navigate') {
+        return '<div class="locator"><span class="locator-na">—（导航步骤按「输入值」里的地址跳转）</span></div>';
+      }
+      // 定位稳定性提示：Vue/React 重新打包后各策略的存活率差异很大
+      var stab = '';
+      if (strategy === 'uid' || strategy === 'attr' || strategy === 'id' || strategy === 'name') {
+        stab = '<span class="badge badge--stable" title="业务语义/团队自定义属性，重新打包也不会变">稳</span>';
+      } else if (strategy === 'label' || strategy === 'near' || strategy === 'role' || strategy === 'cell' || strategy === 'placeholder') {
+        stab = '<span class="badge badge--mid" title="靠表单项标题 / 按钮文字 / 表格行文字定位，改版只要文案不变就能用">中</span>';
+      } else if (strategy === 'css' || strategy === 'xpath' || strategy === 'text') {
+        stab = '<span class="badge badge--weak" title="结构路径或纯文本，改版/重新打包后容易失效（有兜底，但建议沉淀成 uid）">弱</span>';
+      }
+      // 缺稳定锚点：没有 data-testid 一类属性时给出红色提醒（设置里可关）
+      var hasTestAttr = false;
+      if (step.target && step.target.test_attr) hasTestAttr = true;
+      fb.forEach(function (f) { if (f && f.strategy === 'attr') hasTestAttr = true; });
+      var missTestId = '';
+      if (Assist.stable_id_hint && !hasTestAttr) {
+        missTestId = '<span class="badge badge--missing" title="这个元素没有 data-testid / data-test / data-cy 之类的稳定属性。' +
+          '现在是靠标题/文字定位的，建议让前端加一个（例如 data-testid=&quot;product-name&quot;），定位就永远不怕改版">缺 testid</span>';
+      }
       var h = '<div class="locator">' +
         '<code class="loc-code">' + esc(strategy ? strategy + '=' + value : '—') + '</code>' +
-        (strategy === 'uid' ? '<span class="badge badge--uid">ID 绑定</span>' : '');
+        (strategy === 'uid' ? '<span class="badge badge--uid">ID 绑定</span>' : '') + stab + missTestId;
 
       if (fb.length) {
         h += '<button class="link-btn" data-act="toggle-loc" data-step="' + esc(step.id) + '">' +
@@ -1126,6 +1332,8 @@
       var steps = rec.steps || [];
 
       body.innerHTML = headerCardHtml(rec) +
+        navigateOnlyHintHtml(steps) +
+        missingTestIdHintHtml(steps) +
         '<div class="detail-grid">' +
         '<section class="card steps-card">' +
         '<div class="card-head">' +
@@ -1133,6 +1341,7 @@
         '<div class="card-tools">' +
         '<button class="btn btn--sm" data-act="toggle-loc">' + (ui.expandAll ? '收起全部定位' : '展开全部定位') + '</button>' +
         '<button class="btn btn--sm" data-act="toggle-value">' + (ui.showValue ? '隐藏「输入值」列' : '显示「输入值」列') + '</button>' +
+        '<button class="btn btn--sm" data-act="rebind" title="打开起始页，把每步定位重算成稳定的 data-uitest-id（老录制建议跑一次）">一键刷新定位</button>' +
         '<button class="btn btn--sm" data-act="reload">刷新</button>' +
         '</div></div>' +
         (steps.length ? stepsTableHtml(steps) :
@@ -1141,12 +1350,78 @@
         '</section>' +
         '<aside class="card data-card">' + dataCardHtml(rec) + '</aside>' +
         '</div>';
+
+      // 数据准备面板：默认悬浮、可拖动（与实时日志同一套交互）
+      applyFloatCard($('.data-card', root), {
+        key: 'data',
+        grid: $('.detail-grid', root),
+        gridClass: 'has-floating-data',
+        defaultFloating: true,
+        defaultPos: { l: 'right', t: 300, w: 380, h: 540 }
+      });
+    }
+
+    /**
+     * 只有导航步骤时给出诊断提示。
+     * 插件的内容脚本只在页面加载时注入；如果被测页面在装插件之前就打开了（或页面不允许
+     * 注入脚本），录下来的就只有 background 自动补的 navigate 步骤，看起来像"定位全是
+     * css=html"。这里直接把原因和解决办法摊在页面上。
+     */
+    /** 缺 data-testid 汇总提示（设置里可关）：直接列出是哪几个元素，方便推给前端 */
+    function missingTestIdHintHtml(steps) {
+      if (!Assist.stable_id_hint) return '';
+      var missing = [];
+      (steps || []).forEach(function (s) {
+        if (!s || s.action === 'navigate') return;
+        var fb = (s.locator && s.locator.fallbacks) || [];
+        var has = !!(s.target && s.target.test_attr);
+        if (!has) {
+          for (var i = 0; i < fb.length; i++) {
+            if (fb[i] && fb[i].strategy === 'attr') { has = true; break; }
+          }
+        }
+        if (!has) {
+          var label = (s.target && (s.target.label || s.target.text || s.target.placeholder)) || s.annotation || ('第 ' + s.index + ' 步');
+          if (missing.indexOf(label) < 0) missing.push(label);
+        }
+      });
+      if (!missing.length) return '';
+      var shown = missing.slice(0, 8).map(function (x) { return '「' + esc(x) + '」'; }).join('、');
+      var more = missing.length > 8 ? ' 等 ' + missing.length + ' 个' : '';
+      return '<div class="callout callout--soft">' +
+        '<b>' + missing.length + ' 个元素没有稳定锚点（data-testid）。</b>' +
+        '现在靠表单项标题 / 按钮文字定位，改版或重新打包后可能失效，建议让前端给它们加上 ' +
+        '<code class="mono">data-testid</code>（例如 <code class="mono">data-testid="product-name"</code>）：' +
+        shown + more + '。' +
+        '<br>加完之后回到这里点「一键刷新定位」，定位就会全部升级成 ID 绑定。' +
+        '</div>';
+    }
+
+    function navigateOnlyHintHtml(steps) {
+      if (!steps.length) return '';
+      var real = steps.filter(function (s) { return s && s.action && s.action !== 'navigate'; });
+      if (real.length > 0) return '';
+      return '<div class="callout callout--warn">' +
+        '<strong>这条录制只有「打开页面」步骤，没有录到任何操作。</strong>' +
+        '<div>说明插件的内容脚本没有在被测页面上运行：通常是页面在安装/更新插件之前就已打开，' +
+        '或者该页面不允许注入脚本（chrome:// 等系统页）。</div>' +
+        '<div>处理：保持「录制中」，在被测页面刷新一次（或点插件弹窗里的「注入录制脚本」），' +
+        '再操作一遍；然后新建一条录制重录即可。</div>' +
+        '</div>';
     }
 
     function paintDataCard() {
       var card = $('.data-card', root);
       if (!card || !ui.rec) return;
       card.innerHTML = dataCardHtml(ui.rec);
+      // 卡片内容被重建，浮动状态/拖动手柄要重新接上
+      applyFloatCard(card, {
+        key: 'data',
+        grid: $('.detail-grid', root),
+        gridClass: 'has-floating-data',
+        defaultFloating: true,
+        defaultPos: { l: 'right', t: 300, w: 380, h: 540 }
+      });
     }
 
     async function load() {
@@ -1196,6 +1471,34 @@
         await refreshHealth();
         if (created && created.id) navigate('#/recordings/' + encodeURIComponent(created.id));
       } catch (e) { /* api 已提示 */ }
+    }
+
+    /** 一键刷新定位：打开起始页重算每步的 uid（老录制升级成 ID 绑定） */
+    async function rebind() {
+      var rec = ui.rec;
+      if (!rec) return;
+      if (!(rec.steps || []).length) { toast('这条录制还没有步骤', 'info'); return; }
+      var ok = await confirmDialog({
+        title: '一键刷新定位',
+        message: '会打开起始页 ' + (rec.start_url || '（录制里的地址）') + '，逐步重新定位并把新的 data-uitest-id 写回录制。' +
+          '\n\n需要内置浏览器可用；过程中请勿关闭浏览器窗口。大约 10~60 秒。',
+        confirmText: '开始刷新'
+      });
+      if (!ok) return;
+      var card = $('.steps-card', root);
+      if (card) card.classList.add('is-busy');
+      toast('正在刷新定位，请稍候…', 'info', 4000);
+      try {
+        var r = await api('POST', base + '/rebind', {});
+        var msg = (r && r.message) || '已刷新';
+        toast(msg, (r && r.failed) ? 'warn' : 'success', 6000);
+        await load();
+        await refreshHealth();
+      } catch (e) {
+        /* api 已提示 */
+      } finally {
+        if (card) card.classList.remove('is-busy');
+      }
     }
 
     async function deleteRecording() {
@@ -1349,6 +1652,7 @@
       var act = btn.getAttribute('data-act');
 
       if (act === 'reload') { load(); return; }
+      if (act === 'rebind') { rebind(); return; }
 
       if (act === 'toggle-loc') {
         var stepId = btn.getAttribute('data-step');
@@ -1621,11 +1925,13 @@
       '<div class="card-head"><h2>逐步结果</h2><span class="muted" id="step-summary"></span></div>' +
       '<div id="run-steps-body"></div>' +
       '</section>' +
-      '<aside class="card logs-card">' +
-      '<div class="card-head"><h2>实时日志</h2>' +
+      '<aside class="card logs-card" id="logs-card">' +
+      '<div class="card-head logs-head" id="logs-head" title="按住这一行可以拖动窗口">' +
+      '<h2>实时日志<span class="logs-drag-hint" aria-hidden="true">⠿</span></h2>' +
       '<div class="logs-tools">' +
       '<label class="check-line"><input type="checkbox" id="log-autoscroll" checked><span>自动滚动</span></label>' +
       '<button class="btn btn--sm" data-act="copy-logs">复制日志</button>' +
+      '<button class="btn btn--sm" data-act="collapse-logs" id="log-collapse-btn">收起</button>' +
       '</div></div>' +
       '<div class="logs-wrap"><div class="logs" id="logs"></div></div>' +
       '<div class="logs-foot" id="logs-foot">准备连接实时日志…</div>' +
@@ -2027,6 +2333,8 @@
       if (act === 'heal') { healRun(); return; }
       if (act === 'rerun') { rerun(); return; }
       if (act === 'copy-logs') { copyLogs(); return; }
+
+      if (act === 'collapse-logs') { setLogCollapsed(!logCard.classList.contains('is-collapsed')); return; }
       if (act === 'shot') { showShot(btn.getAttribute('data-path')); return; }
     });
 
@@ -2041,6 +2349,153 @@
         }
       });
     }
+
+    /* ---- 实时日志浮窗：浮动 / 拖动 / 缩放 / 收起 ----
+     * 需求：实时日志窗口可以变成悬浮窗并拖动。
+     * 实现要点：
+     *   1) 只切一个 class + 内联 left/top/width/height，不重建节点（日志是靠 appendLog 累加的，
+     *      重建会丢内容、也丢滚动位置）；
+     *   2) 位置/尺寸存 localStorage，下次进来还是老位置；拖出可视区会被夹回来；
+     *   3) 拖动只认标题栏（按钮/复选框不算），用 pointer 事件，移动中不重排布局。
+     */
+
+    var LOG_POS_KEY = 'uitest.logPos';       // {l,t,w,h}
+    var logCard = $('#logs-card', root);
+    var logHead = $('#logs-head', root);
+    var dragState = null;
+
+    function lsGet(key) {
+      try { return localStorage.getItem(key); } catch (e) { return null; }
+    }
+    function lsSet(key, val) {
+      try { localStorage.setItem(key, val); } catch (e) { /* 隐私模式忽略 */ }
+    }
+    function loadPos() {
+      try {
+        var v = JSON.parse(lsGet(LOG_POS_KEY) || 'null');
+        return v && typeof v === 'object' ? v : null;
+      } catch (e) { return null; }
+    }
+    function clampNum(v, min, max) {
+      return Math.max(min, Math.min(max, v));
+    }
+
+    function isLogFloating() {
+      return !!(logCard && logCard.classList.contains('is-floating'));
+    }
+
+    function setLogFloating(on, silent) {
+      if (!logCard) return;
+      if (on) {
+        var pos = loadPos() || {};
+        var vw = window.innerWidth, vh = window.innerHeight;
+        var width = clampNum(pos.w || Math.round(vw * 0.34), 320, Math.max(320, vw - 16));
+        var height = clampNum(pos.h || Math.round(vh * 0.42), 220, Math.max(220, vh - 16));
+        var left = typeof pos.l === 'number' ? pos.l : (vw - width - 24);
+        var top = typeof pos.t === 'number' ? pos.t : (vh - height - 24);
+        logCard.classList.add('is-floating');
+        logCard.classList.remove('is-collapsed');
+        logCard.style.width = width + 'px';
+        logCard.style.height = height + 'px';
+        logCard.style.left = clampNum(left, 4, Math.max(4, vw - width - 4)) + 'px';
+        logCard.style.top = clampNum(top, 4, Math.max(4, vh - height - 4)) + 'px';
+        setLogCollapsed(false);
+      } else {
+        logCard.classList.remove('is-floating');
+        logCard.style.width = '';
+        logCard.style.height = '';
+        logCard.style.left = '';
+        logCard.style.top = '';
+      }
+      // 浮窗脱离文档流后，外层两列网格会留一块空白，这里切成单列让步骤表占满
+      var grid = logCard.parentElement;
+      if (grid && grid.classList.contains('split')) grid.classList.toggle('has-floating-log', !!on);
+
+      // 浮窗出现/消失后把日志滚到底，避免停在半截
+      var logsEl = $('#logs', root);
+      if (logsEl && ui.autoScroll) logsEl.scrollTop = logsEl.scrollHeight;
+    }
+
+    function setLogCollapsed(on) {
+      if (!logCard) return;
+      logCard.classList.toggle('is-collapsed', !!on);
+      var b = $('#log-collapse-btn', root);
+      if (b) b.textContent = on ? '展开' : '收起';
+    }
+
+    function saveLogPos() {
+      if (!logCard || !isLogFloating()) return;
+      var r = logCard.getBoundingClientRect();
+      lsSet(LOG_POS_KEY, JSON.stringify({
+        l: Math.round(r.left), t: Math.round(r.top),
+        w: Math.round(r.width), h: Math.round(r.height)
+      }));
+    }
+
+    function onLogDragMove(ev) {
+      if (!dragState || !logCard) return;
+      var rect = logCard.getBoundingClientRect();
+      var left = clampNum(ev.clientX - dragState.dx, 4, Math.max(4, window.innerWidth - rect.width - 4));
+      var top = clampNum(ev.clientY - dragState.dy, 4, Math.max(4, window.innerHeight - rect.height - 4));
+      logCard.style.left = left + 'px';
+      logCard.style.top = top + 'px';
+    }
+
+    function onLogDragEnd() {
+      document.removeEventListener('pointermove', onLogDragMove);
+      document.removeEventListener('pointerup', onLogDragEnd);
+      document.removeEventListener('pointercancel', onLogDragEnd);
+      if (logCard) logCard.classList.remove('is-dragging');
+      if (dragState) saveLogPos();
+      dragState = null;
+    }
+
+    if (logHead && logCard) {
+      logHead.addEventListener('pointerdown', function (ev) {
+        if (!isLogFloating()) return;            // 只在悬浮时可拖（本面板始终悬浮）
+        if (ev.button !== 0) return;
+        if (ev.target.closest('button, input, label, a')) return;  // 标题栏上的控件不触发拖动
+        var rect = logCard.getBoundingClientRect();
+        dragState = { dx: ev.clientX - rect.left, dy: ev.clientY - rect.top };
+        logCard.classList.add('is-dragging');
+        document.addEventListener('pointermove', onLogDragMove);
+        document.addEventListener('pointerup', onLogDragEnd);
+        document.addEventListener('pointercancel', onLogDragEnd);
+        ev.preventDefault();
+      });
+
+      // 双击标题栏：收起 / 展开
+      logHead.addEventListener('dblclick', function (ev) {
+        if (ev.target.closest('button, input, label, a')) return;
+        setLogCollapsed(!logCard.classList.contains('is-collapsed'));
+      });
+
+      // 手动拖右下角缩放后记住尺寸
+      if (typeof window.ResizeObserver === 'function') {
+        var roTimer = null;
+        var ro = new ResizeObserver(function () {
+          if (!isLogFloating()) return;
+          if (roTimer) clearTimeout(roTimer);
+          roTimer = setTimeout(saveLogPos, 300);
+        });
+        ro.observe(logCard);
+      }
+
+      // 窗口尺寸变化时把浮窗夹回可视区
+      window.addEventListener('resize', function () {
+        if (!isLogFloating()) return;
+        var r = logCard.getBoundingClientRect();
+        logCard.style.left = clampNum(r.left, 4, Math.max(4, window.innerWidth - r.width - 4)) + 'px';
+        logCard.style.top = clampNum(r.top, 4, Math.max(4, window.innerHeight - r.height - 4)) + 'px';
+      });
+    }
+
+    addCleanup(function () {
+      onLogDragEnd();
+    });
+
+    // 实时日志面板始终悬浮（可拖动/缩放/收起，位置与尺寸记忆）
+    setLogFloating(true, true);
 
     refresh({ silent: false });
   }
@@ -2211,7 +2666,7 @@
 
   function renderSettings(app) {
     var root = pageRoot(app);
-    var state = { data: null };
+    var state = { data: null, backups: null };
 
     root.innerHTML =
       '<div class="page-head">' +
@@ -2277,18 +2732,81 @@
         '<input class="input input--mono" id="s-action-timeout" type="number" min="0" step="500" value="' +
         esc(br.action_timeout_ms === null || br.action_timeout_ms === undefined ? '' : br.action_timeout_ms) + '" placeholder="8000"></div>' +
         '</div>' +
+        field('kernel_dir',
+          '<input class="input input--mono" id="s-kernel-dir" value="' + esc(br.kernel_dir || '') + '" placeholder="留空 = 用脚本自动探测的系统浏览器；例：D:\\browser\\chrome-win64">',
+          '自带内核目录：把 Chrome for Testing 解压到这里（或用 scripts/fetch-browser.ps1 一键下载），服务端优先用它，完全不依赖系统浏览器。') +
         field('debug_url',
           '<input class="input input--mono" id="s-debug-url" value="' + esc(br.debug_url || '') + '" placeholder="留空 = 由服务端自己拉起浏览器；例：http://127.0.0.1:9400">',
           '连接一个已在运行的浏览器（先手工执行 msedge --remote-debugging-port=9400），服务端不再自己启动浏览器。') +
+        '<div class="card-sub">' +
+        '<button class="btn btn--sm" data-act="diagnose">诊断浏览器</button>' +
+        '<span class="field-hint">真实打开一个页面，检查渲染进程、内核路径与启动参数</span>' +
+        '</div>' +
+        '<pre id="diagnose-out" class="diagnose-out hidden"></pre>' +
         '<div class="field"><label>no_sandbox</label>' +
         '<label class="check-line"><input type="checkbox" id="s-nosandbox"' + (br.no_sandbox ? ' checked' : '') + '>' +
         '<span>启动时追加 --no-sandbox（渲染进程一直崩溃时再打开）</span></label></div>' +
         '</div></section>' +
+        assistFormHtml(s) +
         '</div>' +
+        backupCardHtml() +
 
         '<section class="card"><div class="card-body head-actions">' +
         '<button class="btn btn--primary" data-act="save">保存设置</button>' +
         '<button class="btn" data-act="reload">取消并重新读取</button>' +
+        '</div></section>';
+    }
+
+    /** 辅助功能开关：三项都能单独关掉，关掉不影响主流程 */
+    function assistFormHtml(s) {
+      var a = s.assist || {};
+      function row(id, title, desc, on) {
+        return '<div class="field">' +
+          '<label class="check-line"><input type="checkbox" id="' + id + '"' + (on ? ' checked' : '') + '>' +
+          '<span><b>' + title + '</b></span></label>' +
+          '<span class="field-hint">' + desc + '</span>' +
+          '</div>';
+      }
+      return '<section class="card">' +
+        '<div class="card-head"><h2>辅助功能</h2><span class="count-pill">可单独开关</span></div>' +
+        '<div class="card-body">' +
+        row('s-assist-datakey', '中文标题自动转字段名',
+          '录制时按业务词典把中文标签转成英文字段名：记住密码 → remember_password、商品名称 → product_name。' +
+          '关掉后纯中文标签会退化成 field_25 这种键。', a.auto_data_key !== false) +
+        row('s-assist-testid', '缺 data-testid 的元素标红',
+          '在录制详情里把"没有 data-testid / data-test / data-cy 一类稳定锚点"的步骤标红，提醒前端补齐。' +
+          '补齐后定位最稳，重新打包也不怕。', a.stable_id_hint !== false) +
+        row('s-assist-rebind', '执行时自动刷新过期的 uid',
+          '某一步的 uid 已过期、但靠兜底策略（标题/按钮文字/表格行）命中了元素时，自动把新 uid 写回录制。' +
+          '关掉后只提示、不落盘。', a.auto_rebind_uid !== false) +
+        '</div></section>';
+    }
+
+    /** 数据快照：每次启动都会留一份，误删/误改可以一键恢复 */
+    function backupCardHtml() {
+      var items = state.backups;
+      if (!items) {
+        return '<section class="card"><div class="card-head"><h2>数据快照</h2></div>' +
+          '<div class="card-body"><div class="field-hint">读取中…</div></div></section>';
+      }
+      var rows = items.map(function (b) {
+        return '<tr>' +
+          '<td class="mono">' + esc(b.name) + '</td>' +
+          '<td>' + esc(fmtTime(b.created_at)) + '</td>' +
+          '<td>' + esc(b.recordings) + ' 条录制 / ' + esc(b.runs) + ' 次运行</td>' +
+          '<td class="mono">' + Math.round((b.size || 0) / 1024) + ' KB</td>' +
+          '<td><button class="btn btn--sm" data-act="restore-backup" data-name="' + esc(b.name) + '">恢复</button></td>' +
+          '</tr>';
+      }).join('');
+      return '<section class="card">' +
+        '<div class="card-head"><h2>数据快照</h2>' +
+        '<div class="card-tools"><button class="btn btn--sm" data-act="reload-backups">刷新列表</button></div></div>' +
+        '<div class="card-body">' +
+        '<div class="field-hint">服务端每次启动都会把 data/uitest.json 快照到 data/backups（保留最近 5 份）。' +
+        '恢复会用快照覆盖当前数据，覆盖前会先把当前状态再存一份，所以恢复错了也能退回。</div>' +
+        (items.length
+          ? '<div class="table-wrap"><table class="table"><thead><tr><th>文件</th><th>时间</th><th>内容</th><th>大小</th><th>操作</th></tr></thead><tbody>' + rows + '</tbody></table></div>'
+          : '<div class="field-hint" style="margin-top:10px">还没有快照（重启一次服务端就会生成）。</div>') +
         '</div></section>';
     }
 
@@ -2302,9 +2820,20 @@
       try {
         state.data = await api('GET', '/api/settings');
         paint();
+        loadBackups();
       } catch (e) {
         bodyEl.innerHTML = errorCard(e.message || '无法读取设置');
       }
+    }
+
+    async function loadBackups() {
+      try {
+        var r = await api('GET', '/api/backups', undefined, { silent: true });
+        state.backups = (r && r.items) || [];
+      } catch (e) {
+        state.backups = [];
+      }
+      paint();
     }
 
     async function save() {
@@ -2331,11 +2860,17 @@
           step_delay_ms: readNum('s-step-delay', 0),
           action_timeout_ms: readNum('s-action-timeout', 0),
           debug_url: read('s-debug-url'),
+          kernel_dir: read('s-kernel-dir'),
           no_sandbox: !!($('#s-nosandbox', root) && $('#s-nosandbox', root).checked)
         }
       };
       var apiKey = read('s-api-key');
       if (apiKey) payload.ai.api_key = apiKey;   // 留空 → 不提交，保持原值
+      payload.assist = {
+        auto_data_key: !!($('#s-assist-datakey', root) && $('#s-assist-datakey', root).checked),
+        stable_id_hint: !!($('#s-assist-testid', root) && $('#s-assist-testid', root).checked),
+        auto_rebind_uid: !!($('#s-assist-rebind', root) && $('#s-assist-rebind', root).checked)
+      };
 
       try {
         var res = await api('PUT', '/api/settings', payload);
@@ -2353,7 +2888,57 @@
       var act = btn.getAttribute('data-act');
       if (act === 'reload') { load(); return; }
       if (act === 'save') { save(); return; }
+      if (act === 'diagnose') { diagnose(); return; }
+      if (act === 'reload-backups') { loadBackups(); return; }
+      if (act === 'restore-backup') {
+        var name = btn.getAttribute('data-name') || '';
+        confirmDialog({
+          title: '恢复数据快照',
+          message: '用「' + name + '」覆盖当前数据？\n当前状态会先自动再存一份快照，可以退回。',
+          confirmText: '恢复'
+        }).then(async function (ok) {
+          if (!ok) return;
+          try {
+            var r = await api('POST', '/api/backups/' + encodeURIComponent(name) + '/restore', {});
+            toast((r && r.message) || '已恢复', 'success');
+            await load();
+            await refreshHealth();
+          } catch (e) { /* api 已提示 */ }
+        });
+        return;
+      }
     });
+
+    /** 诊断：真实开一个页面，把内核/参数/探测结果摊出来 */
+    async function diagnose() {
+      var out = $('#diagnose-out', root);
+      if (!out) return;
+      out.classList.remove('hidden');
+      out.textContent = '诊断中…（会真实打开一个页面）';
+      try {
+        var r = await api('GET', '/api/browser/diagnose?url=' + encodeURIComponent('http://127.0.0.1:8490/demo/'));
+        var p = r.probe || {};
+        var lines = [
+          '内核路径   : ' + (r.executable || '（未探测到）'),
+          '内核版本   : ' + (r.version || '-') + (r.attached ? '  [外部浏览器]' : ''),
+          '自带内核   : ' + (r.kernel_dir || '（默认 <程序目录>/browser）'),
+          '启动参数   : ' + ((r.launch_flags && r.launch_flags.length) ? r.launch_flags.join(' ') : '（默认参数）'),
+          '调试地址   : ' + (r.debug_url || '-'),
+          '渲染探测   : ' + (p.ok ? '正常' : '失败') + (p.duration_ms ? '（' + p.duration_ms + 'ms）' : ''),
+          '页面标题   : ' + (p.title || '-'),
+          'readyState : ' + (p.ready_state || '-'),
+          p.error ? '错误       : ' + p.error : '',
+          '日志文件   : ' + (r.log_file || '-'),
+          '',
+          '诊断结论   : ' + (r.hint || '-'),
+          '',
+          r.log_tail ? '—— 浏览器日志尾部 ——\n' + r.log_tail : ''
+        ].filter(function (x) { return x !== ''; });
+        out.textContent = lines.join('\n');
+      } catch (e) {
+        out.textContent = '诊断失败：' + (e.message || e);
+      }
+    }
 
     load();
   }

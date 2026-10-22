@@ -26,7 +26,23 @@ CORS：`/api/**` 允许任意来源（插件页面来源为 `chrome-extension://
 }
 ```
 
-**定位优先级**：`uid` > `id` > `name` > `css` > `xpath` > `label`/`text`/`placeholder`；
+**定位策略全集**（按稳定性排序，见 README「重建安全」）：
+
+| strategy | value 形态 | 说明 |
+|---|---|---|
+| `uid` | `ut_1a2b3c4d` | 首选，确定性算法生成的 data-uitest-id |
+| `attr` | `data-testid=submit-btn` | 团队自己写的稳定属性 |
+| `id` / `name` | 原值 | 仅当"看起来稳定"（hash/自动 id 会被跳过） |
+| `label` | `商品名称` | 表单项标题 → 同一表单项里的控件 |
+| `near` | `商品名称>>input` | 标题文字所在最内层容器里的控件 |
+| `role` | `button\|保存商品` | ARIA 角色 + 可访问名 |
+| `text` | `保存商品` | 按钮/链接可见文本 |
+| `cell` | `标准版服务>>编辑` | 表格行文字 + 按钮文字（行内操作） |
+| `placeholder` | `请输入商品名称` | 占位文字 |
+| `css` | `form > div:nth-of-type(2) > input` | 纯结构路径（不含 class） |
+| `xpath` | `//*[@id="x"]` | 最后兜底 |
+
+**定位优先级**：`uid` > `attr` > `id`/`name` > `label`/`near` > `role`/`text`/`cell` > `placeholder` > `css` > `xpath`；
 全部失败时执行**自愈定位**（用 `target` 指纹做相似度匹配），自愈命中会在运行日志中标记
 `healed=true`，并可通过 `POST /api/runs/{id}/heal` 把新定位回写到录制。
 
@@ -44,7 +60,14 @@ CORS：`/api/**` 允许任意来源（插件页面来源为 `chrome-extension://
   "href": "",
   "page": "/admin/#/products",    // 录制时所在页面（path + hash）
   "field_kind": "text",           // text|number|price|date|datetime|email|phone|url|textarea|select|checkbox|file|password|other
-  "options": ["服务类", "实物类"]  // 下拉框候选文本（录制时采集，供 AI 生成"一定能选中"的值）
+  "options": ["服务类", "实物类"], // 下拉框候选文本（录制时采集，供 AI 生成"一定能选中"的值）
+  // ↓ 2.0 新增：重建安全定位用的语义（Vue/React 重新打包后仍然有效）
+  "name": "product_name",         // 仅在 name 看起来稳定时才有值
+  "stable_id": "product-name",    // 仅在 id 不是 hash/自动生成时才有值
+  "test_attr": "data-testid=submit-btn",  // 团队自定义稳定属性
+  "form_item": "商品名称",         // 最近表单项的标题文字（表格行内则为行首单元格文字）
+  "column": "操作",                // 表格列名
+  "row_text": "标准版服务"          // 行首单元格文字
 }
 ```
 
@@ -181,7 +204,8 @@ Field：`{"key","label","kind","value","note"}`。
 
 | 方法 | 路径 | 入参 | 返回 |
 |---|---|---|---|
-| GET | `/api/browser/status` | – | `{running,executable,debug_url,profile_dir,version}` |
+| GET | `/api/browser/status` | – | `{running,executable,debug_url,profile_dir,version,attached,kernel_dir,launch_flags,renderer_ok,probe}` |
+| GET | `/api/browser/diagnose?url=` | – | `{running,executable,version,kernel_dir,launch_flags,debug_url,attached,probe:{ok,title,ready_state,error,duration_ms},log_file,log_tail,hint}` |
 | POST | `/api/browser/launch` | `{url?}` | `{ok,debug_url}` |
 | POST | `/api/browser/close` | – | `{ok}` |
 
@@ -189,7 +213,7 @@ Field：`{"key","label","kind","value","note"}`。
 
 | 方法 | 路径 | 入参 | 返回 |
 |---|---|---|---|
-| GET | `/api/settings` | – | `{ai:{base_url,model,has_key,key_hint,timeout_sec},browser:{executable,headless,step_delay_ms,action_timeout_ms,no_sandbox,debug_url},server:{port,version}}` |
+| GET | `/api/settings` | – | `{ai:{base_url,model,has_key,key_hint,timeout_sec},browser:{executable,headless,step_delay_ms,action_timeout_ms,no_sandbox,debug_url,kernel_dir,extra_args,resolved_flags},server:{port,version}}` |
 | PUT | `/api/settings` | 同上（`ai.api_key` 只写不读） | 同上 |
 | GET | `/api/health` | – | `{ok:true,version,recordings,runs,browser_running}` |
 
@@ -229,3 +253,11 @@ Field：`{"key","label","kind","value","note"}`。
 
 标签页命令走**页面级端点** `ws://127.0.0.1:<port>/devtools/page/<targetId>`
 （新版 Chromium 的浏览器级扁平化会话不返回会话命令响应，已实测不适用）。
+### 5.4 启动自愈与诊断
+
+`POST /api/browser/launch` 会按候选启动参数组合逐组尝试，每组启动后**真实打开页面并读 `document.title`**
+判定渲染进程是否可用；可用的组合写入 `settings.browser.resolved_flags` 复用。
+全部失败时返回 4xx/5xx 并附带最后一组参数与错误原因。
+
+排查"浏览器打得开但打不开网页"请用 `GET /api/browser/diagnose?url=http://127.0.0.1:8490/demo/`，
+返回体里的 `probe.ok / probe.error / log_tail` 足以定位（典型原因见 README「启动自愈」）。

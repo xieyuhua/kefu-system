@@ -2,8 +2,10 @@ package api
 
 import (
 	"net/http"
+	"os"
 	"strings"
 
+	"uitest-server/internal/browser"
 	"uitest-server/internal/model"
 )
 
@@ -20,6 +22,7 @@ type aiSettingsView struct {
 type settingsView struct {
 	AI      aiSettingsView        `json:"ai"`
 	Browser model.BrowserSettings `json:"browser"`
+	Assist  model.AssistSettings  `json:"assist"`
 	Server  map[string]any        `json:"server"`
 }
 
@@ -42,6 +45,7 @@ func (s *Server) settingsView() settingsView {
 			TimeoutSec: st.AI.TimeoutSec,
 		},
 		Browser: st.Browser,
+		Assist:  st.Assist,
 		Server:  map[string]any{"port": s.Port, "version": s.Version},
 	}
 }
@@ -59,13 +63,20 @@ type putSettingsReq struct {
 		TimeoutSec *int    `json:"timeout_sec"`
 	} `json:"ai"`
 	Browser *struct {
-		Executable      *string `json:"executable"`
-		Headless        *bool   `json:"headless"`
-		StepDelayMS     *int    `json:"step_delay_ms"`
-		ActionTimeoutMS *int    `json:"action_timeout_ms"`
-		NoSandbox       *bool   `json:"no_sandbox"`
-		DebugURL        *string `json:"debug_url"`
+		Executable      *string   `json:"executable"`
+		Headless        *bool     `json:"headless"`
+		StepDelayMS     *int      `json:"step_delay_ms"`
+		ActionTimeoutMS *int      `json:"action_timeout_ms"`
+		NoSandbox       *bool     `json:"no_sandbox"`
+		DebugURL        *string   `json:"debug_url"`
+		KernelDir       *string   `json:"kernel_dir"`
+		ExtraArgs       *[]string `json:"extra_args"`
 	} `json:"browser"`
+	Assist *struct {
+		AutoDataKey   *bool `json:"auto_data_key"`
+		StableIDHint  *bool `json:"stable_id_hint"`
+		AutoRebindUID *bool `json:"auto_rebind_uid"`
+	} `json:"assist"`
 }
 
 // putSettings PUT /api/settings
@@ -110,6 +121,31 @@ func (s *Server) putSettings(w http.ResponseWriter, r *http.Request) {
 		if req.Browser.DebugURL != nil {
 			st.Browser.DebugURL = strings.TrimRight(strings.TrimSpace(*req.Browser.DebugURL), "/")
 		}
+		if req.Browser.KernelDir != nil {
+			st.Browser.KernelDir = strings.TrimSpace(*req.Browser.KernelDir)
+		}
+		if req.Browser.ExtraArgs != nil {
+			args := make([]string, 0, len(*req.Browser.ExtraArgs))
+			for _, a := range *req.Browser.ExtraArgs {
+				if a = strings.TrimSpace(a); a != "" {
+					args = append(args, a)
+				}
+			}
+			st.Browser.ExtraArgs = args
+		}
+		// 浏览器相关配置一改，之前探测到的启动参数就不再可信
+		st.Browser.ResolvedFlags = nil
+	}
+	if req.Assist != nil {
+		if req.Assist.AutoDataKey != nil {
+			st.Assist.AutoDataKey = *req.Assist.AutoDataKey
+		}
+		if req.Assist.StableIDHint != nil {
+			st.Assist.StableIDHint = *req.Assist.StableIDHint
+		}
+		if req.Assist.AutoRebindUID != nil {
+			st.Assist.AutoRebindUID = *req.Assist.AutoRebindUID
+		}
 	}
 	s.DB.SaveSettings(st)
 	s.BR.ApplySettings(st.Browser)
@@ -144,4 +180,57 @@ func (s *Server) browserClose(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+// browserDiagnose GET /api/browser/diagnose?url=
+// 「浏览器打得开但打不开网页」的一键诊断：真实开一个标签页取值，返回内核、参数、探测结果与日志尾部。
+func (s *Server) browserDiagnose(w http.ResponseWriter, r *http.Request) {
+	url := strings.TrimSpace(r.URL.Query().Get("url"))
+	if url == "" {
+		url = "about:blank"
+	}
+	st := s.BR.Status()
+	probe := s.BR.ProbeRenderer(r.Context(), url)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"running":      st.Running,
+		"executable":   st.Executable,
+		"version":      st.Version,
+		"kernel_dir":   st.KernelDir,
+		"launch_flags": st.LaunchFlags,
+		"headless":     st.Headless,
+		"debug_url":    st.DebugURL,
+		"attached":     st.Attached,
+		"probe":        probe,
+		"log_file":     st.LogFile,
+		"log_tail":     tailFile(st.LogFile, 40),
+		"hint":         diagnoseHint(probe, st),
+	})
+}
+
+func diagnoseHint(p browser.Probe, st browser.Status) string {
+	if p.OK {
+		return "页面渲染正常，可以直接用内置浏览器录制/回放。"
+	}
+	if !st.Running {
+		return "浏览器还没启动，先点「启动浏览器」。"
+	}
+	return "浏览器进程起来了但渲染进程不可用（常见于受限环境或安全软件拦截）。" +
+		"服务端已自动尝试多组启动参数；仍然失败时可以：① 在设置里填「自带内核目录」并放入 Chrome for Testing；" +
+		"② 填 debug_url 连接手工启动的浏览器；③ 查看日志尾部定位原因。"
+}
+
+// tailFile 读文件最后 n 行（用于把日志尾部给到前端）。
+func tailFile(path string, n int) string {
+	if path == "" || n <= 0 {
+		return ""
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	lines := strings.Split(string(raw), "\n")
+	if len(lines) > n {
+		lines = lines[len(lines)-n:]
+	}
+	return strings.Join(lines, "\n")
 }

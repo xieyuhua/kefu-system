@@ -616,3 +616,95 @@ select.input{ appearance:auto; }
 .table--steps td:nth-child(7), .table--steps th:nth-child(7){ min-width:150px; }
 .table--steps td:nth-child(8), .table--steps th:nth-child(8){ min-width:140px; }
 .table--steps td{ word-break:break-word; }
+
+/* ---------- 诊断提示条 / 导航步骤定位占位 ---------- */
+.callout{ border-radius:10px; padding:12px 14px; margin-bottom:14px; font-size:13px; line-height:1.7; }
+.callout strong{ display:block; margin-bottom:4px; }
+.callout--warn{ background:#fffbeb; border:1px solid #fde68a; color:#92400e; }
+.locator-na{ font-size:12px; color:#9aa1b1; }
+
+/* ---------- 设置页：诊断输出 ---------- */
+.card-sub{ display:flex; align-items:center; gap:10px; margin:6px 0 14px; flex-wrap:wrap; }
+.diagnose-out{
+  background:#0f172a; color:#e2e8f0; border-radius:10px; padding:12px 14px;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size:12px; line-height:1.7;
+  white-space:pre-wrap; word-break:break-all; margin:0 0 14px; max-height:340px; overflow:auto;
+}
+
+/* 通用显隐（诊断输出区等） */
+.is-hidden{ display:none !important; }
+
+
+/* ---------------------------------------------------------------
+   实时日志：浮动窗口（可拖动 / 可缩放 / 可收起）
+   停靠时还是原来的右侧卡片；点「浮动」后变成 fixed 浮窗，
+   按住标题栏即可拖动，位置与尺寸记在 localStorage。
+   --------------------------------------------------------------- */
+.logs-drag-hint{
+  margin-left:5px; font-size:11px; color:var(--text-3);
+  letter-spacing:-2px; cursor:inherit;
+}
+.logs-card{ min-height:0; }
+.logs-card > .logs-wrap{ flex:0 0 auto; }
+
+.logs-card.is-floating{
+  position:fixed; z-index:80; margin:0 !important;
+  display:flex; flex-direction:column;
+  width:520px; height:360px;
+  border:1px solid var(--border); border-radius:12px;
+  box-shadow:0 22px 60px rgba(16,24,40,.30), 0 2px 8px rgba(16,24,40,.12);
+  resize:both; overflow:hidden;
+  max-width:calc(100vw - 8px); max-height:calc(100vh - 8px);
+  transition:box-shadow .15s;
+}
+.logs-card.is-floating .logs-head{ cursor:move; user-select:none; }
+.logs-card.is-floating .logs-head:active{ cursor:grabbing; }
+.logs-card.is-floating .logs-wrap{
+  flex:1 1 auto; height:auto; min-height:0;
+}
+.logs-card.is-floating .logs-foot{ flex:0 0 auto; }
+.logs-card.is-dragging{ box-shadow:0 28px 72px rgba(16,24,40,.38); }
+.logs-card.is-collapsed > .logs-wrap,
+.logs-card.is-collapsed > .logs-foot{ display:none; }
+.logs-card.is-collapsed{ height:auto !important; }
+
+/* 浮窗模式下外层网格改单列，避免右侧留空 */
+.split.has-floating-log{ grid-template-columns:minmax(0, 1fr); }
+
+
+/* 定位稳定性徽章：稳 / 中 / 弱 */
+.badge--stable{ background:#dcfce7; color:#15803d; }
+.badge--mid{ background:#fef3c7; color:#b45309; }
+.badge--weak{ background:#fee2e2; color:#b91c1c; }
+
+/* ---------------------------------------------------------------
+   通用浮动卡片（数据准备 / 实时日志共用的交互与外观）
+   默认悬浮：按住 .card-head 拖动，右下角缩放，「收起」只留标题栏
+   --------------------------------------------------------------- */
+.card.is-floating{
+  position:fixed; z-index:80; margin:0 !important;
+  display:flex; flex-direction:column;
+  border:1px solid var(--border); border-radius:12px;
+  box-shadow:0 22px 60px rgba(16,24,40,.28), 0 2px 8px rgba(16,24,40,.10);
+  resize:both; overflow:hidden;
+  max-width:calc(100vw - 8px); max-height:calc(100vh - 8px);
+  background:#fff;
+}
+.card.is-floating > .card-head{ cursor:move; user-select:none; flex:0 0 auto; }
+.card.is-floating > .card-head:active{ cursor:grabbing; }
+.card.is-floating > .card-body{ flex:1 1 auto; min-height:0; overflow:auto; }
+.card.is-dragging{ box-shadow:0 28px 72px rgba(16,24,40,.36); }
+.card.is-collapsed{ height:auto !important; }
+.card.is-collapsed > .card-body{ display:none; }
+
+/* 标题栏右侧的浮动/收起按钮 */
+.float-tools{ margin-left:auto; display:flex; align-items:center; gap:6px; flex:0 0 auto; }
+
+/* 悬浮时左侧内容占满整宽 */
+.detail-grid.has-floating-data{ grid-template-columns:minmax(0, 1fr); }
+
+/* 缺 data-testid 的警示徽章（设置里可关） */
+.badge--missing{ background:#fee2e2; color:#b91c1c; border:1px dashed #fca5a5; }
+/* 顶部汇总提示 */
+.callout--soft{ background:#fffbeb; border:1px solid #fde68a; color:#92400e; border-radius:10px; padding:10px 12px; margin:0 0 12px; font-size:13px; }
+.callout--soft b{ color:#78350f; }

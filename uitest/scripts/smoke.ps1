@@ -56,27 +56,27 @@ $steps = @(
   },
   @{
     action = "input"; annotation = "在【商品名称】输入内容"; data_key = "product_name"; value = "{{product_name}}"
-    locator = @{ strategy = "css"; value = "#product-name"; fallbacks = @(@{ strategy = "name"; value = "product_name" }) }
+    locator = @{ strategy = "near"; value = "商品名称>>input:not([type=hidden])"; fallbacks = @(@{ strategy = "label"; value = "商品名称" }, @{ strategy = "css"; value = "#product-name" }) }
     target  = @{ tag = "input"; type = "text"; label = "商品名称"; placeholder = "请输入商品名称"; page = "/demo/"; field_kind = "text" }
   },
   @{
     action = "input"; annotation = "在【价格】输入内容"; data_key = "price"; value = "{{price}}"
-    locator = @{ strategy = "css"; value = "#product-price"; fallbacks = @(@{ strategy = "name"; value = "price" }) }
+    locator = @{ strategy = "near"; value = "价格>>input:not([type=hidden])"; fallbacks = @(@{ strategy = "label"; value = "价格" }, @{ strategy = "css"; value = "#product-price" }) }
     target  = @{ tag = "input"; type = "number"; label = "价格"; page = "/demo/"; field_kind = "price" }
   },
   @{
     action = "input"; annotation = "在【库存】输入内容"; data_key = "stock"; value = "{{stock}}"
-    locator = @{ strategy = "css"; value = "#product-stock"; fallbacks = @(@{ strategy = "name"; value = "stock" }) }
+    locator = @{ strategy = "near"; value = "库存>>input:not([type=hidden])"; fallbacks = @(@{ strategy = "label"; value = "库存" }, @{ strategy = "css"; value = "#product-stock" }) }
     target  = @{ tag = "input"; type = "number"; label = "库存"; page = "/demo/"; field_kind = "number" }
   },
   @{
     action = "select"; annotation = "在【商品分类】选择「服务类」"; data_key = "category"; value = "{{category}}"
-    locator = @{ strategy = "css"; value = "#product-category" }
+    locator = @{ strategy = "near"; value = "商品分类>>select"; fallbacks = @(@{ strategy = "label"; value = "商品分类" }, @{ strategy = "css"; value = "#product-category" }) }
     target  = @{ tag = "select"; label = "商品分类"; page = "/demo/"; field_kind = "select"; options = @("服务类", "实物类", "虚拟类") }
   },
   @{
     action = "input"; annotation = "在【商品描述】输入内容"; data_key = "description"; value = "{{description}}"
-    locator = @{ strategy = "css"; value = "#product-desc" }
+    locator = @{ strategy = "near"; value = "商品描述>>textarea"; fallbacks = @(@{ strategy = "label"; value = "商品描述" }, @{ strategy = "css"; value = "#product-desc" }) }
     target  = @{ tag = "textarea"; label = "商品描述"; placeholder = "请输入商品描述"; page = "/demo/"; field_kind = "textarea" }
   },
   @{
@@ -86,7 +86,7 @@ $steps = @(
   },
   @{
     action = "click"; annotation = "点击【保存商品】按钮"
-    locator = @{ strategy = "text"; value = "保存商品"; fallbacks = @(@{ strategy = "css"; value = "#btn-save-product" }) }
+    locator = @{ strategy = "role"; value = "button|保存商品"; fallbacks = @(@{ strategy = "text"; value = "保存商品" }, @{ strategy = "css"; value = "#btn-save-product" }) }
     target  = @{ tag = "button"; type = "submit"; text = "保存商品"; page = "/demo/" }
   },
   @{

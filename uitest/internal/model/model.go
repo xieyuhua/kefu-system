@@ -27,6 +27,20 @@ type Target struct {
 	FieldKind   string `json:"field_kind"`
 	// Options 下拉框候选文本（录制时采集，供 AI 生成"一定能选中的值"）
 	Options []string `json:"options,omitempty"`
+
+	// ---- 2.0 重建安全定位用的语义（Vue/React 重新打包后依然有效）----
+	// Name 元素 name 属性（仅在"看起来稳定"时才有值，hash/自动名会被插件过滤掉）
+	Name string `json:"name,omitempty"`
+	// StableID 稳定的 id（hash 样式、组件库自动 id 不会放进这里）
+	StableID string `json:"stable_id,omitempty"`
+	// TestAttr 团队自定义稳定属性，形如 data-testid=submit-btn
+	TestAttr string `json:"test_attr,omitempty"`
+	// FormItem 最近表单项的标题文字（表格行内元素则为行首单元格文字）
+	FormItem string `json:"form_item,omitempty"`
+	// Column 表格列名
+	Column string `json:"column,omitempty"`
+	// RowText 行首单元格文字
+	RowText string `json:"row_text,omitempty"`
 }
 
 // Describe 返回人可读的目标描述（用于日志与默认备注）。
@@ -202,6 +216,20 @@ type Element struct {
 type Settings struct {
 	AI      AISettings      `json:"ai"`
 	Browser BrowserSettings `json:"browser"`
+	Assist  AssistSettings  `json:"assist"`
+}
+
+// AssistSettings 三项"省事"辅助能力的开关（控制台设置页可逐项开关）。
+type AssistSettings struct {
+	// AutoDataKey 中文标签自动转英文字段名：记住密码 → remember_password，
+	// 否则纯中文标签会退化成一堆 field_25，AI 生成数据和日志都看不懂。
+	AutoDataKey bool `json:"auto_data_key"`
+	// StableIDHint 控制台把"没有 data-testid 一类稳定属性"的元素标红，
+	// 提醒前端补齐锚点（补齐后定位最稳）。
+	StableIDHint bool `json:"stable_id_hint"`
+	// AutoRebindUID 执行时如果 uid 没命中、但靠兜底策略命中了元素，
+	// 把命中元素的新 uid 自动写回录制（不用人工点"刷新定位"）。
+	AutoRebindUID bool `json:"auto_rebind_uid"`
 }
 
 // AISettings 大模型接入配置（OpenAI 兼容）。
@@ -225,6 +253,14 @@ type BrowserSettings struct {
 	// （例如先手工执行 msedge --remote-debugging-port=9400，再填 http://127.0.0.1:9400）。
 	// 适用于 CI / 容器 / 受限环境，或调试时复用你已登录的浏览器。
 	DebugURL string `json:"debug_url"`
+	// KernelDir 自带内核目录：填了就先在这里找 chrome.exe/msedge.exe，找不到再回退到系统安装。
+	KernelDir string `json:"kernel_dir"`
+	// ExtraArgs 额外启动参数（高级用）。
+	ExtraArgs []string `json:"extra_args,omitempty"`
+	// ResolvedFlags 自动探测成功过的启动参数组合（由服务端写回，用户不用管）。
+	ResolvedFlags []string `json:"resolved_flags,omitempty"`
+	// ProfileDir 探测成功后固化下来的 user-data-dir（记住登录态、下次直接接管实例）。
+	ProfileDir string `json:"profile_dir,omitempty"`
 }
 
 // DefaultSettings 出厂默认值。
@@ -235,5 +271,7 @@ func DefaultSettings() Settings {
 			StepDelayMS:     260,
 			ActionTimeoutMS: 15000,
 		},
+		// 三项辅助默认全开：都是"让定位/数据更清楚"的增益能力，关掉也不会报错
+		Assist: AssistSettings{AutoDataKey: true, StableIDHint: true, AutoRebindUID: true},
 	}
 }

@@ -38,6 +38,11 @@ func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("GET /api/health", s.health)
+	// 一键批量刷新定位（老录制升级成 uid 绑定）
+	mux.HandleFunc("POST /api/recordings/{id}/rebind", s.rebindRecording)
+	// 数据快照：列表 + 一键恢复
+	mux.HandleFunc("GET /api/backups", s.listBackups)
+	mux.HandleFunc("POST /api/backups/{name}/restore", s.restoreBackup)
 
 	mux.HandleFunc("GET /api/recordings", s.listRecordings)
 	mux.HandleFunc("POST /api/recordings", s.createRecording)
@@ -66,6 +71,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/runs/{id}/events", s.runEvents)
 
 	mux.HandleFunc("GET /api/browser/status", s.browserStatus)
+	mux.HandleFunc("GET /api/browser/diagnose", s.browserDiagnose)
 	mux.HandleFunc("POST /api/browser/launch", s.browserLaunch)
 	mux.HandleFunc("POST /api/browser/close", s.browserClose)
 
@@ -170,6 +176,7 @@ func readJSON(r *http.Request, v any) error {
 func (s *Server) health(w http.ResponseWriter, r *http.Request) {
 	recs, runs := s.DB.Counts()
 	st := s.BR.Status()
+	assist := s.DB.Settings().Assist
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ok":              true,
 		"version":         s.Version,
@@ -178,5 +185,7 @@ func (s *Server) health(w http.ResponseWriter, r *http.Request) {
 		"runs":            runs,
 		"browser_running": st.Running,
 		"port":            s.Port,
+		// 辅助能力开关：控制台据此决定是否显示"缺 testid"提醒等
+		"assist": assist,
 	})
 }

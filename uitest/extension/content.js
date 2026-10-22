@@ -11,6 +11,10 @@
 (function () {
   'use strict';
 
+  // 幂等守卫：scripting.executeScript 补注入会与 manifest 注入重叠，必须只生效一次
+  if (window.__uitestRecorderLoaded) return;
+  window.__uitestRecorderLoaded = true;
+
   var KEYS = window.__uitestKeys || null;        // 共享运行时；缺失时只做兜底提示
   var OVERLAY_HOST_ID = 'uitest-overlay-host';   // 浮层 host id（用于排除自身事件）
   var ENTER_STORAGE_KEY = 'uitest_record_enter'; // popup 的"回车键也记录"开关
@@ -349,7 +353,15 @@
 
   /* ---------------- 步骤构造 ---------------- */
 
-  /** 组装 locator：uid 首选，其余按 id / name / css / text 依次兜底；iframe 内记录 frame_url */
+  /**
+   * 组装 locator：uid 首选，兜底按「重建后仍然可靠」的顺序排。
+   *
+   * Vue / React 打包后 hash 类名、data-v-*、自动 id 都会变，所以这里的顺序是：
+   *   uid → attr(data-testid 一类) → id/name（仅稳定时）→ label（表单项标题）
+   *   → near（标题→同表单项控件）→ role（角色+按钮文字）→ cell（行文字+按钮）
+   *   → placeholder → css（纯结构，不带 class）→ text
+   * 这些兜底让"页面改版但业务语义没变"的情况下依然能定位。
+   */
   function buildLocator(el, target, key) {
     var locator = {
       strategy: 'uid',
@@ -357,14 +369,48 @@
       fallbacks: [],
       frame_url: IS_TOP ? '' : String(location.href || '')
     };
-    if (el.id) locator.fallbacks.push({ strategy: 'id', value: el.id });
-    var name = el.getAttribute && el.getAttribute('name');
-    if (name) locator.fallbacks.push({ strategy: 'name', value: name });
-    var css = KEYS.uniqueSelector(el);
-    if (css) locator.fallbacks.push({ strategy: 'css', value: css });
-    if (isButtonLike(el, target) && target.text && target.text.length <= TEXT_FALLBACK_MAX) {
-      locator.fallbacks.push({ strategy: 'text', value: target.text });
+    var fb = locator.fallbacks;
+
+    function add(strategy, value) {
+      var v = value === null || value === undefined ? '' : String(value);
+      if (!v) return;
+      for (var i = 0; i < fb.length; i++) {
+        if (fb[i].strategy === strategy && fb[i].value === v) return;
+      }
+      fb.push({ strategy: strategy, value: v });
     }
+
+    var tag = (el.tagName || '').toLowerCase();
+    var buttonLike = isButtonLike(el, target);
+
+    if (target.test_attr) add('attr', target.test_attr);      // 团队自己写的稳定属性
+    if (target.stable_id) add('id', target.stable_id);        // 只放"看起来稳定"的 id
+    if (target.name) add('name', target.name);
+
+    if (buttonLike) {
+      // 按钮/链接：靠「行文字+按钮文字」或「角色+按钮文字」定位。
+      // 绝不能走 label/near——按钮文字会被当成表单项标题，从而抓到旁边的输入框。
+      if (target.column && target.row_text && target.text) {
+        add('cell', target.row_text + '>>' + target.text);    // 表格行内操作：最稳
+      }
+      if (target.text && target.text.length <= TEXT_FALLBACK_MAX) {
+        add('role', (target.role || 'button') + '|' + target.text);
+        add('text', target.text);
+      }
+    } else {
+      // 表单控件：标题 → 同一表单项里的控件
+      if (target.label) {
+        add('label', target.label);
+        var tagSel = '';
+        if (target.tag === 'textarea') tagSel = 'textarea';
+        else if (target.tag === 'select') tagSel = 'select';
+        else if (target.tag === 'input') tagSel = 'input:not([type=hidden])';
+        add('near', target.label + '>>' + tagSel);
+      }
+      if (target.placeholder) add('placeholder', target.placeholder);
+    }
+    var css = KEYS.uniqueSelector(el);
+    if (css) add('css', css);                                 // 纯结构路径，最后兜底
     return locator;
   }
 
@@ -408,7 +454,9 @@
    */
   function buildStep(action, el, opts) {
     opts = opts || {};
-    var key = KEYS.computeKey(el);
+    // keyOf 会先 markAll 再读属性值：这样同签名元素的 _2/_3 去重后缀也能拿到，
+    // 保证"录制时算出的 key"与"执行时 markAll 算出的 key"完全一致。
+    var key = KEYS.keyOf ? KEYS.keyOf(el) : KEYS.computeKey(el);
     try {
       el.setAttribute(KEYS.KEY_ATTR, key); // 落盘稳定 id，页面上可见、执行器可直接取
     } catch (e) {
@@ -520,9 +568,13 @@
 
     // 下拉框、勾选框、文件框由 change 事件负责，这里不再产生重复的 click 步骤
     if (tag === 'select') return;
+    if (tag === 'textarea') return;                 // 文本域点击只是聚焦，由 input 事件记录
     if (tag === 'input') {
       var t = inputType(el);
       if (t === 'checkbox' || t === 'radio' || t === 'file') return;
+      // 文本/数字/日期等输入框：点击只用于聚焦，真正的输入由 input 事件记录，
+      // 否则每个字段都会多出一条无意义的「点击」步骤
+      if (t !== 'submit' && t !== 'button' && t !== 'reset' && t !== 'image') return;
     }
 
     sendStep(buildStep('click', el), el);
@@ -649,6 +701,8 @@
   });
 
   bindListeners();
+  // 报到：background 据此判断"录制脚本是否就位"，popup 会显示连接状态
+  sendMessage({ type: 'ready', url: location.href, top: IS_TOP });
   askState();
   setInterval(askState, STATE_POLL_MS); // 兜底轮询，防止广播丢失
 

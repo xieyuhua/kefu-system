@@ -13,11 +13,13 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
 	"time"
 
+	"uitest-server/internal/keyname"
 	"uitest-server/internal/model"
 )
 
@@ -64,6 +66,9 @@ func Open(dir string, keepRuns int) (*DB, error) {
 			Settings:   model.DefaultSettings(),
 		},
 	}
+	// 启动时先给现有数据做一份滚动快照，避免误删/误改无法回退
+	db.snapshotBackup()
+
 	if raw, err := os.ReadFile(db.path); err == nil && len(raw) > 0 {
 		if err := json.Unmarshal(raw, &db.data); err != nil {
 			return nil, fmt.Errorf("数据文件 %s 解析失败: %w", db.path, err)
@@ -294,6 +299,10 @@ func (db *DB) AddStep(recordingID string, s model.Step) (model.Step, error) {
 	}
 	if s.Annotation == "" {
 		s.Annotation = defaultAnnotation(s)
+	}
+	// 中文标签自动转英文字段名（设置里可关）：否则 data_key 会退化成一堆 field_25
+	if db.data.Settings.Assist.AutoDataKey {
+		s.DataKey = improveDataKey(s)
 	}
 	s.RecordingID = recordingID
 	s.Index = len(r.Steps) + 1
@@ -710,4 +719,195 @@ func (db *DB) Counts() (int, int) {
 	db.mu.RLock()
 	defer db.mu.RUnlock()
 	return len(db.data.Recordings), len(db.data.Runs)
+}
+
+// snapshotBackup 把当前数据文件复制到 <dir>/backups/uitest-<时间>.json，最多保留 5 份。
+// 目的：录制与运行记录是用户手录出来的，误删代价很高，留几份快照能救命。
+func (db *DB) snapshotBackup() {
+	raw, err := os.ReadFile(db.path)
+	if err != nil || len(raw) == 0 {
+		return
+	}
+	dir := filepath.Join(db.dir, "backups")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return
+	}
+	name := filepath.Join(dir, "uitest-"+time.Now().Format("20060102-150405")+".json")
+	if err := os.WriteFile(name, raw, 0o644); err != nil {
+		return
+	}
+	// 只保留最近 5 份
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return
+	}
+	var files []string
+	for _, e := range entries {
+		if !e.IsDir() && strings.HasPrefix(e.Name(), "uitest-") && strings.HasSuffix(e.Name(), ".json") {
+			files = append(files, filepath.Join(dir, e.Name()))
+		}
+	}
+	sort.Strings(files)
+	for len(files) > 5 {
+		_ = os.Remove(files[0])
+		files = files[1:]
+	}
+}
+
+// placeholderKeyRe 匹配插件在"纯中文标签推导不出来"时给出的占位键：field_25
+var placeholderKeyRe = regexp.MustCompile(`^field_\d+$`)
+
+// improveDataKey 用业务词典把中文标签转成英文字段名。
+// 只处理空值和 field_N 这类占位键，不覆盖用户/插件已经给出的可读键。
+func improveDataKey(s model.Step) string {
+	cur := strings.TrimSpace(s.DataKey)
+	if cur != "" && !placeholderKeyRe.MatchString(cur) {
+		return cur
+	}
+	// 只有"填数据"的动作才需要字段名；按钮/断言不该有 data_key（老数据里遗留的也清掉）
+	switch s.Action {
+	case "input", "select", "upload", "check", "uncheck":
+	default:
+		return ""
+	}
+	derived := keyname.DeriveKey(s.Target.Label, s.Target.Placeholder, s.Target.Name)
+	if derived == "" {
+		return cur
+	}
+	return dedupeTokens(derived)
+}
+
+// dedupeTokens 去掉 snake_case 里连续重复的词：product_product → product
+func dedupeTokens(s string) string {
+	parts := strings.Split(s, "_")
+	out := parts[:0]
+	for _, p := range parts {
+		if p == "" {
+			continue
+		}
+		if len(out) > 0 && out[len(out)-1] == p {
+			continue
+		}
+		out = append(out, p)
+	}
+	res := strings.Join(out, "_")
+	if strings.Trim(res, "0123456789_") == "" {
+		return ""
+	}
+	return res
+}
+
+// ImproveDataKeys 批量修正某条录制里所有步骤的 data_key（设置里可关）。
+// 返回被改动的步骤数。
+func (db *DB) ImproveDataKeys(recordingID string) int {
+	db.mu.Lock()
+	defer db.mu.Unlock()
+	r, ok := db.data.Recordings[recordingID]
+	if !ok {
+		return 0
+	}
+	changed := 0
+	for i := range r.Steps {
+		old := r.Steps[i].DataKey
+		next := improveDataKey(r.Steps[i])
+		if next != old {
+			r.Steps[i].DataKey = next
+			changed++
+		}
+	}
+	if changed > 0 {
+		r.UpdatedAt = time.Now()
+		db.markDirty()
+	}
+	return changed
+}
+
+/* --------------------------------------------------------------- 备份恢复 */
+
+// BackupInfo 一份数据快照的摘要。
+type BackupInfo struct {
+	Name       string    `json:"name"`
+	Size       int64     `json:"size"`
+	CreatedAt  time.Time `json:"created_at"`
+	Recordings int       `json:"recordings"`
+	Runs       int       `json:"runs"`
+}
+
+// backupDir 备份目录。
+func (db *DB) backupDir() string { return filepath.Join(db.dir, "backups") }
+
+// ListBackups 列出可用快照（按时间倒序，最多 20 份）。
+func (db *DB) ListBackups() []BackupInfo {
+	entries, err := os.ReadDir(db.backupDir())
+	if err != nil {
+		return nil
+	}
+	out := make([]BackupInfo, 0, len(entries))
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasPrefix(e.Name(), "uitest-") || !strings.HasSuffix(e.Name(), ".json") {
+			continue
+		}
+		info, err := e.Info()
+		if err != nil {
+			continue
+		}
+		bi := BackupInfo{Name: e.Name(), Size: info.Size(), CreatedAt: info.ModTime()}
+		// 轻量统计：只读一次计数，方便用户判断该恢复哪份
+		if raw, rerr := os.ReadFile(filepath.Join(db.backupDir(), e.Name())); rerr == nil {
+			var snapshot struct {
+				Recordings map[string]json.RawMessage `json:"recordings"`
+				Runs       map[string]json.RawMessage `json:"runs"`
+			}
+			if json.Unmarshal(raw, &snapshot) == nil {
+				bi.Recordings = len(snapshot.Recordings)
+				bi.Runs = len(snapshot.Runs)
+			}
+		}
+		out = append(out, bi)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].CreatedAt.After(out[j].CreatedAt) })
+	if len(out) > 20 {
+		out = out[:20]
+	}
+	return out
+}
+
+// RestoreBackup 用备份覆盖当前数据。
+//
+// 约定：恢复前先把"当前状态"再存一份快照，避免恢复错了没法回头。
+// name 只允许 data/backups 下的文件，防止路径穿越。
+func (db *DB) RestoreBackup(name string) error {
+	name = filepath.Base(strings.TrimSpace(name))
+	if !strings.HasPrefix(name, "uitest-") || !strings.HasSuffix(name, ".json") {
+		return errors.New("备份文件名不合法")
+	}
+	raw, err := os.ReadFile(filepath.Join(db.backupDir(), name))
+	if err != nil {
+		return fmt.Errorf("读取备份失败：%w", err)
+	}
+	var snapshot Data
+	if err := json.Unmarshal(raw, &snapshot); err != nil {
+		return fmt.Errorf("备份文件不是合法数据：%w", err)
+	}
+	if snapshot.Recordings == nil {
+		snapshot.Recordings = map[string]*model.Recording{}
+	}
+	if snapshot.Runs == nil {
+		snapshot.Runs = map[string]*model.Run{}
+	}
+	if snapshot.Elements == nil {
+		snapshot.Elements = map[string]*model.Element{}
+	}
+	if snapshot.Settings.Browser.StepDelayMS == 0 {
+		snapshot.Settings = model.DefaultSettings()
+	}
+
+	// 先把当前数据快照一份，再覆盖
+	db.snapshotBackup()
+
+	db.mu.Lock()
+	db.data = snapshot
+	db.dirty = true
+	db.mu.Unlock()
+	return db.saveNow()
 }

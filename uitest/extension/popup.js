@@ -23,6 +23,9 @@
     startBtn: document.getElementById('startBtn'),
     stopBtn: document.getElementById('stopBtn'),
     recMeta: document.getElementById('recMeta'),
+    recorderRow: document.getElementById('recorderRow'),
+    recorderText: document.getElementById('recorderText'),
+    injectBtn: document.getElementById('injectBtn'),
     note: document.getElementById('note'),
     noteBtn: document.getElementById('noteBtn'),
     enterSwitch: document.getElementById('enterSwitch'),
@@ -98,6 +101,7 @@
     el.startBtn.classList.toggle('is-hidden', active);
     el.stopBtn.classList.toggle('is-hidden', !active);
     el.recMeta.classList.toggle('is-hidden', !active);
+    el.recorderRow.classList.toggle('is-hidden', !active);
     el.recName.disabled = active;
     if (active) {
       el.recMeta.textContent = (state.recordingName || '未命名录制') + ' · ' + (state.stepCount || 0) + ' 步';
@@ -111,6 +115,21 @@
     }
 
     renderRecent(state);
+  }
+
+  /** 渲染"录制脚本是否就位"
+   *  未就位 = 页面在装/更新插件之前就已打开，或页面不允许注入（chrome:// 等系统页）。
+   *  这种情况过去只会录到 background 自动补的 navigate 步骤（locator=css=html），
+   *  看起来就像"定位全是 css=html"。
+   */
+  function renderRecorder(info) {
+    if (!info) return;
+    var ok = info.readyInRecordingTab === true;
+    el.recorderText.textContent = ok
+      ? '录制脚本：已就位，操作会被记录'
+      : '录制脚本：未就位 → 刷新页面，或点右侧「注入录制脚本」';
+    el.recorderText.style.color = ok ? '' : '#b45309';
+    el.injectBtn.classList.toggle('is-hidden', ok);
   }
 
   /** 渲染最近录制列表 */
@@ -155,6 +174,7 @@
   async function refreshState() {
     var resp = await send({ type: 'state' });
     if (resp && resp.state) render(resp.state);
+    if (resp && resp.recorder) renderRecorder(resp.recorder);
   }
 
   /** ping：拿状态 + 探测 /api/health */
@@ -230,6 +250,7 @@
         showError((resp && resp.error) || '停止录制失败');
         return;
       }
+      if (resp.warn) showError(resp.warn);
       el.note.value = '';
       lastAnnotation = '';
     } finally {
@@ -261,6 +282,21 @@
   });
 
   /** 回车键开关（本地 storage，content 每次按键读取） */
+  el.injectBtn.addEventListener('click', async function () {
+    showError('');
+    el.injectBtn.disabled = true;
+    try {
+      var resp = await send({ type: 'inject' });
+      if (!resp || !resp.ok) {
+        showError((resp && resp.error) || '注入失败：该页面不允许注入脚本（chrome:// 等系统页）');
+        return;
+      }
+      await refreshState();
+    } finally {
+      el.injectBtn.disabled = false;
+    }
+  });
+
   el.enterSwitch.addEventListener('change', function () {
     showError('');
     var on = el.enterSwitch.checked === true;

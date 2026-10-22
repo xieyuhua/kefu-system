@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"net/http"
 	"os"
@@ -26,15 +27,19 @@ import (
 
 // Status 内置浏览器状态（给控制台看）。
 type Status struct {
-	Running     bool   `json:"running"`
-	Executable  string `json:"executable"`
-	DebugURL    string `json:"debug_url"`
-	ProfileDir  string `json:"profile_dir"`
-	Version     string `json:"version"`
-	Headless    bool   `json:"headless"`
-	LogFile     string `json:"log_file"`
-	Attached    bool   `json:"attached"`
-	DebugURLSet string `json:"debug_url_set"`
+	Running     bool     `json:"running"`
+	Executable  string   `json:"executable"`
+	DebugURL    string   `json:"debug_url"`
+	ProfileDir  string   `json:"profile_dir"`
+	Version     string   `json:"version"`
+	Headless    bool     `json:"headless"`
+	LogFile     string   `json:"log_file"`
+	Attached    bool     `json:"attached"`
+	DebugURLSet string   `json:"debug_url_set"`
+	KernelDir   string   `json:"kernel_dir"`
+	LaunchFlags []string `json:"launch_flags"`
+	RendererOK  bool     `json:"renderer_ok"`
+	Probe       Probe    `json:"probe"`
 }
 
 // Manager 浏览器进程与 CDP 连接的管理者。
@@ -46,24 +51,43 @@ type Manager struct {
 	external   string // 非空=连接已有浏览器
 	attached   bool   // true=外部实例（Close 只断开连接，不杀进程）
 	profileDir string
-	port       int
-	cmd        *exec.Cmd
-	client     *cdp.Client
-	version    string
-	debugURL   string
-	logFile    string
+	kernelDir  string   // 自带内核目录（默认 <data>/../browser）
+	extra      []string // 额外启动参数
+	resolved   []string // 探测成功过的启动参数组合（记住它，下次直接用）
+	// attemptProfile 本次尝试使用的 user-data-dir（重试时换独立目录，避开 profile 占用）
+	attemptProfile string
+	// baseProfile 去掉重试后缀的基准 profile 目录（否则每次重启名字都会再叠一层）
+	baseProfile string
+	launchFlags []string
+	rendererOK  bool
+	lastProbe   Probe
+	onResolve   func(flags []string, profileDir string) // 探测成功后回调：持久化可用参数与 profile 目录
+	port        int
+	cmd         *exec.Cmd
+	client      *cdp.Client
+	version     string
+	debugURL    string
+	logFile     string
+
+	// 启动/关闭期间会长时间持有 mu，Status() 用这份快照兜底，避免控制台接口被拖死
+	cacheMu      sync.Mutex
+	cachedStatus Status
 }
 
 // NewManager 创建管理器（不会立刻启动浏览器）。
 func NewManager(cfg model.BrowserSettings, profileDir, logDir string) *Manager {
 	return &Manager{
-		exe:        cfg.Executable,
-		headless:   cfg.Headless,
-		noSandbox:  cfg.NoSandbox,
-		external:   strings.TrimRight(cfg.DebugURL, "/"),
-		profileDir: profileDir,
-		logFile:    filepath.Join(logDir, "browser.log"),
-		port:       9222,
+		exe:         cfg.Executable,
+		headless:    cfg.Headless,
+		noSandbox:   cfg.NoSandbox,
+		external:    strings.TrimRight(cfg.DebugURL, "/"),
+		profileDir:  firstNonEmpty(cfg.ProfileDir, profileDir),
+		baseProfile: stripRetrySuffix(firstNonEmpty(cfg.ProfileDir, profileDir)),
+		kernelDir:   cfg.KernelDir,
+		extra:       append([]string(nil), cfg.ExtraArgs...),
+		resolved:    append([]string(nil), cfg.ResolvedFlags...),
+		logFile:     filepath.Join(logDir, "browser.log"),
+		port:        9222,
 	}
 }
 
@@ -72,6 +96,11 @@ func (m *Manager) ApplySettings(cfg model.BrowserSettings) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.exe = cfg.Executable
+	m.kernelDir = cfg.KernelDir
+	m.extra = append([]string(nil), cfg.ExtraArgs...)
+	if len(cfg.ResolvedFlags) > 0 {
+		m.resolved = append([]string(nil), cfg.ResolvedFlags...)
+	}
 	if m.cmd == nil && !m.attached {
 		m.headless = cfg.Headless
 		m.noSandbox = cfg.NoSandbox
@@ -89,9 +118,26 @@ func (m *Manager) ApplySettings(cfg model.BrowserSettings) {
 }
 
 // Status 当前状态。
+//
+// 注意：浏览器启动/关闭期间会长时间持有 m.mu（要等进程、等 CDP、做探测），
+// 这里用 TryLock + 快照，保证控制台的 /api/health、/api/browser/status 不会跟着卡住。
 func (m *Manager) Status() Status {
-	m.mu.Lock()
+	if !m.mu.TryLock() {
+		m.cacheMu.Lock()
+		st := m.cachedStatus
+		m.cacheMu.Unlock()
+		return st
+	}
 	defer m.mu.Unlock()
+	st := m.snapshotLocked()
+	m.cacheMu.Lock()
+	m.cachedStatus = st
+	m.cacheMu.Unlock()
+	return st
+}
+
+// snapshotLocked 生成状态快照（调用方需持有 m.mu）。
+func (m *Manager) snapshotLocked() Status {
 	st := Status{
 		Running:     m.client != nil,
 		Executable:  m.exe,
@@ -102,16 +148,28 @@ func (m *Manager) Status() Status {
 		LogFile:     m.logFile,
 		Attached:    m.attached,
 		DebugURLSet: m.external,
-	}
-	if m.attached {
-		st.Executable = "（外部浏览器）" + st.Executable
+		KernelDir:   m.kernelDir,
+		LaunchFlags: append([]string(nil), m.launchFlags...),
+		RendererOK:  m.rendererOK,
+		Probe:       m.lastProbe,
 	}
 	if st.Executable == "" {
 		if p, err := FindExecutable(""); err == nil {
 			st.Executable = p
 		}
 	}
+	if m.attached {
+		st.Executable = "（外部浏览器）" + st.Executable
+	}
 	return st
+}
+
+// recordSnapshotLocked 把当前状态写进快照缓存（调用方需持有 m.mu）。
+func (m *Manager) recordSnapshotLocked() {
+	st := m.snapshotLocked()
+	m.cacheMu.Lock()
+	m.cachedStatus = st
+	m.cacheMu.Unlock()
 }
 
 // Client 返回 CDP 连接（可能为 nil）。
@@ -122,6 +180,11 @@ func (m *Manager) Client() *cdp.Client {
 }
 
 // Ensure 确保浏览器已启动并连上 CDP。
+//
+// 启动带自愈：按 flagCandidates() 逐个尝试启动参数组合，每组启动后都用
+// ProbeRenderer 做一次真实页面探测（能拿到 document.title 才算渲染进程活着）。
+// 命中可用组合后通过 onResolve 持久化，下次直接用它，不再反复试。
+// 这样"浏览器窗口打得开、但页面全是白的/打不开任何网站"的环境可以自动恢复。
 func (m *Manager) Ensure(ctx context.Context) (*cdp.Client, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -130,6 +193,7 @@ func (m *Manager) Ensure(ctx context.Context) (*cdp.Client, error) {
 		case <-m.client.Closed():
 			m.client = nil
 			m.cmd = nil
+			m.rendererOK = false
 		default:
 			return m.client, nil
 		}
@@ -146,86 +210,103 @@ func (m *Manager) Ensure(ctx context.Context) (*cdp.Client, error) {
 		if port, perr := parsePort(m.external); perr == nil {
 			m.port = port
 		}
+		probe := probeWith(ctx, client, m.port, "about:blank")
+		m.rendererOK = probe.OK
+		m.lastProbe = probe
+		if !probe.OK {
+			return nil, fmt.Errorf("已连上 %s，但页面无法渲染：%s", m.external, probe.Error)
+		}
 		return client, nil
 	}
 	if runtime.GOOS != "windows" && runtime.GOOS != "darwin" && runtime.GOOS != "linux" {
 		return nil, errors.New("不支持的操作系统")
 	}
-	exe := m.exe
-	if exe == "" {
-		p, err := FindExecutable("")
-		if err != nil {
-			return nil, err
+
+	// 先看有没有上一次运行遗留、进程还活着的实例可以接管（否则 profile 被占用会让启动直接失败）
+	if client, port, version, aerr := adoptProfile(ctx, m.profileDir); aerr == nil {
+		m.client, m.port, m.version = client, port, version
+		m.debugURL = fmt.Sprintf("http://127.0.0.1:%d", port)
+		probe := probeWith(ctx, client, port, "about:blank")
+		if probe.OK {
+			m.rendererOK = true
+			m.lastProbe = probe
+			m.recordSnapshotLocked()
+			log.Printf("[browser] 复用了已在运行的浏览器实例（调试端口 %d）", port)
+			return client, nil
 		}
-		exe = p
-		m.exe = p
-	}
-	if _, err := os.Stat(exe); err != nil {
-		return nil, fmt.Errorf("浏览器可执行文件不存在: %s", exe)
-	}
-	if err := os.MkdirAll(m.profileDir, 0o755); err != nil {
-		return nil, err
-	}
-	if err := os.MkdirAll(filepath.Dir(m.logFile), 0o755); err != nil {
-		return nil, err
+		log.Printf("[browser] 遗留实例的渲染进程不可用，先关掉它：%s", probe.Error)
+		_ = client.Call(context.Background(), "", "Browser.close", nil, nil)
+		_ = client.Close()
+		m.client = nil
+		time.Sleep(1800 * time.Millisecond)
 	}
 
-	port, err := freePort(9222)
+	// 再找一遍"数据目录里还活着的兄弟实例"（强杀服务端后常见孤儿进程，接管比重启快）
+	if client, port, version, dir, aerr := adoptAnySibling(ctx, m.baseProfile); aerr == nil {
+		m.client, m.port, m.version = client, port, version
+		m.profileDir = dir
+		m.debugURL = fmt.Sprintf("http://127.0.0.1:%d", port)
+		m.rendererOK = true
+		m.recordSnapshotLocked()
+		log.Printf("[browser] 接管了已在运行的浏览器实例（profile=%s，端口 %d）", dir, port)
+		return client, nil
+	}
+
+	exe, err := m.resolveExeLocked()
 	if err != nil {
 		return nil, err
 	}
-	m.port = port
 
-	args := []string{
-		fmt.Sprintf("--remote-debugging-port=%d", port),
-		"--remote-allow-origins=*",
-		"--user-data-dir=" + m.profileDir,
-		"--no-first-run",
-		"--no-default-browser-check",
-		"--disable-session-crashed-bubble",
-		"--disable-popup-blocking",
-		"--disable-features=Translate,msEdgeSidebarV2,msImplicitSignin,msEdgeCollections",
-		"--start-maximized",
-		"about:blank",
-	}
-	if m.headless {
-		args = append([]string{"--headless=new", "--disable-gpu", "--window-size=1440,960"}, args...)
-	}
-	if m.noSandbox {
-		// 受限环境里渲染进程可能因 AppContainer 注册失败而崩溃，关闭沙箱
-		args = append([]string{"--no-sandbox", "--disable-dev-shm-usage"}, args...)
-	}
-
-	logf, _ := os.OpenFile(m.logFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
-	cmd := exec.Command(exe, args...)
-	if logf != nil {
-		cmd.Stdout = logf
-		cmd.Stderr = logf
-	}
-	if err := cmd.Start(); err != nil {
-		if logf != nil {
-			logf.Close()
+	// profile 里可能残留上次被强杀留下的单实例锁：不清掉的话新进程会"委托给已有会话"直接退出
+	clearStaleProfileLocks(m.profileDir)
+	m.cleanStaleRetryProfiles()
+	cands := m.flagCandidates()
+	var lastErr error
+	for i, flags := range cands {
+		if ctx.Err() != nil {
+			lastErr = errors.New("启动超时（环境过慢或浏览器被拦截）")
+			break
 		}
-		return nil, fmt.Errorf("启动浏览器失败: %w", err)
+		// 第一次用正式 profile，后续重试换「唯一」目录：
+		// Chromium 的 profile 里有 SingletonLock，复用同名目录时残留锁会让新进程
+		// "委托给已有会话"然后直接退出（表现就是调试端口永远等不到）。
+		if i == 0 {
+			m.attemptProfile = ""
+		} else {
+			m.attemptProfile = fmt.Sprintf("%s-retry%d-%d", m.baseProfile, i, time.Now().UnixNano()%1e6)
+		}
+		log.Printf("[browser] 启动尝试 %d/%d，附加参数：%v", i+1, len(cands), flags)
+		if err := m.launchOnce(ctx, exe, flags); err != nil {
+			lastErr = err
+			log.Printf("[browser] 启动失败：%v", err)
+			continue
+		}
+		probe := probeWith(ctx, m.client, m.port, "about:blank")
+		if probe.OK {
+			m.rendererOK = true
+			m.lastProbe = probe
+			// 成功的组合与它用的 profile 目录一起固化：下次可以直接接管同一实例，
+			// 登录态也能保留（重试目录只在这一轮用，成功后就成为正式目录）
+			if m.attemptProfile != "" {
+				m.profileDir = m.attemptProfile
+				m.attemptProfile = ""
+			}
+			if m.onResolve != nil {
+				m.onResolve(append([]string(nil), flags...), m.profileDir)
+			}
+			return m.client, nil
+		}
+		lastErr = fmt.Errorf("浏览器已启动但页面打不开（%s）。启动参数：%v",
+			probe.Error, strings.Join(flags, " "))
+		log.Printf("[browser] 该组合不可用：%s", probe.Error)
+		m.rendererOK = false
+		m.lastProbe = probe
+		m.killLocked()
 	}
-	m.cmd = cmd
-	m.debugURL = fmt.Sprintf("http://127.0.0.1:%d", port)
-
-	wsURL, version, verr := waitForDebugger(ctx, port, 30*time.Second)
-	if verr != nil {
-		_ = cmd.Process.Kill()
-		m.cmd = nil
-		return nil, verr
+	if lastErr == nil {
+		lastErr = errors.New("浏览器启动失败")
 	}
-	client, derr := cdp.Dial(ctx, wsURL)
-	if derr != nil {
-		_ = cmd.Process.Kill()
-		m.cmd = nil
-		return nil, fmt.Errorf("连接 CDP 失败: %w", derr)
-	}
-	m.client = client
-	m.version = version
-	return client, nil
+	return nil, fmt.Errorf("%w；可查看 data/logs/browser.log，或在设置里改用自带内核 / 连接已有浏览器", lastErr)
 }
 
 // VersionValue 返回浏览器版本（来自 CDP 探测）。
@@ -394,7 +475,8 @@ func probeDebugger(ctx context.Context, base string, timeout time.Duration) (str
 		}
 		time.Sleep(250 * time.Millisecond)
 	}
-	return "", "", errors.New("等待浏览器调试端口超时（30s），请检查浏览器是否被安全软件阻拦")
+	return "", "", fmt.Errorf("等待浏览器调试端口超时（%s）：浏览器可能被安全软件阻拦，"+
+		"或它把启动请求转交给了已在运行的实例（日志里会出现「正在现有浏览器会话中打开」）", timeout)
 }
 
 /* ------------------------------------------------------------------ Page */

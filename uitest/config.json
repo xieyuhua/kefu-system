@@ -9,7 +9,7 @@
   },
   "browser": {
     "executable": "",
-    "headless": false, "no_sandbox": false, "debug_url": "",
+    "headless": false, "no_sandbox": false, "debug_url": "", "kernel_dir": "", "extra_args": [],
     "step_delay_ms": 260,
     "action_timeout_ms": 15000
   },

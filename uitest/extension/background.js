@@ -37,7 +37,9 @@ const DEFAULT_STATE = {
 const DEFAULT_INTERNAL = {
   lastStepAction: '',
   lastStepLocatorValue: '',
-  lastNavUrl: ''
+  lastNavUrl: '',
+  readyTabId: null,   // 最近一次内容脚本报到来自哪个标签页
+  readyAt: 0          // 报到时间戳（用于判断"录制脚本是否就位"）
 };
 
 /* ---------------- 小工具 ---------------- */
@@ -223,6 +225,44 @@ async function handlePing() {
   return { ok: true, state, serverOk, health, error };
 }
 
+/* ---------------- 内容脚本注入 ---------------- */
+
+/**
+ * 把录制脚本注入指定标签页。
+ * 为什么需要它：content_scripts 只在"页面加载时"注入，所以
+ *   - 装/更新插件前就打开的页面不会录制；
+ *   - 录制中途新开的标签页也不会录制。
+ * 这两种情况过去只会录到 background 自动补的 navigate 步骤（locator=css=html），
+ * 看起来就像"定位全是 css=html"。这里用 scripting 权限补注入，content.js 内部有
+ * 幂等守卫，重复注入不会重复记录。
+ */
+async function injectRecorder(tabId) {
+  if (typeof tabId !== 'number') return { ok: false, error: '缺少 tabId' };
+  try {
+    await chrome.scripting.executeScript({
+      target: { tabId: tabId, allFrames: true },
+      files: ['uitest-keys.js', 'content.js']
+    });
+    return { ok: true };
+  } catch (e) {
+    // chrome:// 、扩展商店、PDF 等页面注入必然失败，属于预期
+    return { ok: false, error: (e && e.message) || String(e) };
+  }
+}
+
+/** 录制中把「当前活动标签页」切换为录制标签页（用户在别的标签页继续操作时不再丢步骤） */
+async function adoptTab(tabId, tab) {
+  const state = await getState();
+  if (!state.active || !state.recordingId) return;
+  const url = (tab && tab.url) || '';
+  if (!/^https?:\/\//i.test(url)) return;          // chrome:// 等页面不接管
+  if (state.tabId === tabId) return;
+  state.tabId = tabId;
+  await saveState(state, tabId);
+  await injectRecorder(tabId);
+  pushToPopup(state);
+}
+
 /** start：创建录制并在本地进入录制态 */
 async function handleStart(msg) {
   const state0 = await getState();
@@ -265,7 +305,9 @@ async function handleStart(msg) {
   await saveState(next, tabId);
   // 起始页视为"已记录"，避免第一条 tabs.onUpdated 重复记录起始 URL
   await saveInternal({ lastStepAction: '', lastStepLocatorValue: '', lastNavUrl: startUrl });
-  return { ok: true, recording };
+  // 关键：立即把录制脚本注入录制标签页，用户无需手动刷新页面
+  const injected = await injectRecorder(tabId);
+  return { ok: true, recording, injected };
 }
 
 /** 把内存里的步骤清洗成 API 要求的入参（去掉 id / recording_id / index） */
@@ -372,14 +414,56 @@ async function handleElement(msg) {
 }
 
 /** state：返回状态，并附带请求方的标签页 id（content 用来判断自己是不是录制标签页） */
-async function handleState(sender) {
+/** ready：内容脚本注入成功后的报到（用于 popup 显示"录制脚本是否就位"） */
+async function handleReady(sender) {
   const state = await getState();
   const selfTabId = sender && sender.tab && typeof sender.tab.id === 'number' ? sender.tab.id : null;
+  const internal = await getInternal();
+  await saveInternal(Object.assign({}, internal, {
+    readyTabId: selfTabId,
+    readyAt: Date.now()
+  }));
   return {
     ok: true,
     state,
     selfTabId,
     recordingHere: !!(state.active && selfTabId !== null && state.tabId === selfTabId)
+  };
+}
+
+/** inject：把录制脚本补注入到当前活动标签页（页面在装插件之前就打开时的补救） */
+async function handleInject(msg) {
+  let tabId = typeof msg.tabId === 'number' ? msg.tabId : null;
+  if (tabId === null) {
+    const tab = await currentTab();
+    if (tab && typeof tab.id === 'number') tabId = tab.id;
+  }
+  if (tabId === null) return { ok: false, error: '找不到当前标签页' };
+  const state = await getState();
+  if (state.active) {
+    // 顺便把录制标签页切到这一页
+    state.tabId = tabId;
+    await saveState(state, tabId);
+  }
+  const res = await injectRecorder(tabId);
+  return Object.assign({ ok: res.ok, error: res.error || '', tabId: tabId, state: await getState() }, res);
+}
+
+async function handleState(sender) {
+  const state = await getState();
+  const selfTabId = sender && sender.tab && typeof sender.tab.id === 'number' ? sender.tab.id : null;
+  const internal = await getInternal();
+  return {
+    ok: true,
+    state,
+    selfTabId,
+    recordingHere: !!(state.active && selfTabId !== null && state.tabId === selfTabId),
+    recorder: {
+      readyTabId: typeof internal.readyTabId === 'number' ? internal.readyTabId : null,
+      readyAt: internal.readyAt || 0,
+      readyInRecordingTab: !!(state.active && typeof internal.readyTabId === 'number' &&
+        internal.readyTabId === state.tabId && (Date.now() - (internal.readyAt || 0) < 15000))
+    }
   };
 }
 
@@ -429,21 +513,26 @@ async function finishRecording(reason) {
   await saveState(next, oldTabId);            // oldTabId 让内容脚本能收到"已停止"并移除浮层
   await saveInternal(DEFAULT_INTERNAL);
 
+  const warn = stepCount > 0 ? '' :
+    '这次没有录到任何操作步骤：被测页面可能在安装/更新插件之前就已打开，' +
+    '请在录制状态下点「注入录制脚本」或刷新页面后再操作一次。';
+
   if (patchError) {
     return {
       ok: false,
       error: '本机已停止录制，但服务端保存失败：' + patchError,
       recordingId: recordingId,
       stepCount: stepCount,
+      warn: warn,
       reason: reason || ''
     };
   }
-  return { ok: true, recordingId: recordingId, stepCount: stepCount, reason: reason || '' };
+  return { ok: true, recordingId: recordingId, stepCount: stepCount, warn: warn, reason: reason || '' };
 }
 
 /* ---------------- 导航步骤 ---------------- */
 
-/** 构造 navigate 步骤（locator 用 html 占位，执行时只做地址跳转） */
+/** 构造 navigate 步骤（locator 标为 url：执行时只按 value 跳转，不做元素定位） */
 function buildNavigateStep(url) {
   let page = url;
   try {
@@ -455,7 +544,7 @@ function buildNavigateStep(url) {
   return {
     action: 'navigate',
     annotation: '打开页面 ' + url,
-    locator: { strategy: 'css', value: 'html', fallbacks: [], frame_url: '' },
+    locator: { strategy: 'url', value: url, fallbacks: [], frame_url: '' },
     target: {
       tag: 'html',
       type: '',
@@ -522,6 +611,10 @@ async function dispatch(msg, sender) {
       return handleElement(msg);
     case 'state':
       return handleState(sender);
+    case 'ready':
+      return handleReady(sender);
+    case 'inject':
+      return handleInject(msg);
     case 'setServer':
       return handleSetServer(msg);
     default:
@@ -543,6 +636,18 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   if (!changeInfo || changeInfo.status !== 'complete') return;
   recordNavigate(tabId, tab).catch(() => { /* 静默失败，不打断用户操作 */ });
+  // 页面整页刷新后内容脚本会重新注入，这里不做任何事；但如果是录制标签页刚加载完，补一次注入兜底
+  getState().then((state) => {
+    if (state.active && state.tabId === tabId) injectRecorder(tabId).catch(() => {});
+  }).catch(() => {});
+});
+
+// 录制中切换标签页：把录制标签页跟过去（否则新标签页里的操作全都录不到）
+chrome.tabs.onActivated.addListener((info) => {
+  if (!info || typeof info.tabId !== 'number') return;
+  chrome.tabs.get(info.tabId)
+    .then((tab) => adoptTab(info.tabId, tab))
+    .catch(() => { /* 标签页可能已关闭 */ });
 });
 
 chrome.tabs.onRemoved.addListener((tabId) => {

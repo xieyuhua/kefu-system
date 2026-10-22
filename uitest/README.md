@@ -23,6 +23,7 @@ uitest/
 ├── extension/              浏览器插件（MV3 录制端）
 ├── demo/                   示例被测页面（演练用，无真实后端）
 ├── scripts/smoke.ps1       端到端自检（造录制 → 生成数据 → 真跑 → 打印结果）
+├── scripts/fetch-browser.ps1  下载一份独立内核（Chrome for Testing）到 browser/
 └── docs/API.md             前后端唯一契约
 ```
 
@@ -72,15 +73,23 @@ powershell -ExecutionPolicy Bypass -File .\stop.ps1      # 停止
 
 ### 4. 生成数据 + 执行
 
-在录制详情页：
+在录制详情页（「数据准备」面板**默认就是悬浮窗**，可拖动、可缩放：
 
-1. 右侧「数据准备指令」写一句中文，例如：`商品名称带时间戳，价格 99-299，库存 50，分类选"服务类"`
+- 按住面板标题栏拖动，右下角拉伸改尺寸，位置/尺寸会记住；
+- 「收起」只留标题栏，再点「展开」恢复；双击标题栏也能收起/展开；
+- 只有悬浮一种形态（没有"停靠"），位置/尺寸记在 localStorage：`uitest.pos.data`）：
+
+1. 「数据准备指令」写一句中文，例如：`商品名称带时间戳，价格 99-299，库存 50，分类选"服务类"`
 2. 点「AI 生成测试数据」→ 得到一份 key / 中文名 / 值 / 生成理由 的表格，可逐项手改
 3. 点「执行测试」→ 服务端用内置浏览器真跑，弹出 `#/runs/{id}` 运行详情
 
 ### 5. 看全过程
 
 运行详情页有：数据准备结果、**逐步结果**（状态 / 实际使用的定位 / 是否自愈 / 耗时 / 失败原因 / 失败截图）、**实时日志**（SSE 推送，跟着滚）。
+
+**实时日志默认就是悬浮窗**（右下角，可拖可缩放）：**按住标题栏拖动**，右下角拉伸改尺寸，
+「收起」只留标题栏、再点「展开」恢复；位置/尺寸记在 localStorage（`uitest.logPos`），双击标题栏也能收起/展开。
+面板只有悬浮一种形态，不存在"停靠"。
 
 ---
 
@@ -106,6 +115,73 @@ ut_<fnv1a32( 标签名 | type | id | name | aria-label | placeholder | 业务标
 
 每个步骤同时保存：`uid` → `id` → `name` → `css` → `text` / `label` / `placeholder`。
 主定位失效会自动依次尝试下一级，日志里会写明实际用了哪一条。
+
+### Vue / React 项目重新打包后怎么定位（2.0 重建安全）
+
+Vue/React 每次打包都会变一批"构建产物"，这些**一律不参与定位**：
+
+| 会变的东西 | 例子 | 处理 |
+|---|---|---|
+| CSS Modules / scoped hash 类名 | `.product-card_1a2b3c`、`.css-9f8e7d`、`.sc-bdVaJa` | 完全不进选择器（css 只用 `tag:nth-of-type` 结构） |
+| 作用域属性 | `data-v-7ba5bd90` | 忽略 |
+| 组件库自动 id | `el-id-3812-12`、`:r1:`、`input-3`、`rc_select_7` | 命中"不稳定 token"规则就跳过，不写进 key、不当 id 定位 |
+
+只认业务语义。定位链（从最稳到最不稳）：
+
+```
+uid（data-uitest-id，确定性算法：tag|type|稳定id|name|aria|placeholder|label|表单项标题|表格列）
+  → attr（data-testid / data-test / data-cy 等你们自己写的稳定属性）
+  → id / name（仅当"看起来稳定"）
+  → label（表单项标题文字）→ near（标题 → 同一表单项里的控件）
+  → role（ARIA 角色 + 按钮文字）→ text
+  → cell（表格行文字 + 按钮文字，行内操作神器）
+  → placeholder → css（纯结构）→ xpath
+全失败 → 元素指纹自愈打分（表单项标题/列名/name/placeholder 都参与打分），唯一最高分才认
+```
+
+几个关键工程细节（都是踩坑后改的）：
+
+- **表单项标题只认最近的精确容器**：`formItemOf` 先试 `.el-form-item / .ant-form-item …`，
+  再退到模糊类名，否则 `.el-form-item__content` 会抢先命中，导致三个输入框都叫「商品名称」。
+- **`near` 取最内层容器**：祖先容器（`#app`、`body`、`.el-form`）里也含标题文字，
+  按文档顺序取第一个会"填价格填到商品名称里"，所以按"后代元素最少"选。
+- **按钮不走 label/near**：按钮文字会被误当成表单项标题、抓到旁边输入框；
+  按钮只走 `cell` / `role` / `text`。
+- **表格行指纹用行首单元格文字**，不用整行文本（改版加一列就变）。
+- **同签名元素自动加 `_2/_3` 后缀**去重，保证 key 在本页唯一。
+
+验证方式（`demo/vue-v1.html` / `demo/vue-v2.html` 是刻意造的两个"打包版本"）：
+在 A 版录制 → 到 B 版（hash 全变、id 全变、多一层包装 div、表格多一列、行内按钮顺序调换）回放，
+实测 **6/6 全部由 uid 直接命中**。控制台里每个定位还会显示 **稳 / 中 / 弱** 徽章，
+弱定位（css/xpath/text）建议跑一次「把自愈定位写回录制」沉淀成 uid。
+
+### 三项「辅助功能」（设置页可逐项开关）
+
+| 开关 | 做什么 | 关掉会怎样 |
+|---|---|---|
+| **中文标题自动转字段名** | 录制时用业务词典把中文标签转成英文字段名：`记住密码` → `remember_password`、`商品名称` → `product_name`、`价格（元）` → `price`。只给"要填数据"的动作生成，按钮/断言不给 | 纯中文标签会退化成 `field_25` 这种键，AI 生成数据与日志都看不懂 |
+| **缺 data-testid 的元素标红** | 录制详情里把没有 `data-testid / data-test / data-cy` 一类稳定锚点的步骤打「缺 testid」红标，并在顶部汇总列出是哪几个元素，方便直接推给前端 | 不显示提醒，只能自己看定位策略 |
+| **执行时自动刷新过期的 uid** | 某步的 uid 过期、但靠兜底策略（表单项标题 / 按钮文字 / 表格行）命中了元素时，自动把新 uid 写回录制 | 只在日志里提示"uid 已过期"，不落盘 |
+
+三个开关都通过 `PUT /api/settings` 的 `assist` 段持久化，控制台从 `/api/health` 的 `assist` 段拿到当前值。
+
+### 一键刷新定位（老录制升级）
+
+录制详情右上角「**一键刷新定位**」= `POST /api/recordings/{id}/rebind`：
+打开起始页 → 逐步重新定位 → 把元素当前的 `data-uitest-id` 写回录制（旧定位降级为兜底），
+顺便按业务词典修正 `data_key`。
+
+注意它是**语义优先**的：老录制的 `css=input.el-input__inner` 这种定位本身有歧义（三个输入框都会命中第一个），
+所以刷新时会先用「表单项标题 → 同一表单项里的控件」重新定位，失败才退回原定位，避免把错误固化。
+
+实测：一条 css 定位 + `field_25` 的老录制，刷新后 5 个定位全部升级成 `uid`，
+把起始页换成另一个打包版本（hash/id/包装层全变）后执行 **7/7 通过**。
+
+### 数据快照（误删可回退）
+
+服务端每次启动都会把 `data/uitest.json` 快照到 `data/backups/`（保留最近 5 份）。
+设置页「数据快照」列出每份的时间/内容条数/大小，点「恢复」即 `POST /api/backups/{name}/restore`。
+恢复会用快照覆盖当前数据，**覆盖前会先把当前状态再存一份快照**，所以误恢复也能退回。
 
 ### 第 3 层：自愈（self-healing）+ 回写
 
@@ -146,10 +222,48 @@ ut_<fnv1a32( 标签名 | type | id | name | aria-label | placeholder | 业务标
   "headless": false,       // true=无头
   "step_delay_ms": 260,    // 每步之间等多久（给前端渲染留时间）
   "action_timeout_ms": 15000,
-  "no_sandbox": false,
-  "debug_url": ""          // 见下：连接已有浏览器
+  "no_sandbox": false,     // 渲染进程被杀时打开（下面「启动自愈」通常已自动处理）
+  "debug_url": "",         // 非空=连接已有浏览器，不再自己拉起
+  "kernel_dir": "",        // 自带内核目录；留空用自己的 <程序目录>/browser
+  "extra_args": []         // 额外启动参数（高级）
+  // resolved_flags 由服务端写回：它自动试出来的可用参数组合，下次直接复用
 }
 ```
+
+### 启动自愈：为什么"浏览器打得开、但打不开网页"
+
+受限环境（容器 / 受限 Job 对象 / 安全软件拦截）里，Chromium 的**渲染进程**会因为沙箱注册失败
+直接崩掉：窗口能出来，但任何网址都是白屏，CDP 报 `Target crashed`，日志里是
+`AppContainerRegisterSid failed` / `Failed to get peer PID`。
+
+服务端不会就这么把锅甩给你，`Ensure()` 里做了三件事：
+
+1. **逐组试参数**：默认 → `--no-sandbox` → `--no-sandbox --in-process-gpu --disable-gpu` …，
+   每启动一次都**真实打开一个页面并读 `document.title`** 来判定渲染进程是否活着；
+2. **记住能用的组合**（`resolved_flags` 落盘），下次启动直接用，不再试错；
+3. **接管/清理遗留实例**：server 重启后如果旧浏览器还活着，用 `<profile>/DevToolsActivePort` 接管；
+   接管到但渲染已坏的，先 `Browser.close` 再重启；重试换独立 profile 目录，避免 profile 被占用；
+   成功的那套「参数 + profile 目录」会固化到设置里，下次直接复用（登录态也因此保留）。
+
+> 时间预期：正常机器首次自适应约 20s，之后启动 1s 内；如果浏览器进程被**强杀**（例如直接 taskkill 服务端），
+> 那个 profile 目录要重新初始化，第一次启动会再花 10~40s，之后就快了。
+
+控制台「设置 → 诊断浏览器」会把这些一次性摊出来：内核路径、启动参数、页面标题、readyState、
+诊断结论、浏览器日志尾部。**"浏览器页面不支持 / 打不开网站"先点这个按钮。**
+
+### 用自带内核（不依赖系统浏览器）
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\fetch-browser.ps1            # 官方源
+powershell -ExecutionPolicy Bypass -File scripts\fetch-browser.ps1 -Mirror npmmirror   # 国内镜像
+```
+
+脚本会把 Chrome for Testing 解压到 `<项目>/browser/chrome-win64/chrome.exe`，
+服务端默认就优先用它（设置里 `kernel_dir` 留空即可）；也可以手工解压任意 Chromium 内核，
+然后在控制台「设置 → 自带内核目录」填那个目录。
+
+> 注意：自带内核是**全新用户目录**（`data/browser-profile`），不带你系统浏览器里的登录态、
+> 书签和插件。要复用已登录的会话，请用下面的「连接已有浏览器」。
 
 ### 方式二：连接一个已经开着的浏览器
 
@@ -222,6 +336,8 @@ powershell -ExecutionPolicy Bypass -File scripts\smoke.ps1
 5. 纯中文 `label`/`name` 推导出来的 `data_key` 会退化成 `field_N`，建议在控制台改成有意义的名字。
 6. 运行记录默认保留最近 200 条（`config.json` 的 `storage.keep_runs`）。
 7. 单机单进程设计：不做多租户、不做并发编排（可并行跑多个 run，但共享一个浏览器进程）。
+8. 内置浏览器只能访问**这台机器能访问的网络**：离线/内网环境里打开 baidu 这类外网站点必然失败，
+   这是网络限制不是浏览器问题；内网/本机地址（如 `http://127.0.0.1:8480/admin/`）正常。
 
 ---
 

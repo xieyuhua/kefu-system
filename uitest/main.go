@@ -65,25 +65,28 @@ func main() {
 	}
 	defer db.Close()
 
-	// 首次启动时把配置文件里的 AI / 浏览器设置灌入运行时设置
+	// 配置合并口径：设置里为空/零值时才采用 config.json 的值，
+	// 避免覆盖用户在控制台改过的设置（曾经的 bug：no_sandbox / debug_url 没被合并，
+	// 导致配置里写了也不生效）。
 	st := db.Settings()
+	def := model.DefaultSettings()
 	changed := false
-	if st.AI.BaseURL == "" && cfg.AI.BaseURL != "" {
-		st.AI.BaseURL = cfg.AI.BaseURL
+	mergeStr := func(dst *string, src string) {
+		if *dst == "" && src != "" {
+			*dst = src
+			changed = true
+		}
+	}
+	mergeStr(&st.AI.BaseURL, cfg.AI.BaseURL)
+	mergeStr(&st.AI.APIKey, cfg.AI.APIKey)
+	mergeStr(&st.AI.Model, cfg.AI.Model)
+	if st.AI.TimeoutSec == 0 {
+		st.AI.TimeoutSec = cfg.AI.TimeoutSec
 		changed = true
 	}
-	if st.AI.APIKey == "" && cfg.AI.APIKey != "" {
-		st.AI.APIKey = cfg.AI.APIKey
-		changed = true
-	}
-	if st.AI.Model == "" && cfg.AI.Model != "" {
-		st.AI.Model = cfg.AI.Model
-		changed = true
-	}
-	if st.Browser.Executable == "" && cfg.Browser.Executable != "" {
-		st.Browser.Executable = cfg.Browser.Executable
-		changed = true
-	}
+	mergeStr(&st.Browser.Executable, cfg.Browser.Executable)
+	mergeStr(&st.Browser.KernelDir, cfg.Browser.KernelDir)
+	mergeStr(&st.Browser.DebugURL, cfg.Browser.DebugURL)
 	if st.Browser.StepDelayMS == 0 {
 		st.Browser.StepDelayMS = cfg.Browser.StepDelayMS
 		changed = true
@@ -92,17 +95,52 @@ func main() {
 		st.Browser.ActionTimeoutMS = cfg.Browser.ActionTimeoutMS
 		changed = true
 	}
-	if st.AI.TimeoutSec == 0 {
-		st.AI.TimeoutSec = cfg.AI.TimeoutSec
+	if cfg.Browser.Headless && !st.Browser.Headless {
+		st.Browser.Headless = true
 		changed = true
+	}
+	if cfg.Browser.NoSandbox && !st.Browser.NoSandbox {
+		st.Browser.NoSandbox = true
+		changed = true
+	}
+	if len(st.Browser.ExtraArgs) == 0 && len(cfg.Browser.ExtraArgs) > 0 {
+		st.Browser.ExtraArgs = append([]string(nil), cfg.Browser.ExtraArgs...)
+		changed = true
+	}
+	if len(st.Browser.ResolvedFlags) == 0 && len(cfg.Browser.ResolvedFlags) > 0 {
+		st.Browser.ResolvedFlags = append([]string(nil), cfg.Browser.ResolvedFlags...)
+		changed = true
+	}
+	if st.Browser.StepDelayMS <= 0 {
+		st.Browser.StepDelayMS = def.Browser.StepDelayMS
 	}
 	if changed {
 		db.SaveSettings(st)
 	}
-
-	browserMgr := browser.NewManager(st.Browser,
+	// 自带内核目录：设置里没填就用 <数据目录的上级>/browser（把 Chrome for Testing 解压到这里即可）
+	kernelDir := st.Browser.KernelDir
+	if kernelDir == "" {
+		kernelDir = filepath.Join(filepath.Dir(dataDir), "browser")
+	}
+	browserCfg := st.Browser
+	browserCfg.KernelDir = kernelDir
+	log.Printf("[browser] 生效配置：kernel=%q profile=%q flags=%v debug_url=%q",
+		browserCfg.KernelDir, browserCfg.ProfileDir, browserCfg.ResolvedFlags, browserCfg.DebugURL)
+	browserMgr := browser.NewManager(browserCfg,
 		filepath.Join(dataDir, "browser-profile"),
 		filepath.Join(dataDir, "logs"))
+	// 自动探测到可用启动参数后持久化，下次直接复用（避免每次都试错启动）
+	browserMgr.SetResolveHook(func(flags []string, profileDir string) {
+		cur := db.Settings()
+		cur.Browser.ResolvedFlags = append([]string(nil), flags...)
+		cur.Browser.ProfileDir = profileDir
+		db.SaveSettings(cur)
+		if len(flags) == 0 {
+			log.Printf("[browser] 启动参数自适应结果：默认参数可用")
+		} else {
+			log.Printf("[browser] 启动参数自适应结果：%s（已记住，下次直接复用）", strings.Join(flags, " "))
+		}
+	})
 	eventBus := bus.New()
 	runner := engine.New(db, browserMgr, eventBus)
 	apiSrv := api.New(db, browserMgr, runner, eventBus, Version, cfg.Server.Port)
