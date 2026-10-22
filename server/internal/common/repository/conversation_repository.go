@@ -73,6 +73,22 @@ func (r *ConversationRepository) ListConversationsByCustomer(tenantID, customerI
 	return list, nil
 }
 
+// CountCustomerHandledByOthers 统计「与 customerID 同 external_id（跨渠道同一用户）的客户」
+// 是否有被 excludeAgentID 之外客服接待的未归档会话。用于领取时的客户互斥校验。
+func (r *ConversationRepository) CountCustomerHandledByOthers(tenantID, customerID, excludeAgentID uint) (int64, error) {
+	var n int64
+	err := storage.Default().DB().Raw(`
+		SELECT COUNT(*)
+		FROM conversations cv
+		JOIN customers cu ON cu.id = cv.customer_id
+		WHERE cv.tenant_id = ?
+		  AND cu.external_id = (SELECT external_id FROM customers WHERE id = ?)
+		  AND cv.agent_id <> 0 AND cv.agent_id <> ?
+		  AND cv.archived = ?
+	`, tenantID, customerID, excludeAgentID, false).Scan(&n).Error
+	return n, err
+}
+
 // CreateConversation 新增会话，成功后回填主键与时间戳。
 func (r *ConversationRepository) CreateConversation(c *model.Conversation) error {
 	return storage.Default().DB().Create(c).Error

@@ -254,6 +254,14 @@ func (s *ConversationService) ClaimConversation(tenantID, id, agentID uint) (*dt
 	if c.AgentID != 0 && c.AgentID != agentID && !s.isAdminUser(agentID) {
 		return nil, errors.New("会话已被其他客服接待")
 	}
+	// 客户互斥：该用户（同 external_id，跨渠道）已有会话被其他客服接待时，非管理员不能再领
+	// （同一用户同时只归一个客服，避免两个客服同时跟进同一个用户）。
+	if !s.isAdminUser(agentID) {
+		n, _ := s.repo.CountCustomerHandledByOthers(tenantID, c.CustomerID, agentID)
+		if n > 0 {
+			return nil, errors.New("该客户已由其他客服接待，请勿重复接入")
+		}
+	}
 	// 并发上限校验：仅当本次领取会让该客服的 open 会话数 +1 时才校验。
 	// 自己已在 open 接待的会话重复领取属幂等操作，不拦截。
 	if !(c.AgentID == agentID && c.Status == "open") {

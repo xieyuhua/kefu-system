@@ -26,10 +26,11 @@ func NewConversationVisibilityRepository() *ConversationVisibilityRepository {
 //   - scope=mine：只看自己接待的
 //   - 管理员：全量可见，不做额外过滤
 //   - 普通客服：自己接待的 + 自己可接待渠道下尚未被领取的（agent_id = 0）；
-//     已被同渠道其他客服领取的会话对其隐藏（实现互斥接待）
+//     已被同渠道其他客服领取的会话对其隐藏（渠道互斥）；
+//     同一客户已被其他客服接待时，该客户的其它会话也一并隐藏（客户互斥，避免抢同一客户）。
 //
 // 已归档过滤不在这里做（列表用 IncludeArchived 控制，统计恒为 false），由调用方自行施加。
-func (r *ConversationVisibilityRepository) applyVisibility(q *gorm.DB, userID uint, isAdmin bool, scope string) *gorm.DB {
+func (r *ConversationVisibilityRepository) applyVisibility(q *gorm.DB, tenantID, userID uint, isAdmin bool, scope string) *gorm.DB {
 	if scope == "mine" {
 		return q.Where("agent_id = ?", userID)
 	}
@@ -40,8 +41,17 @@ func (r *ConversationVisibilityRepository) applyVisibility(q *gorm.DB, userID ui
 	// 渠道集合查询失败按「无渠道」处理，退回只看自己的会话（与原逻辑一致）
 	storage.Default().DB().Model(&model.AgentChannel{}).Where("user_id = ?", userID).Pluck("channel_id", &chIDs)
 	if len(chIDs) > 0 {
-		// 自己接待的，或（未接待 且 在自己渠道内）——别人已领取的自然被排除
-		return q.Where("agent_id = ? OR (agent_id = 0 AND channel_id IN ?)", userID, chIDs)
+		// 自己接待的，或（未接待 且 在自己渠道内 且 该用户尚未被其他客服接待）。
+		// 「该用户」按 customers.external_id 跨渠道判定：同一 uid 在多个渠道会有多条 customer 记录，
+		// 只要其中任一会话被其他客服接待，其它渠道的待接待会话也一并隐藏（客户互斥）。
+		return q.Where(
+			"agent_id = ? OR (agent_id = 0 AND channel_id IN ? AND NOT EXISTS ("+
+				"SELECT 1 FROM conversations cv JOIN customers cu ON cu.id = cv.customer_id "+
+				"WHERE cv.tenant_id = ? AND cv.agent_id <> 0 AND cv.agent_id <> ? AND cv.archived = ? "+
+				"AND cu.external_id = (SELECT external_id FROM customers WHERE id = conversations.customer_id)"+
+				"))",
+			userID, chIDs, tenantID, userID, false,
+		)
 	}
 	return q.Where("agent_id = ?", userID)
 }
@@ -60,7 +70,7 @@ func (r *ConversationVisibilityRepository) QueryConversations(tenantID, userID u
 	if f.Status != "" && f.Status != "all" {
 		q = q.Where("status = ?", f.Status)
 	}
-	q = r.applyVisibility(q, userID, isAdmin, f.Scope)
+	q = r.applyVisibility(q, tenantID, userID, isAdmin, f.Scope)
 	if f.Keyword != "" {
 		like := "%" + strings.TrimSpace(f.Keyword) + "%"
 		q = q.Where(
@@ -87,7 +97,7 @@ func (r *ConversationVisibilityRepository) CountVisibleConversations(tenantID, u
 	q := storage.Default().DB().Model(&model.Conversation{}).
 		Where("tenant_id = ?", tenantID).
 		Where("archived = ?", false)
-	q = r.applyVisibility(q, userID, isAdmin, "")
+	q = r.applyVisibility(q, tenantID, userID, isAdmin, "")
 	if status != "" {
 		q = q.Where("status = ?", status)
 	}
@@ -104,7 +114,7 @@ func (r *ConversationVisibilityRepository) SumVisibleConversationUnread(tenantID
 	q := storage.Default().DB().Model(&model.Conversation{}).
 		Where("tenant_id = ?", tenantID).
 		Where("archived = ?", false)
-	q = r.applyVisibility(q, userID, isAdmin, "")
+	q = r.applyVisibility(q, tenantID, userID, isAdmin, "")
 	var total sql.NullInt64
 	if err := q.Select("SUM(unread)").Row().Scan(&total); err != nil {
 		return 0, err
