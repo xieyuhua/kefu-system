@@ -8,6 +8,8 @@ import (
 
 	"kefu-server/internal/common/model"
 	"kefu-server/pkg/dto"
+
+	"gorm.io/gorm"
 	"kefu-server/pkg/realtime"
 	"kefu-server/pkg/setting"
 	"kefu-server/pkg/util"
@@ -201,20 +203,29 @@ func (s *ConversationService) SendMessage(tenantID, convID, senderID uint, req d
 		Content:        req.Content,
 		Read:           true,
 	}
-	if err := s.messages.CreateMessage(m); err != nil {
-		return nil, nil, err
-	}
 	c.LastMessage = messagePreview(m)
 	c.LastMessageAt = now
 	c.MessageCount++
-	// 客服既然回复了，说明客户的消息已经看过：这里直接把未读清零。
-	// 否则列表上会一直挂着「未读 1」（尤其是刚接管、未走过 read 接口的情况下）。
-	_ = s.repo.ClearConversationUnread(tenantID, convID)
-	_ = s.messages.MarkMessagesRead(tenantID, convID)
+	// 客服既然回复了，说明客户的消息已经看过：未读清零 + 客户消息标记已读，
+	// 与「消息落库 + 会话摘要」合并成同一个写单元，一批请求共用一次提交。
 	c.Unread = 0
-	if err := s.repo.SaveConversation(c); err != nil {
+	if err := s.messages.CreateMessage(m); err != nil {
 		return nil, nil, err
 	}
+	DefaultWriteBatcher().SubmitAsync(func(tx *gorm.DB) error {
+		if err := tx.Model(&model.Conversation{}).Where("tenant_id = ? AND id = ?", tenantID, convID).
+			Updates(map[string]interface{}{
+				"last_message":    c.LastMessage,
+				"last_message_at": c.LastMessageAt,
+				"message_count":   c.MessageCount,
+				"unread":          0,
+			}).Error; err != nil {
+			return err
+		}
+		return tx.Model(&model.Message{}).
+			Where("tenant_id = ? AND conversation_id = ? AND direction = ?", tenantID, convID, "in").
+			Update("read", true).Error
+	})
 	mvo := s.buildMessageVO(m)
 	cvo := s.buildConversationVO(c)
 	return &mvo, &cvo, nil
@@ -263,9 +274,6 @@ func (s *ConversationService) ReceiveMessage(tenantID, convID, customerID uint, 
 		Direction:      "in",
 		Content:        content,
 	}
-	if err := s.messages.CreateMessage(m); err != nil {
-		return nil, nil, err
-	}
 	now := time.Now()
 	c.LastMessage = messagePreview(m)
 	c.LastMessageAt = now
@@ -288,11 +296,32 @@ func (s *ConversationService) ReceiveMessage(tenantID, convID, customerID uint, 
 			c.Status = "pending"
 		}
 	}
-	if err := s.repo.SaveConversation(c); err != nil {
+	// 消息同步落库（主键要给 VO / 推送用）；会话摘要与客户活跃时间属附属写，
+	// 丢进批量器异步落库，响应不必等它们刷盘。
+	if err := s.messages.CreateMessage(m); err != nil {
 		return nil, nil, err
 	}
-	// 活跃时间刷新失败不阻断发消息（与原逻辑一致）
-	_ = s.customer.UpdateCustomerColumns(customerID, map[string]interface{}{"last_seen_at": now})
+	DefaultWriteBatcher().SubmitAsync(func(tx *gorm.DB) error {
+		if err := tx.Model(&model.Conversation{}).Where("id = ?", c.ID).
+			Updates(map[string]interface{}{
+				"last_message":    c.LastMessage,
+				"last_message_at": c.LastMessageAt,
+				"message_count":   c.MessageCount,
+				"unread":          c.Unread,
+				"status":          c.Status,
+				"closed_at":       c.ClosedAt,
+				"archived":        c.Archived,
+				"archived_at":     c.ArchivedAt,
+			}).Error; err != nil {
+			return err
+		}
+		// 活跃时间刷新失败不阻断发消息（与原逻辑一致）
+		if customerID > 0 {
+			_ = tx.Model(&model.Customer{}).Where("id = ?", customerID).
+				Update("last_seen_at", now).Error
+		}
+		return nil
+	})
 
 	mvo := s.buildMessageVO(m)
 	cvo := s.buildConversationVO(c)
