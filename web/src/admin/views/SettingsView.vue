@@ -111,6 +111,13 @@ async function load(): Promise<void> {
   }
 }
 
+/**
+ * 「已接待的会话不再自动回复」开关。
+ * 默认开启（未配置即为开启）；关闭后只要会话在待接待状态，机器人就会自动回复。
+ */
+async function onRobotOnlyUnhandled(val: string | number | boolean): Promise<void> {
+  await save('robot.only_unhandled', val ? 'true' : 'false')
+}
 async function save(key: string, value?: string): Promise<void> {
   saving.value[key] = true
   try {
@@ -493,6 +500,28 @@ onMounted(load)
                   保存
                 </el-button>
               </div>
+            </div>
+          </div>
+
+          <!-- 机器人兜底话术 -->
+          <div class="setting-item">
+            <div class="setting-item__label">
+              <div class="setting-item__name">已接待的会话不再自动回复</div>
+              <div class="setting-item__remark">
+                {{
+                  remarks['robot.only_unhandled'] ||
+                  '开启后：客服接入或回复过的会话，即使客服随后离线被释放回「待接待」，机器人也不会抢答，等人工接手；客户重新发起新一轮咨询（会话结束后再来）才会恢复自动回复。关闭则只要会话在待接待状态，机器人就会自动回复。'
+                }}
+              </div>
+            </div>
+            <div class="setting-item__control">
+              <el-switch
+                :model-value="settings['robot.only_unhandled'] !== 'false'"
+                active-text="开启"
+                inactive-text="关闭"
+                data-test="robot-only-unhandled"
+                @update:model-value="onRobotOnlyUnhandled"
+              />
             </div>
           </div>
 

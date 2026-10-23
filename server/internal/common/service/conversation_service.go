@@ -344,6 +344,8 @@ func (s *ConversationService) ClaimConversation(tenantID, id, agentID uint) (*dt
 	now := time.Now()
 	c.AgentID = agentID
 	c.Status = "open"
+	// 客服接入即「已人工接待」：机器人不再介入该会话（受后台开关控制）
+	c.HandledByHuman = true
 	c.LastMessageAt = now
 	if err := s.repo.SaveConversation(c); err != nil {
 		return nil, err
@@ -414,6 +416,9 @@ func (s *ConversationService) CloseConversation(tenantID, id, agentID uint) (*dt
 	now := time.Now()
 	c.Status = "closed"
 	c.ClosedAt = &now
+	// 结束会话 = 本轮咨询闭环。客户之后再来属于「重新发起新一轮咨询」，
+	// 清掉「已接待」标记，让机器人重新可以应答（受后台开关控制）。
+	c.HandledByHuman = false
 	if err := s.repo.SaveConversation(c); err != nil {
 		return nil, err
 	}

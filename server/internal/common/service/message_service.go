@@ -188,6 +188,9 @@ func (s *ConversationService) SendMessage(tenantID, convID, senderID uint, req d
 		}
 		c.AgentID = senderID
 		c.Status = "open"
+		// 回复即视为「已人工接待」：之后即使客服离线被释放回待接待，
+		// 机器人也不再抢答（受后台开关 robot.only_unhandled 控制）
+		c.HandledByHuman = true
 	} else if c.AgentID != senderID && !s.isAdminUser(senderID) {
 		// 会话已被他人接待，禁止越权发言
 		return nil, nil, errors.New("会话已被其他客服接待")
@@ -228,6 +231,8 @@ func (s *ConversationService) SendMessage(tenantID, convID, senderID uint, req d
 				"closed_at":   c.ClosedAt,
 				"archived":    c.Archived,
 				"archived_at": c.ArchivedAt,
+				// 已人工接待标记：机器人据此跳过该会话（受后台开关控制）
+				"handled_by_human": c.HandledByHuman,
 			}).Error; err != nil {
 			return err
 		}

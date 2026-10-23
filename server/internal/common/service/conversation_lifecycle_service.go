@@ -78,6 +78,8 @@ func (s *ConversationService) ArchiveConversation(tenantID, convID, operatorID u
 		"archived":    true,
 		"archived_at": &now,
 		"unread":      0,
+		// 归档后客户再来属于新一轮咨询：清掉「已接待」标记，机器人可重新应答
+		"handled_by_human": false,
 	}
 	// 归档时若该客服不再接待，释放归属（重新进入待接待池）
 	if c.AgentID == operatorID {

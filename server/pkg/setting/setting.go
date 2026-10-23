@@ -21,6 +21,8 @@ import (
 // ---------------- 设置项 Key ----------------
 
 const (
+	// SettingRobotSkipHandled 已接待过的会话是否跳过自动回复（默认开）
+	SettingRobotSkipHandled = "robot.only_unhandled"
 	// SettingDefaultImage 统一默认图片：客户/商品/订单无图时使用
 	SettingDefaultImage = "default_image"
 	// SettingMessageSound 新消息提示音：on=内置提示音（默认），off=静音，或填音频 URL
@@ -440,4 +442,15 @@ func parseFloatSetting(raw string, def float64) float64 {
 		return f
 	}
 	return def
+}
+
+// RobotSkipHandled 已接待过的会话是否不再自动回复（默认 true）。
+// 开启：客服接入/回复过的会话，即使之后客服离线被释放回待接待，机器人也不抢答；
+// 只有客户重新发起新一轮咨询（会话结束/归档后再来）才恢复自动回复。
+func RobotSkipHandled(tenantID uint) bool {
+	raw := strings.TrimSpace(GetSetting(tenantID, SettingRobotSkipHandled))
+	if raw == "" {
+		return true
+	}
+	return parseBoolSetting(raw, true)
 }

@@ -413,6 +413,12 @@ func (s *AutomationService) ReplyNow(tenantID, convID, customerID, channelID uin
 	if conv.AgentID > 0 && conv.Status == "open" {
 		return &ReplyResult{Transferred: false}
 	}
+	// 已被人工接待过的会话（客服接入或回复过）：机器人不再抢答。
+	// 客服离线后会话会被释放回「待接待」，但这是同一个咨询，仍应由人接手；
+	// 只有用户重新发起新一轮咨询（结束/归档后再来）才恢复自动回复。
+	if conv.HandledByHuman && setting.RobotSkipHandled(tenantID) {
+		return &ReplyResult{Transferred: false}
+	}
 
 	// 机器人关闭的渠道：整段跳过（不查规则、不调模型），保持「不回复」。
 	// 原来无论如何都会先查一遍自动回复规则，关闭机器人的渠道等于白跑一次查询——
