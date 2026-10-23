@@ -76,18 +76,20 @@
 
     <template v-else>
       <div ref="scrollRef" v-loading="loading" class="chat-body kf-scroll" @scroll="onScroll">
-        <div class="load-more">
-          <span v-if="loadingMore" class="load-more__tip">加载中…</span>
-          <span v-else-if="!hasMore" class="load-more__tip">没有更多消息了</span>
-        </div>
-        <el-empty v-if="!messages.length && !loading" description="暂无消息" :image-size="80" />
+        <div ref="innerRef" class="chat-inner">
+          <div class="load-more">
+            <span v-if="loadingMore" class="load-more__tip">加载中…</span>
+            <span v-else-if="!hasMore" class="load-more__tip">没有更多消息了</span>
+          </div>
+          <el-empty v-if="!messages.length && !loading" description="暂无消息" :image-size="80" />
 
-        <MessageBubble
-          v-for="m in messages"
-          :key="m.id"
-          :message="m"
-          :flash-key="flashId === m.id ? m.id : 0"
-        />
+          <MessageBubble
+            v-for="m in messages"
+            :key="m.id"
+            :message="m"
+            :flash-key="flashId === m.id ? m.id : 0"
+          />
+        </div>
       </div>
 
       <MessageInput
@@ -171,7 +173,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { ArrowDown, ArrowUp, Search, Switch, User } from '@element-plus/icons-vue'
 import type { Conversation, Message, MessageType } from '@/shared/types'
 import {
@@ -225,6 +227,7 @@ const emit = defineEmits<{
 }>()
 
 const scrollRef = ref<HTMLElement | null>(null)
+const innerRef = ref<HTMLElement | null>(null)
 const searchKeyword = ref('')
 /** 已发起搜索的关键词（用于区分「未搜索」与「搜了但无结果」） */
 const searchedKeyword = ref('')
@@ -246,9 +249,41 @@ function statusTagType(status: Conversation['status']): 'success' | 'warning' | 
 function scrollToBottom(): void {
   nextTick(() => {
     const el = scrollRef.value
-    if (el) el.scrollTop = el.scrollHeight
+    if (!el) return
+    el.scrollTop = el.scrollHeight
+    // 再补一帧：消息刚渲染完、图片/字体尚未撑开时，上一行可能还差一点
+    requestAnimationFrame(() => {
+      if (stickToBottom) el.scrollTop = el.scrollHeight
+    })
   })
 }
+
+/*
+ * 贴底观察器：内容高度或可视区高度变化时，只要处于「贴底」状态就重新滚到底。
+ *
+ * 解决两类问题：
+ *   1. 移动端会话面板从隐藏切到显示时 clientHeight 由 0 变为真实高度，
+ *      此前一次性 scrollToBottom 发生在面板隐藏期间，等于没滚（打开会话停在顶部）；
+ *   2. 图片/视频加载完成后内容变高，原来的「滚到底」已经失效。
+ */
+let bottomObserver: ResizeObserver | null = null
+
+onMounted(() => {
+  const el = scrollRef.value
+  const inner = innerRef.value
+  if (!el) return
+  if (typeof ResizeObserver === 'undefined') return
+  bottomObserver = new ResizeObserver(() => {
+    if (stickToBottom) el.scrollTop = el.scrollHeight
+  })
+  bottomObserver.observe(el)
+  if (inner) bottomObserver.observe(inner)
+})
+
+onBeforeUnmount(() => {
+  bottomObserver?.disconnect()
+  bottomObserver = null
+})
 
 watch(
   () => props.messages.length,
@@ -570,6 +605,11 @@ const searchList = computed<Message[]>(() => props.searchResults || [])
 .chat-body {
   flex: 1;
   padding: 12px 16px;
+}
+
+/* 消息内容容器：独立一层供 ResizeObserver 观察内容高度变化（图片加载、上滑补页） */
+.chat-inner {
+  display: block;
 }
 
 .chat-empty {

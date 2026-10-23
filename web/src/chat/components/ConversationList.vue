@@ -92,7 +92,6 @@
           <div class="conv-line conv-line--meta">
             <!-- 来源渠道标注：所有渠道会话合并展示，靠这里区分 -->
             <span class="conv-source" :title="c.channel?.name">
-              <i class="conv-source__dot" :style="{ background: channelColor(c.channel?.type) }"></i>
               <span class="conv-source__icon">{{ channelIcon(c.channel?.type) }}</span>
               <span class="conv-source__name kf-ellipsis">{{
                 c.channel?.name || channelLabel(c.channel?.type)
@@ -130,7 +129,6 @@ import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { Delete, Refresh, Search } from '@element-plus/icons-vue'
 import type { Conversation } from '@/shared/types'
 import {
-  channelColor,
   channelIcon,
   channelLabel,
   formatListTime,
