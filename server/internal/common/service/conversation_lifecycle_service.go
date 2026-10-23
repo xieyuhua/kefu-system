@@ -7,6 +7,7 @@ import (
 
 	"kefu-server/internal/common/model"
 	"kefu-server/pkg/dto"
+	"kefu-server/pkg/realtime"
 	"kefu-server/pkg/storage"
 )
 
@@ -22,14 +23,24 @@ func (s *ConversationService) FindOrCreateConversation(tenantID, customerID, cha
 		// 复用最近一个会话；已关闭 / 已归档的重新激活
 		needSave := false
 		if conv.Status == "closed" {
-			conv.Status = "pending"
 			conv.ClosedAt = nil
+			// 仍挂在原客服名下、且该客服在线 → 直接回到「进行中」。
+			// 原来一律置 pending，会出现「明明已接待、客户一发消息就变未接待」，
+			// 而 agent_id 还留着（既显示接待人、又进了待接待池，别的客服也抢不了）。
+			if conv.AgentID > 0 && realtime.HubInstance().IsUserOnline(conv.AgentID) {
+				conv.Status = "open"
+			} else {
+				// 原客服不在线：回到待接待池，并释放归属，否则互斥规则会让这条会话对所有人都不可见
+				conv.Status = "pending"
+				conv.AgentID = 0
+			}
 			needSave = true
 		}
 		if conv.Archived {
 			conv.Archived = false
 			conv.ArchivedAt = nil
 			conv.Status = "pending"
+			conv.AgentID = 0 // 归档本来就会释放归属，这里保证一致性
 			needSave = true
 		}
 		if needSave {

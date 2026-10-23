@@ -287,19 +287,21 @@ func (s *ConversationService) ReceiveMessageIn(c *model.Conversation, customerID
 	c.LastMessageAt = now
 	c.MessageCount++
 	c.Unread++
+	// 已结束的会话被客户重新咨询时：原客服仍在接待且在线 → 直接回到「进行中」，
+	// 不要掉回待接待（否则客服看到「已接待却变未接待」，还要重新接入一次）
 	if c.Status == "closed" {
-		c.Status = "pending"
 		c.ClosedAt = nil
+		if c.AgentID > 0 && realtime.HubInstance().IsUserOnline(c.AgentID) {
+			c.Status = "open"
+		} else {
+			c.Status = "pending"
+			c.AgentID = 0
+		}
 	}
 	// 客户重新咨询时，若会话曾被客服归档 → 自动恢复，重新出现在工作台待接待列表
 	if c.Archived {
 		c.Archived = false
 		c.ArchivedAt = nil
-		if c.Status == "closed" {
-			c.Status = "pending"
-			c.ClosedAt = nil
-		}
-		// 归档释放过客服归属，这里保持 agent_id = 0 进入待接待池
 		if c.AgentID == 0 {
 			c.Status = "pending"
 		}
