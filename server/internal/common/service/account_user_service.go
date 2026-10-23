@@ -26,3 +26,8 @@ func (s *AccountService) CountOpenConversations(tenantID, agentID uint) (int64, 
 func (s *AccountService) ResetAllOnline() error {
 	return s.repo.ResetAllOnline()
 }
+
+// FindUsersByIDs 批量取账号（会话列表预取客服信息用）
+func (s *AccountService) FindUsersByIDs(tenantID uint, ids []uint) ([]*model.User, error) {
+	return s.repo.ListUsersByIDs(tenantID, ids)
+}

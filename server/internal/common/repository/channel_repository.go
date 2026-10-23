@@ -154,3 +154,15 @@ func (r *ChannelRepository) FindAgentUsersByIDs(tenantID uint, ids []uint) ([]*m
 	}
 	return users, nil
 }
+
+// ListChannelsByIDs 按主键批量取渠道（会话列表一次性预取，替代逐条查询）。
+func (r *ChannelRepository) ListChannelsByIDs(tenantID uint, ids []uint) ([]*model.Channel, error) {
+	if len(ids) == 0 {
+		return []*model.Channel{}, nil
+	}
+	var list []*model.Channel
+	if err := storage.Default().DB().Where("tenant_id = ? AND id IN ?", tenantID, ids).Find(&list).Error; err != nil {
+		return nil, err
+	}
+	return list, nil
+}

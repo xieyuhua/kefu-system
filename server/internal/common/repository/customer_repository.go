@@ -146,3 +146,15 @@ func (r *CustomerRepository) FindCustomerByID(customerID uint) (*model.Customer,
 	}
 	return &cu, nil
 }
+
+// ListCustomersByIDs 按主键批量取客户（会话列表一次性预取，替代逐条查询）。
+func (r *CustomerRepository) ListCustomersByIDs(ids []uint) ([]*model.Customer, error) {
+	if len(ids) == 0 {
+		return []*model.Customer{}, nil
+	}
+	var list []*model.Customer
+	if err := storage.Default().DB().Where("id IN ?", ids).Find(&list).Error; err != nil {
+		return nil, err
+	}
+	return list, nil
+}

@@ -265,3 +265,8 @@ func (s *ChannelService) FindChannelByID(tenantID, id uint) (*model.Channel, err
 func (s *ChannelService) ListChannelsByTenant(tenantID, agentID uint, isAdmin bool) ([]*model.Channel, error) {
 	return s.repo.ListChannelsByTenant(tenantID, agentID, isAdmin)
 }
+
+// FindChannelsByIDs 批量取渠道（会话列表预取用）
+func (s *ChannelService) FindChannelsByIDs(tenantID uint, ids []uint) ([]*model.Channel, error) {
+	return s.repo.ListChannelsByIDs(tenantID, ids)
+}

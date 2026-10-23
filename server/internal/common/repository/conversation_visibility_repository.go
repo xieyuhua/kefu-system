@@ -44,16 +44,36 @@ func (r *ConversationVisibilityRepository) applyVisibility(q *gorm.DB, tenantID,
 		// 自己接待的，或（未接待 且 在自己渠道内 且 该用户尚未被其他客服接待）。
 		// 「该用户」按 customers.external_id 跨渠道判定：同一 uid 在多个渠道会有多条 customer 记录，
 		// 只要其中任一会话被其他客服接待，其它渠道的待接待会话也一并隐藏（客户互斥）。
+		//
+		// 性能：先一次性查出「已被同事接待的用户 external_id」（1 条 SQL，命中
+		// conversations(agent_id) 与 customers(external_id) 索引），再用 IN 过滤。
+		// 原来是逐行相关子查询（每行都要 join + 一次标量子查询），页内 20 行就是 20 次，
+		// 跨网访问 MySQL 时单次列表被拖到 100ms 以上。
+		blocked := r.handledExternalIDs(tenantID, userID)
+		if len(blocked) == 0 {
+			return q.Where("agent_id = ? OR (agent_id = 0 AND channel_id IN ?)", userID, chIDs)
+		}
 		return q.Where(
-			"agent_id = ? OR (agent_id = 0 AND channel_id IN ? AND NOT EXISTS ("+
-				"SELECT 1 FROM conversations cv JOIN customers cu ON cu.id = cv.customer_id "+
-				"WHERE cv.tenant_id = ? AND cv.agent_id <> 0 AND cv.agent_id <> ? AND cv.archived = ? "+
-				"AND cu.external_id = (SELECT external_id FROM customers WHERE id = conversations.customer_id)"+
-				"))",
-			userID, chIDs, tenantID, userID, false,
+			"agent_id = ? OR (agent_id = 0 AND channel_id IN ? AND customer_id NOT IN ("+
+				"SELECT id FROM customers WHERE external_id IN ?))",
+			userID, chIDs, blocked,
 		)
 	}
 	return q.Where("agent_id = ?", userID)
+}
+
+// handledExternalIDs 返回「已被其他客服接待」的客户 external_id 集合。
+// 查询失败按空集处理：宁可多显示几条待接待会话，也不因为一次查询失败让列表变成空的。
+func (r *ConversationVisibilityRepository) handledExternalIDs(tenantID, userID uint) []string {
+	var ids []string
+	_ = storage.Default().DB().Raw(
+		"SELECT DISTINCT cu.external_id FROM conversations cv "+
+			"JOIN customers cu ON cu.id = cv.customer_id "+
+			"WHERE cv.tenant_id = ? AND cv.agent_id <> 0 AND cv.agent_id <> ? AND cv.archived = ? "+
+			"AND cu.external_id <> ''",
+		tenantID, userID, false,
+	).Scan(&ids).Error
+	return ids
 }
 
 // QueryConversations 分页列出会话（按最近消息时间倒序），同时返回满足条件的总数。

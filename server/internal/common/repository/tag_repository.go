@@ -99,3 +99,16 @@ func (r *TagRepository) CountCustomerTag(tenantID, customerID, tagID uint) (int6
 func (r *TagRepository) CreateCustomerTag(ct *model.CustomerTag) error {
 	return storage.Default().DB().Create(ct).Error
 }
+
+// ListCustomerTagsByCustomers 批量取多个客户的标签关系（会话列表一次性预取）。
+func (r *TagRepository) ListCustomerTagsByCustomers(tenantID uint, customerIDs []uint) ([]*model.CustomerTag, error) {
+	if len(customerIDs) == 0 {
+		return []*model.CustomerTag{}, nil
+	}
+	var list []*model.CustomerTag
+	if err := storage.Default().DB().Where("tenant_id = ? AND customer_id IN ?", tenantID, customerIDs).
+		Find(&list).Error; err != nil {
+		return nil, err
+	}
+	return list, nil
+}

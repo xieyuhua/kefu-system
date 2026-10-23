@@ -67,3 +67,26 @@ func (r *OrderRepository) ListOrdersOfCustomer(customerID uint, limit int) ([]*m
 	}
 	return list, nil
 }
+
+// CountOrdersOfCustomers 批量统计多个客户名下的订单数（一次聚合，替代逐条 count）。
+func (r *OrderRepository) CountOrdersOfCustomers(customerIDs []uint) (map[uint]int64, error) {
+	out := make(map[uint]int64, len(customerIDs))
+	if len(customerIDs) == 0 {
+		return out, nil
+	}
+	type row struct {
+		CustomerID uint
+		N          int64
+	}
+	var rows []row
+	if err := storage.Default().DB().Model(&model.Order{}).
+		Select("customer_id, COUNT(*) AS n").
+		Where("customer_id IN ?", customerIDs).
+		Group("customer_id").Scan(&rows).Error; err != nil {
+		return out, err
+	}
+	for _, r := range rows {
+		out[r.CustomerID] = r.N
+	}
+	return out, nil
+}

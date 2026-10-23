@@ -174,3 +174,49 @@ func (s *CustomerService) CreateCustomer(c *model.Customer) error {
 func (s *CustomerService) UpdateCustomerColumns(id uint, updates map[string]interface{}) error {
 	return s.repo.UpdateCustomerColumns(id, updates)
 }
+
+// FindCustomersByIDs 批量取客户（会话列表预取用）
+func (s *CustomerService) FindCustomersByIDs(ids []uint) ([]*model.Customer, error) {
+	return s.repo.ListCustomersByIDs(ids)
+}
+
+// CountOrdersOfCustomers 批量统计客户订单数（会话列表预取用）
+func (s *CustomerService) CountOrdersOfCustomers(customerIDs []uint) (map[uint]int64, error) {
+	return s.orders.CountOrdersOfCustomers(customerIDs)
+}
+
+// GetTagsOfCustomers 批量取客户标签（会话列表预取用）：两次查询搞定整页。
+func (s *CustomerService) GetTagsOfCustomers(tenantID uint, customerIDs []uint) (map[uint][]dto.TagRef, error) {
+	out := make(map[uint][]dto.TagRef, len(customerIDs))
+	if len(customerIDs) == 0 {
+		return out, nil
+	}
+	rels, err := s.tags.ListCustomerTagsByCustomers(tenantID, customerIDs)
+	if err != nil {
+		return out, err
+	}
+	if len(rels) == 0 {
+		return out, nil
+	}
+	tagIDs := make([]uint, 0, len(rels))
+	relByCustomer := make(map[uint][]uint, len(customerIDs))
+	for _, r := range rels {
+		tagIDs = append(tagIDs, r.TagID)
+		relByCustomer[r.CustomerID] = append(relByCustomer[r.CustomerID], r.TagID)
+	}
+	tags, _ := s.tags.ListTagsByIDs(tenantID, tagIDs)
+	tagByID := make(map[uint]*model.Tag, len(tags))
+	for _, t := range tags {
+		tagByID[t.ID] = t
+	}
+	for cid, ids := range relByCustomer {
+		refs := make([]dto.TagRef, 0, len(ids))
+		for _, tid := range ids {
+			if t := tagByID[tid]; t != nil {
+				refs = append(refs, dto.TagRef{ID: t.ID, Name: t.Name, Color: t.Color})
+			}
+		}
+		out[cid] = refs
+	}
+	return out, nil
+}

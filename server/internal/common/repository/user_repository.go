@@ -228,3 +228,15 @@ func (r *UserRepository) FindTenantByID(id uint) (*model.Tenant, error) {
 	}
 	return &t, nil
 }
+
+// ListUsersByIDs 按主键批量取账号（会话列表预取客服信息用）。
+func (r *UserRepository) ListUsersByIDs(tenantID uint, ids []uint) ([]*model.User, error) {
+	if len(ids) == 0 {
+		return []*model.User{}, nil
+	}
+	var list []*model.User
+	if err := storage.Default().DB().Where("tenant_id = ? AND id IN ?", tenantID, ids).Find(&list).Error; err != nil {
+		return nil, err
+	}
+	return list, nil
+}
