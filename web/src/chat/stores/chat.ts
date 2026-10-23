@@ -556,9 +556,16 @@ export const useChatStore = defineStore('chat', () => {
       return
     }
     const prev = conversations.value.find((c) => c.id === conversation.id)
+    if (!prev) {
+      // 列表里本来没有这条：可能是新会话，也可能是我本就不该看到的会话
+      // （服务端可见性含渠道归属与客户互斥，前端无法自行判断）。
+      // 交给服务端过滤后重新拉取，避免把不属于我的会话直接插进列表。
+      void loadConversations()
+      return
+    }
     upsertConversation(conversation)
     // 重复投递的同一条 conversation.updated（快照完全一样）→ 会话与统计都没变化，不再刷新
-    if (prev && sameConversationSnapshot(prev, conversation)) return
+    if (sameConversationSnapshot(prev, conversation)) return
     refreshStats()
   }
 

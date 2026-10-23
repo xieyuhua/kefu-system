@@ -276,6 +276,9 @@ func (h *Handler) GuestWSHandler(c *gin.Context) {
 	hub := realtime.HubInstance()
 	hub.AddGuest(client)
 
+	// ① 建连即在线：刷新活跃时间并通知客服端（原来只有发消息才刷新，客户在线不说话会被判离线）
+	h.svc.TouchGuestOnline(tenantID, convID, cu.ID)
+
 	// ① 连接确认
 	client.SendEvent("connected", map[string]interface{}{
 		"conversation_id": convID,
@@ -293,7 +296,12 @@ func (h *Handler) GuestWSHandler(c *gin.Context) {
 	}
 
 	go client.WritePump()
-	go client.ReadPump()
+	// 断开后延迟标记离线：ReadPump 阻塞到连接结束（关闭页面 / 心跳超时）才返回，
+	// 宽限期内重连则保持在线，否则写库置离线并广播给客服端。
+	go func() {
+		client.ReadPump()
+		h.svc.ScheduleGuestOffline(tenantID, convID, cu.ID)
+	}()
 }
 
 // randomHex 返回 n 字节的随机十六进制串（长度 2n）。

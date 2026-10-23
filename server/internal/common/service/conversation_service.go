@@ -181,8 +181,9 @@ func (s *ConversationService) assembleConversationVO(c *model.Conversation) dto.
 			Remark: cu.Remark,
 			IP:     cu.IP,
 			City:   s.customer.CityOrLookup(cu),
-			// 客户在线状态：按最近活跃时间推断（2 分钟内活跃即在线）
-			Online:     IsCustomerOnline(cu),
+			// 客户在线状态：优先看实时连接——访客 WS 仍连着就是在线（哪怕他半天没说话）；
+			// 没有连接时退回「最近 2 分钟活跃」的活跃度推断（服务重启后也能给出合理结果）。
+			Online:     realtime.HubInstance().GuestCount(c.ID) > 0 || IsCustomerOnline(cu),
 			LastSeenAt: util.Default().FmtTimePtr(cu.LastSeenAt),
 		}
 		vo.OrderCount = oc

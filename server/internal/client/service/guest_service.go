@@ -22,6 +22,7 @@ import (
 
 	"kefu-server/internal/common/model"
 	commonsvc "kefu-server/internal/common/service"
+	"kefu-server/pkg/realtime"
 	"kefu-server/pkg/setting"
 )
 
@@ -123,6 +124,43 @@ func visitorNickname(uid string) string {
 // IP 归属地的缓存与落库口径在公共业务层客户域，端内只做一次转调（handler 也走这里）。
 func (s *Service) RecordCustomerIP(customerID uint, ip string) {
 	s.Cust.RecordCustomerIP(customerID, ip)
+}
+
+// ---------------- 访客在线状态（WS 连接驱动） ----------------
+
+// guestOfflineGrace 断连后等待重连的宽限期。
+// 刷新页面 / 切后台 / 弱网重连都会短暂断开，立刻标记离线会让客服看到小圆点闪一下，
+// 因此断开后先等一会儿，期间重连则不改变在线状态。
+const guestOfflineGrace = 15 * time.Second
+
+// TouchGuestOnline 把访客标记为在线（刷新 last_seen_at）并通知客服端刷新该会话。
+// 访客 WS 建连时调用：原来只有「客户发消息」才会更新活跃时间，
+// 导致客户在线但一直不说话时被误判为离线。
+func (s *Service) TouchGuestOnline(tenantID, convID, customerID uint) {
+	if err := s.Cust.UpdateCustomerColumns(customerID, map[string]interface{}{"last_seen_at": time.Now()}); err != nil {
+		return
+	}
+	s.Conv.BroadcastConversation(tenantID, convID)
+}
+
+// ScheduleGuestOffline 访客 WS 断开后延迟标记离线。
+//
+// 为什么不是断开即离线：见 guestOfflineGrace。
+// 宽限期结束后若该会话已无访客连接，则把 last_seen_at 推到活跃窗口之外
+// （复用 IsCustomerOnline 的判定，不需要给 customers 增加在线字段），
+// 再广播一次 conversation.updated，客服端的小圆点即时变灰——
+// 原来断开后没有任何写库与通知，客服端会一直显示「在线」。
+func (s *Service) ScheduleGuestOffline(tenantID, convID, customerID uint) {
+	time.AfterFunc(guestOfflineGrace, func() {
+		if realtime.HubInstance().GuestCount(convID) > 0 {
+			return // 期间已重连，保持在线
+		}
+		offlineAt := time.Now().Add(-commonsvc.CustomerOnlineWindow - time.Second)
+		if err := s.Cust.UpdateCustomerColumns(customerID, map[string]interface{}{"last_seen_at": offlineAt}); err != nil {
+			return
+		}
+		s.Conv.BroadcastConversation(tenantID, convID)
+	})
 }
 
 // RecordCustomerTrace 记录访客最近一次访问的 IP、归属城市与 User-Agent。

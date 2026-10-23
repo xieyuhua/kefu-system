@@ -181,6 +181,10 @@ func (s *ConversationService) ReopenConversation(tenantID, convID uint) {
 // onlineWindow 活跃判定窗口：超过此时长无活动视为离线（微信式）
 const onlineWindow = 2 * time.Minute
 
+// CustomerOnlineWindow 对外暴露的活跃判定窗口（端内编排在标记访客离线时要据此把
+// last_seen_at 推到窗口之外，避免两处各写一个魔法值导致口径漂移）。
+const CustomerOnlineWindow = onlineWindow
+
 // IsCustomerOnline 按最近活跃时间推断客户是否在线
 func IsCustomerOnline(c *model.Customer) bool {
 	if c.LastSeenAt == nil {
