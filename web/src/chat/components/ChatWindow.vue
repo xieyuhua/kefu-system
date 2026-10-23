@@ -133,7 +133,7 @@
             @click="gotoResult(i)"
           >
             <span class="chat-search__time">{{ formatMessageTime(r.created_at) }}</span>
-            <span class="chat-search__text">{{ snippet(r.content) }}</span>
+            <span class="chat-search__text" v-html="highlight(r.content)"></span>
           </button>
         </div>
       </div>
@@ -463,6 +463,34 @@ async function locate(id: number): Promise<void> {
 }
 
 /** 搜索结果摘要 */
+/** HTML 转义：搜索结果走 v-html，必须先转义再包高亮，避免消息内容注入标签 */
+function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+}
+
+/** 正则元字符转义（用户输入的关键词可能含 . * ( ) 等） */
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+/**
+ * 把命中关键词包成 <mark>（红色加粗），便于在结果列表里一眼看到命中的位置。
+ * 先整体转义、再按关键词切分，保证不会因为消息内容里的 HTML 造成注入。
+ */
+function highlight(text: string): string {
+  const safe = escapeHtml(snippet(text))
+  const kw = searchedKeyword.value.trim()
+  if (!kw) return safe
+  const re = new RegExp('(' + escapeRegExp(escapeHtml(kw)) + ')', 'gi')
+  return safe
+    .split(re)
+    .map((part, i) => (i % 2 === 1 ? '<mark class="chat-search__hl">' + part + '</mark>' : part))
+    .join('')
+}
 function snippet(content: string): string {
   const text = content || ''
   return text.length > 60 ? `${text.slice(0, 60)}…` : text
@@ -555,6 +583,13 @@ const searchList = computed<Message[]>(() => props.searchResults || [])
     color: var(--kf-text-weak);
   }
 
+  &__hl {
+    /* 命中关键词：红色加粗，去掉浏览器默认的黄色底色 */
+    padding: 0;
+    background: transparent;
+    color: #f56c6c;
+    font-weight: 600;
+  }
   &__item {
     display: block;
     width: 100%;

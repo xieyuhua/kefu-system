@@ -17,7 +17,7 @@ func Register(g *gin.RouterGroup, authed *gin.RouterGroup) {
 	h := handler.NewHandler()
 
 	// 渠道
-	authed.GET("/channels", h.ListChannelsHandler)
+	// 连接管理：查看/断开 WebSocket 长连接`n	authed.GET("/ws/connections", h.ListWSConnectionsHandler)`n	authed.POST("/ws/connections/kick", h.KickWSConnectionsHandler)`n`n	authed.GET("/channels", h.ListChannelsHandler)
 	authed.POST("/channels", h.CreateChannelHandler)
 	authed.PUT("/channels/:id", h.UpdateChannelHandler)
 	authed.DELETE("/channels/:id", h.DeleteChannelHandler)

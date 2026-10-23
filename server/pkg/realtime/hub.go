@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"log"
+	"sort"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"kefu-server/pkg/cache"
@@ -29,8 +31,13 @@ type Client struct {
 	TenantID uint
 	ConvID   uint   // 访客端所属会话
 	Device   string // web | desktop | app
-	closed   chan struct{}
-	mu       sync.Mutex
+	// ID 连接唯一标识（后台「连接管理」用于定位要踢下线的连接）
+	ID uint64
+	// ConnectedAt / RemoteAddr 建连时间与来源地址（展示连接时长用）
+	ConnectedAt time.Time
+	RemoteAddr  string
+	closed      chan struct{}
+	mu          sync.Mutex
 }
 
 // Hub 连接中心。分两类连接：
@@ -290,6 +297,8 @@ func (h *Hub) PublishToGuest(tenantID, convID uint, ev Event) {
 // ---- 连接读写循环 ----
 
 // NewClient 创建一个客服端连接（由 api 层调用，避免跨包访问未导出字段）
+var connSeq uint64
+
 func NewClient(conn *websocket.Conn, userID, tenantID uint, device string) *Client {
 	return &Client{
 		conn:     conn,
@@ -380,4 +389,92 @@ func (c *Client) readPump() {
 			return
 		}
 	}
+}
+
+// ---------------- 连接管理（后台查看 / 踢下线） ----------------
+
+// ConnInfo 一条 WebSocket 连接的可展示信息
+type ConnInfo struct {
+	ID          uint64 `json:"id"`
+	Kind        string `json:"kind"` // agent | guest
+	TenantID    uint   `json:"tenant_id"`
+	UserID      uint   `json:"user_id"`
+	ConvID      uint   `json:"conversation_id"`
+	Device      string `json:"device"`
+	RemoteAddr  string `json:"remote_addr"`
+	ConnectedAt int64  `json:"connected_at"`
+	DurationSec int64  `json:"duration_seconds"`
+}
+
+// SetMeta 记录连接来源与建连信息（handler 建连后调用）
+func (c *Client) SetMeta(id uint64, remoteAddr string, at time.Time) {
+	c.ID = id
+	c.RemoteAddr = remoteAddr
+	c.ConnectedAt = at
+}
+
+// NextConnID 分配连接唯一 ID
+func NextConnID() uint64 { return atomic.AddUint64(&connSeq, 1) }
+
+// Snapshot 返回当前所有连接（客服端 + 访客端），按建连时间倒序。
+func (h *Hub) Snapshot() []ConnInfo {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	now := time.Now()
+	out := make([]ConnInfo, 0, len(h.clients)+8)
+	for c := range h.clients {
+		out = append(out, ConnInfo{
+			ID: c.ID, Kind: "agent", TenantID: c.TenantID, UserID: c.UserID,
+			Device: c.Device, RemoteAddr: c.RemoteAddr,
+			ConnectedAt: c.ConnectedAt.UnixMilli(),
+			DurationSec: int64(now.Sub(c.ConnectedAt).Seconds()),
+		})
+	}
+	for _, set := range h.guests {
+		for c := range set {
+			out = append(out, ConnInfo{
+				ID: c.ID, Kind: "guest", TenantID: c.TenantID, ConvID: c.ConvID,
+				Device: c.Device, RemoteAddr: c.RemoteAddr,
+				ConnectedAt: c.ConnectedAt.UnixMilli(),
+				DurationSec: int64(now.Sub(c.ConnectedAt).Seconds()),
+			})
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ConnectedAt > out[j].ConnectedAt })
+	return out
+}
+
+// KickConnections 关闭指定连接；ids 为空表示关闭该类型的全部连接。返回实际关闭数量。
+// kind 为空则两类都处理。关闭后由 readPump 的退出流程走常规 Remove，业务状态自然收敛。
+func (h *Hub) KickConnections(kind string, ids []uint64) int {
+	want := make(map[uint64]bool, len(ids))
+	for _, id := range ids {
+		want[id] = true
+	}
+	targets := make([]*Client, 0, 8)
+	h.mu.RLock()
+	for c := range h.clients {
+		if kind != "" && kind != "agent" {
+			continue
+		}
+		if len(want) == 0 || want[c.ID] {
+			targets = append(targets, c)
+		}
+	}
+	for _, set := range h.guests {
+		for c := range set {
+			if kind != "" && kind != "guest" {
+				continue
+			}
+			if len(want) == 0 || want[c.ID] {
+				targets = append(targets, c)
+			}
+		}
+	}
+	h.mu.RUnlock()
+
+	for _, c := range targets {
+		_ = c.conn.Close() // 触发 readPump 退出 → Hub.Remove
+	}
+	return len(targets)
 }

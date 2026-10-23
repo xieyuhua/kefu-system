@@ -274,6 +274,7 @@ func (h *Handler) GuestWSHandler(c *gin.Context) {
 	}
 	client := realtime.NewGuestClient(conn, tenantID, convID, "guest")
 	hub := realtime.HubInstance()
+	client.SetMeta(realtime.NextConnID(), c.Request.RemoteAddr, time.Now())
 	hub.AddGuest(client)
 
 	// ① 建连即在线：刷新活跃时间并通知客服端（原来只有发消息才刷新，客户在线不说话会被判离线）

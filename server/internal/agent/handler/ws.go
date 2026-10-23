@@ -2,6 +2,7 @@ package handler
 
 import (
 	"net/http"
+	"time"
 
 	"kefu-server/pkg/auth"
 	"kefu-server/pkg/realtime"
@@ -41,6 +42,7 @@ func (h *Handler) WSHandler(c *gin.Context) {
 		return
 	}
 	client := realtime.NewClient(conn, claims.UserID, claims.TenantID, device)
+	client.SetMeta(realtime.NextConnID(), c.Request.RemoteAddr, time.Now())
 	realtime.HubInstance().Add(client)
 
 	go client.WritePump()
