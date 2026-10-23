@@ -769,3 +769,48 @@ AI 相关配置全部存在 `settings` 表（一个 key 一个值），读写复
 | `admin` | `admin123` | 租户管理员（云跳跳科技） |
 | `kf01` | `123456` | 客服 小李（接待：微信/网页） |
 | `kf02` | `123456` | 客服 小王（接待：企微/APP + 机器人） |
+
+
+---
+
+## 附录：近期接口变更（务必对齐）
+
+### 1. 用户端初始化 `GET /api/guest/init`
+
+响应 `data` 新增渠道能力与上传限制字段：
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| `show_emoji` | bool | 用户端是否展示表情按钮（渠道配置） |
+| `show_upload` | bool | 用户端是否展示文件上传按钮（渠道配置） |
+| `upload_max_size` | int | 单文件上限（字节），来自系统设置 `upload.max_size`（MB，默认 50） |
+
+### 2. 访客身份生成规则
+
+未传 `uid` 时服务端生成：`visitor_<yyMMddHHmmss><4位随机hex>`。
+昵称为空时：游客显示 `游客_<HHmmss>`，业务用户显示其 `uid`。
+
+### 3. 客户资料新增 `user_agent`
+
+`GET /api/customers/:id`（客户详情）的 `user.user_agent` 为该客户最近一次上报的 UA 字符串（最长 512 字符），来自访客端请求头。
+
+### 4. 分片上传 / 断点续传
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| POST | `/api/guest/upload/chunk` | 用户端上传单个分片（`upload_id` + `index` + `total`） |
+| POST | `/api/guest/upload/merge` | 用户端合并分片（返回最终文件地址） |
+| POST | `/api/upload/chunk` | 客服端上传分片 |
+| POST | `/api/upload/merge` | 客服端合并分片 |
+
+单分片 2MB；前端在文件 > 4MB 时自动切换分片模式，每个分片失败重试 3 次。
+
+### 5. `POST /api/demo/incoming` 仅管理员
+
+模拟客户发起咨询，**仅管理员可调用**，其他角色返回业务错误「仅管理员可模拟新咨询」。
+
+### 6. 会话接口补充
+
+- 未读清零：`POST /api/conversations/:id/read`（仅 `status=open` 的会话生效）
+- 领取：`POST /api/conversations/:id/claim`；客户已被他人接待时返回「该客户已由其他客服接待，请勿重复接入」
+- 会话列表 `user` 对象含 `online`（按访客 WS 连接实时判定）与 `last_seen_at`
