@@ -75,37 +75,6 @@
     </div>
 
     <template v-else>
-      <div ref="scrollRef" v-loading="loading" class="chat-body kf-scroll" @scroll="onScroll">
-        <div ref="innerRef" class="chat-inner">
-          <div class="load-more">
-            <span v-if="loadingMore" class="load-more__tip">加载中…</span>
-            <span v-else-if="!hasMore" class="load-more__tip">没有更多消息了</span>
-          </div>
-          <el-empty v-if="!messages.length && !loading" description="暂无消息" :image-size="80" />
-
-          <MessageBubble
-            v-for="m in messages"
-            :key="m.id"
-            :message="m"
-            :flash-key="flashId === m.id ? m.id : 0"
-          />
-        </div>
-      </div>
-
-      <MessageInput
-        :disabled="conversation.status === 'closed'"
-        :conversation-id="conversation.id"
-        :search-active="searchOpen"
-        :sending="props.sending"
-        :compact="compactHeader"
-        :order-card-enabled="orderCardEnabled"
-        :product-card-enabled="productCardEnabled"
-        @send="onSend"
-        @pick-order="emit('pick-order')"
-        @pick-product="emit('pick-product')"
-        @toggle-search="toggleSearch"
-      />
-
       <!-- 搜索浮层（微信式）：点「搜索」按钮弹出，输入即搜，定位后保留结果可继续点 -->
       <div v-if="searchOpen" class="chat-search">
         <div class="chat-search__bar">
@@ -168,6 +137,38 @@
           </button>
         </div>
       </div>
+
+      <div ref="scrollRef" v-loading="loading" class="chat-body kf-scroll" @scroll="onScroll">
+        <div ref="innerRef" class="chat-inner">
+          <div class="load-more">
+            <span v-if="loadingMore" class="load-more__tip">加载中…</span>
+            <span v-else-if="!hasMore" class="load-more__tip">没有更多消息了</span>
+          </div>
+          <el-empty v-if="!messages.length && !loading" description="暂无消息" :image-size="80" />
+
+          <MessageBubble
+            v-for="m in messages"
+            :key="m.id"
+            :message="m"
+            :flash-key="flashId === m.id ? m.id : 0"
+          />
+        </div>
+      </div>
+
+      <MessageInput
+        :disabled="conversation.status === 'closed'"
+        :conversation-id="conversation.id"
+        :search-active="searchOpen"
+        :sending="props.sending"
+        :compact="compactHeader"
+        :order-card-enabled="orderCardEnabled"
+        :product-card-enabled="productCardEnabled"
+        @send="onSend"
+        @pick-order="emit('pick-order')"
+        @pick-product="emit('pick-product')"
+        @toggle-search="toggleSearch"
+      />
+
     </template>
   </section>
 </template>
