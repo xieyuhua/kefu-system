@@ -219,6 +219,15 @@ func (s *ConversationService) SendMessage(tenantID, convID, senderID uint, req d
 				"last_message_at": c.LastMessageAt,
 				"message_count":   c.MessageCount,
 				"unread":          0,
+				// 客服回复即视为「接待」：归属人与进行中状态必须一起落库。
+				// 之前这里只写了摘要字段，agent_id / status 没有持久化，
+				// 导致「界面上已是进行中、库里还是待接待」——客户再发消息时
+				// 机器人按待接待处理（自动回复），会话还掉回未接待。
+				"agent_id":    c.AgentID,
+				"status":      c.Status,
+				"closed_at":   c.ClosedAt,
+				"archived":    c.Archived,
+				"archived_at": c.ArchivedAt,
 			}).Error; err != nil {
 			return err
 		}
