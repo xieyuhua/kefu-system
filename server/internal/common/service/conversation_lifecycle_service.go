@@ -7,7 +7,6 @@ import (
 
 	"kefu-server/internal/common/model"
 	"kefu-server/pkg/dto"
-	"kefu-server/pkg/realtime"
 	"kefu-server/pkg/storage"
 )
 
@@ -24,15 +23,17 @@ func (s *ConversationService) FindOrCreateConversation(tenantID, customerID, cha
 		needSave := false
 		if conv.Status == "closed" {
 			conv.ClosedAt = nil
-			// 仍挂在原客服名下、且该客服在线 → 直接回到「进行中」。
-			// 原来一律置 pending，会出现「明明已接待、客户一发消息就变未接待」，
-			// 而 agent_id 还留着（既显示接待人、又进了待接待池，别的客服也抢不了）。
-			if conv.AgentID > 0 && realtime.HubInstance().IsUserOnline(conv.AgentID) {
+			// 有归属人 → 回到「进行中」，保持由他接待。
+			//
+			// 这里刻意**不判断该客服是否在线**：客户发消息不该成为「释放归属」的触发器。
+			// 之前判在线导致「管理员刚接待、随后用户发消息就变未接待」——只要那一刻
+			// 客服的 WebSocket 刚好不在（关了工作台标签、换设备、网络抖动），
+			// 会话就被判回待接待，看起来就像「接待被撤销了」。
+			// 真正的人走茶凉交给离线钩子处理（断连 90s 后统一释放）。
+			if conv.AgentID > 0 {
 				conv.Status = "open"
 			} else {
-				// 原客服不在线：回到待接待池，并释放归属，否则互斥规则会让这条会话对所有人都不可见
 				conv.Status = "pending"
-				conv.AgentID = 0
 			}
 			needSave = true
 		}

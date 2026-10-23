@@ -291,11 +291,12 @@ func (s *ConversationService) ReceiveMessageIn(c *model.Conversation, customerID
 	// 不要掉回待接待（否则客服看到「已接待却变未接待」，还要重新接入一次）
 	if c.Status == "closed" {
 		c.ClosedAt = nil
-		if c.AgentID > 0 && realtime.HubInstance().IsUserOnline(c.AgentID) {
+		// 有归属人 → 保持在其名下（进行中）；无归属才回待接待池。
+		// 不判断在线状态：客户发消息不应触发归属释放（否则会表现为「接待莫名其妙被撤销」）。
+		if c.AgentID > 0 {
 			c.Status = "open"
 		} else {
 			c.Status = "pending"
-			c.AgentID = 0
 		}
 	}
 	// 客户重新咨询时，若会话曾被客服归档 → 自动恢复，重新出现在工作台待接待列表
