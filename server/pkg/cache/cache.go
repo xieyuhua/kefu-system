@@ -98,7 +98,6 @@ func (c *Cache) BlacklistKey(jti string) string { return "jwt:blacklist:" + jti 
 func (c *Cache) OnlineKey(tenantID, userID uint) string {
 	return "online:" + itoa(tenantID) + ":" + itoa(userID)
 }
-func (c *Cache) ConvLockKey(convID uint) string { return "lock:conv:" + itoa(convID) }
 
 // newDriver 按 opts 创建驱动；私有辅助，无包级状态，只被本包方法调用。
 func (c *Cache) newDriver(opts Options) Driver {

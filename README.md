@@ -7,6 +7,7 @@
 kefu/
 ├─ server/          Go 后端（Gin + GORM + WebSocket + Redis 可选）   端口 8480
 ├─ web/             Vue3 + Vite + TS + Element Plus 前端            端口 5173
+├─ server/cmd/bench/     HTTP 压测脚本（零依赖）
 └─ docs/
    ├─ API.md        前后端唯一契约（所有接口/字段以此为准）
    └─ PROJECT.md    项目总纲与视觉规范
@@ -33,6 +34,7 @@ kefu/
 - **[docs/部署教程.md](docs/部署教程.md)** —— 部署上线：单机独立部署 / 分布式部署（构建、配置、systemd、Nginx、Redis、滚动升级、排错）
 - **[docs/使用教程.md](docs/使用教程.md)** —— 从零开始的使用指引（启动、配置渠道/子账号、接待会话、接入用户端、离线消息）
 - **[docs/推送对接.md](docs/推送对接.md)** —— APP / PC 桌面端推送对接（设备注册、厂商通道接入、离线补偿）
+- **[docs/压测报告.md](docs/压测报告.md)** —— 压测方法、历次实测数据与性能优化记录（脚本：`server/cmd/bench`）
 - [docs/API.md](docs/API.md) —— 前后端接口契约
 - [docs/PROJECT.md](docs/PROJECT.md) —— 项目总纲与视觉规范
 
