@@ -176,7 +176,7 @@ func (h *Handler) GuestSendHandler(c *gin.Context) {
 		return
 	}
 
-	mvo, cvo, err := h.svc.Conv.ReceiveMessage(tenantID, conv.ID, cu.ID, req.Type, req.Content)
+	mvo, cvo, err := h.svc.Conv.ReceiveMessageIn(conv, cu.ID, req.Type, req.Content)
 	if err != nil {
 		response.Default().Server(c, err.Error())
 		return

@@ -258,6 +258,14 @@ func (s *ConversationService) ReceiveMessage(tenantID, convID, customerID uint, 
 	if err != nil {
 		return nil, nil, errors.New("会话不存在")
 	}
+	return s.ReceiveMessageIn(c, customerID, msgType, content)
+}
+
+// ReceiveMessageIn 客户端上行消息（调用方已持有会话）。
+// 访客入口在定位会话时已经查过一次，直接传进来可省掉一次往返——
+// 跨网访问 MySQL 时每次往返约 20ms，占发消息总耗时的相当一部分。
+func (s *ConversationService) ReceiveMessageIn(c *model.Conversation, customerID uint, msgType, content string) (*dto.MessageVO, *dto.ConversationVO, error) {
+	tenantID, convID := c.TenantID, c.ID
 	if msgType == "" {
 		msgType = "text"
 	}
