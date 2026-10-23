@@ -10,9 +10,11 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
 
 	"kefu-server/internal/common/model"
 	"kefu-server/internal/common/repository"
+	"kefu-server/pkg/cache"
 	"kefu-server/pkg/dto"
 	"kefu-server/pkg/idgen"
 	"kefu-server/pkg/util"
@@ -257,8 +259,24 @@ func (s *ChannelService) DeleteChannel(tenantID, id uint) error {
 // 跨包调用只能走 Service：这里的每个方法都只是把调用转给本包仓储，SQL 与原来逐字一致。
 
 // FindChannelByID 按租户 + 主键取渠道（跨包只读门面）。
+// channelByIDCache 渠道按 ID 缓存：发消息、会话列表、卡片能力校验都会读，
+// 属于「几乎不变但高频」的配置数据，缓存 5s 可省掉每条消息 1~2 次数据库往返。
+var channelByIDCache = cache.NewTTL()
+
 func (s *ChannelService) FindChannelByID(tenantID, id uint) (*model.Channel, error) {
-	return s.repo.FindChannelByID(tenantID, id)
+	key := "ch:" + strconv.FormatUint(uint64(tenantID), 10) + ":" + strconv.FormatUint(uint64(id), 10)
+	if v, ok := channelByIDCache.Get(key); ok {
+		if chv, ok2 := v.(model.Channel); ok2 {
+			ch := chv // 返回副本，避免调用方改动污染缓存
+			return &ch, nil
+		}
+	}
+	ch, err := s.repo.FindChannelByID(tenantID, id)
+	if err != nil {
+		return nil, err
+	}
+	channelByIDCache.Set(key, *ch, 5*time.Second)
+	return ch, nil
 }
 
 // ListChannelsByTenant 列出租户的渠道（跨包只读门面）。

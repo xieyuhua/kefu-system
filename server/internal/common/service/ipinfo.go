@@ -15,10 +15,11 @@ import (
 	"time"
 
 	"kefu-server/internal/common/model"
+
+	"gorm.io/gorm"
 	"kefu-server/pkg/cache"
 	"kefu-server/pkg/config"
 	"kefu-server/pkg/ipinfo"
-	"kefu-server/pkg/storage"
 	"kefu-server/pkg/util"
 )
 
@@ -68,7 +69,10 @@ func (s *CustomerService) RecordCustomerTrace(customerID uint, ip, userAgent str
 	if len(updates) == 0 {
 		return
 	}
-	_ = storage.Default().DB().Model(&model.Customer{}).Where("id = ?", customerID).Updates(updates).Error
+	// 活跃时间/IP/UA 属于附属信息：丢进批量器异步落库，发消息的响应不必等这次刷盘
+	DefaultWriteBatcher().SubmitAsync(func(tx *gorm.DB) error {
+		return tx.Model(&model.Customer{}).Where("id = ?", customerID).Updates(updates).Error
+	})
 }
 
 // ResolveCity 解析 IP 归属城市，格式如「广东 深圳」；无法解析时返回空串。

@@ -9,10 +9,12 @@ import (
 	"errors"
 	"strconv"
 	"strings"
+	"time"
 
 	"gorm.io/gorm/clause"
 
 	"kefu-server/internal/common/model"
+	"kefu-server/pkg/cache"
 	"kefu-server/pkg/storage"
 )
 
@@ -158,17 +160,35 @@ var settingDefaults = map[string]struct {
 // ---------------- 对外能力 ----------------
 
 // GetSetting 读取配置项，不存在时返回默认值
+// settingCache 系统设置的进程内缓存：每条消息都会读若干次设置（兜底话术、上传上限、AI 配置），
+// 缓存 5s 可省掉每条消息 1~3 次数据库往返；SaveSetting 会主动失效对应键。
+var settingCache = cache.NewTTL()
+
+func settingCacheKey(tenantID uint, key string) string {
+	return "set:" + strconv.FormatUint(uint64(tenantID), 10) + ":" + key
+}
+
 func GetSetting(tenantID uint, key string) string {
+	ck := settingCacheKey(tenantID, key)
+	if v, ok := settingCache.Get(ck); ok {
+		if sv, ok2 := v.(string); ok2 {
+			return sv
+		}
+	}
+	val := ""
 	// 查不到（ErrRecordNotFound）或读库失败都落到默认值，与原逻辑一致
 	if s, err := findSettingByKey(tenantID, key); err == nil {
 		if v := strings.TrimSpace(s.Value); v != "" {
-			return v
+			val = v
 		}
 	}
-	if d, ok := settingDefaults[key]; ok {
-		return d.Value
+	if val == "" {
+		if d, ok := settingDefaults[key]; ok {
+			val = d.Value
+		}
 	}
-	return ""
+	settingCache.Set(ck, val, 5*time.Second)
+	return val
 }
 
 // UploadMaxSizeBytes 上传大小上限（字节）。解析失败 / <=0 时回退默认 50MB。
@@ -225,6 +245,8 @@ func ListSettings(tenantID uint) ([]map[string]interface{}, error) {
 
 // SaveSetting 保存单个配置项
 func SaveSetting(tenantID uint, key, value string) error {
+	// 配置改了立刻失效缓存，管理员保存后马上生效
+	defer settingCache.Delete(settingCacheKey(tenantID, key))
 	key = strings.TrimSpace(key)
 	if key == "" {
 		return errors.New("配置项不能为空")
