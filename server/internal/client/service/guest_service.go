@@ -22,6 +22,7 @@ import (
 
 	"kefu-server/internal/common/model"
 	commonsvc "kefu-server/internal/common/service"
+	"kefu-server/pkg/cache"
 	"kefu-server/pkg/realtime"
 	"kefu-server/pkg/setting"
 )
@@ -56,10 +57,23 @@ var ErrChannelNotFound = errors.New("渠道不存在")
 // 优先按 app_id 匹配 —— 这是渠道的业务唯一标识（同一类型可配多个渠道，只有它能区分）。
 // 同时兼容历史写法：渠道类型（wechat / web / ...）与数字渠道 ID。
 // 匹配不到时返回 ErrChannelNotFound，由 handler 决定提示文案。
+// guestChannelCache 访客渠道解析结果缓存（tenant+key，5s）：每条访客请求都要解析渠道，
+// 结果几乎不变，缓存后跨网访问 MySQL 时可省掉一次往返。
+var guestChannelCache = cache.NewTTL()
+
 func (s *Service) ResolveGuestChannel(tenantID uint, key string) (*model.Channel, error) {
 	key = strings.TrimSpace(key)
 	if key == "" {
 		return nil, ErrChannelNotFound
+	}
+	// 渠道解析是每条访客请求（初始化 / 发消息 / WS 建连）都要走的固定开销，
+	// 且结果几乎不变：缓存 5s，跨网访问 MySQL 时直接省掉一次往返。
+	ck := "gch:" + strconv.FormatUint(uint64(tenantID), 10) + ":" + key
+	if v, ok := guestChannelCache.Get(ck); ok {
+		if chv, ok2 := v.(model.Channel); ok2 {
+			ch := chv // 返回副本，避免调用方改写污染缓存
+			return &ch, nil
+		}
 	}
 	list, err := s.Channels.ListChannelsByTenant(tenantID, 0, true)
 	if err != nil {
@@ -68,12 +82,14 @@ func (s *Service) ResolveGuestChannel(tenantID uint, key string) (*model.Channel
 	// ① app_id 精确匹配
 	for i := range list {
 		if list[i].AppID != "" && list[i].AppID == key {
+			guestChannelCache.Set(ck, *list[i], 5*time.Second)
 			return list[i], nil
 		}
 	}
 	// ② 兼容：类型或数字 ID
 	for i := range list {
 		if list[i].Type == key || strconv.FormatUint(uint64(list[i].ID), 10) == key {
+			guestChannelCache.Set(ck, *list[i], 5*time.Second)
 			return list[i], nil
 		}
 	}

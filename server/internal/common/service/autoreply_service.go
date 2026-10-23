@@ -17,6 +17,7 @@ import (
 
 	"kefu-server/internal/common/model"
 	"kefu-server/internal/common/repository"
+	"kefu-server/pkg/cache"
 	"kefu-server/pkg/dto"
 	"kefu-server/pkg/realtime"
 	"kefu-server/pkg/util"
@@ -413,6 +414,14 @@ func (s *AutomationService) ReplyNow(tenantID, convID, customerID, channelID uin
 		return &ReplyResult{Transferred: false}
 	}
 
+	// 机器人关闭的渠道：整段跳过（不查规则、不调模型），保持「不回复」。
+	// 原来无论如何都会先查一遍自动回复规则，关闭机器人的渠道等于白跑一次查询——
+	// 跨网访问 MySQL 时这就是每条消息多 20ms。
+	ch, chOK := s.channelCached(channelID)
+	if chOK && !ch.RobotEnabled {
+		return &ReplyResult{Transferred: false}
+	}
+
 	rule, matched := s.MatchRule(tenantID, channelID, question)
 
 	if matched && rule.TransferToHuman {
@@ -438,7 +447,7 @@ func (s *AutomationService) ReplyNow(tenantID, convID, customerID, channelID uin
 	if matched {
 		reply = rule.Reply
 	} else {
-		if ch, err := s.repo.FindAutoReplyChannel(channelID); err == nil && ch.RobotEnabled {
+		if chOK && ch.RobotEnabled {
 			// 未命中关键词规则时的兜底链路（渠道未开启机器人则整段跳过，保持「不回复」）：
 			//   ① AI 应答：ai.enabled 且配置齐全 → 检索「该渠道的自动回复规则」+ 大模型生成；
 			//   ② 兜底话术：AI 未启用 / 配置不全 / 检索无命中 / 调用失败 → 后台可配的 robot.fallback_reply。
@@ -470,4 +479,29 @@ func (s *AutomationService) ReplyNow(tenantID, convID, customerID, channelID uin
 	realtime.HubInstance().Publish(tenantID, nil, realtime.Event{Event: "message.new", Data: vo})
 	realtime.HubInstance().PublishToGuest(tenantID, convID, realtime.Event{Event: "message.new", Data: vo})
 	return &ReplyResult{Transferred: false, Message: vo}
+}
+
+// robotChannelCache 渠道机器人开关缓存：每条上行消息都要判断「是否开启机器人」，
+// 缓存 5s 可省掉一次数据库查询。
+var robotChannelCache = cache.NewTTL()
+
+// channelCached 取渠道（带缓存）。第二个返回值表示是否取到了渠道：
+// 查不到时调用方应按「继续走规则匹配」处理，不要误判成「机器人关闭」。
+func (s *AutomationService) channelCached(channelID uint) (*model.Channel, bool) {
+	if channelID == 0 {
+		return nil, false
+	}
+	ck := "robot:" + strconv.FormatUint(uint64(channelID), 10)
+	if v, ok := robotChannelCache.Get(ck); ok {
+		if chv, ok2 := v.(model.Channel); ok2 {
+			ch := chv
+			return &ch, true
+		}
+	}
+	ch, err := s.repo.FindAutoReplyChannel(channelID)
+	if err != nil || ch == nil {
+		return nil, false
+	}
+	robotChannelCache.Set(ck, *ch, 5*time.Second)
+	return ch, true
 }
