@@ -72,6 +72,12 @@ export const adminRoutes: RouteRecordRaw[] = [
     meta: { title: '设备管理' },
   },
   {
+    path: '/ws-connections',
+    name: 'admin-ws-connections',
+    component: () => import('./views/WsConnectionsView.vue'),
+    meta: { title: '连接管理' },
+  },
+  {
     path: '/settings',
     name: 'admin-settings',
     component: () => import('./views/SettingsView.vue'),

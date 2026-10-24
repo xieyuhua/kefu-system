@@ -10,6 +10,7 @@ import {
   Grid,
   Headset,
   Iphone,
+  Connection,
   Menu as MenuIcon,
   Message,
   Monitor,
@@ -41,6 +42,7 @@ const MENUS: MenuItem[] = [
   { path: '/orders', title: '订单管理', icon: ShoppingCart },
   { path: '/products', title: '商品管理', icon: Goods },
   { path: '/devices', title: '设备管理', icon: Iphone },
+  { path: '/ws-connections', title: '连接管理', icon: Connection },
   { path: '/settings', title: '系统设置', icon: Setting },
 ]
 
